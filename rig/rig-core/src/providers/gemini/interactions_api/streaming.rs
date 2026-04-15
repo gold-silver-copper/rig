@@ -35,7 +35,6 @@ struct FunctionCallState {
     provider_call_id: Option<String>,
     name: Option<String>,
     arguments: Option<Value>,
-    emitted_name: bool,
 }
 
 impl Default for FunctionCallState {
@@ -45,7 +44,6 @@ impl Default for FunctionCallState {
             provider_call_id: None,
             name: None,
             arguments: None,
-            emitted_name: false,
         }
     }
 }
@@ -258,16 +256,27 @@ fn parse_interaction_sse_event(
         return Ok(None);
     }
     if !trimmed.starts_with('{') {
-        return Err(InteractionSseParseError::UnexpectedPayload(
-            trimmed.to_owned(),
-        ));
+        return Ok(None);
     }
 
     let value: Value = serde_json::from_str(trimmed).map_err(InteractionSseParseError::Json)?;
-    if !value.is_object() {
-        return Err(InteractionSseParseError::UnexpectedPayload(
-            trimmed.to_owned(),
-        ));
+    let Some(object) = value.as_object() else {
+        return Ok(None);
+    };
+    let Some(event_type) = object.get("event_type").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if !matches!(
+        event_type,
+        "interaction.start"
+            | "interaction.complete"
+            | "interaction.status_update"
+            | "content.start"
+            | "content.delta"
+            | "content.stop"
+            | "error"
+    ) {
+        return Ok(None);
     }
 
     serde_json::from_value::<InteractionSseEvent>(value)
@@ -278,16 +287,12 @@ fn parse_interaction_sse_event(
 #[derive(Debug)]
 enum InteractionSseParseError {
     Json(serde_json::Error),
-    UnexpectedPayload(String),
 }
 
 impl fmt::Display for InteractionSseParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json(error) => write!(f, "{error}"),
-            Self::UnexpectedPayload(payload) => {
-                write!(f, "unexpected non-object SSE payload: {payload}")
-            }
         }
     }
 }
@@ -388,15 +393,12 @@ impl FunctionCallState {
 
         if let Some(name) = name {
             merge_chunked_string(&mut self.name, name);
-            if !self.emitted_name {
-                if let (Some(id), Some(name)) = (self.delta_identifier(), self.name.clone()) {
-                    choices.push(streaming::RawStreamingChoice::ToolCallDelta {
-                        id,
-                        internal_call_id: self.internal_call_id.clone(),
-                        content: ToolCallDeltaContent::Name(name),
-                    });
-                }
-                self.emitted_name = true;
+            if let (Some(id), Some(name)) = (self.delta_identifier(), self.name.clone()) {
+                choices.push(streaming::RawStreamingChoice::ToolCallDelta {
+                    id,
+                    internal_call_id: self.internal_call_id.clone(),
+                    content: ToolCallDeltaContent::Name(name),
+                });
             }
         }
 
@@ -608,13 +610,34 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_interaction_sse_event_rejects_unexpected_non_object_payload() {
-        let error = parse_interaction_sse_event("keepalive")
-            .expect_err("unexpected non-object payload should fail");
-        assert_eq!(
-            error.to_string(),
-            "unexpected non-object SSE payload: keepalive"
-        );
+    fn test_parse_interaction_sse_event_ignores_keepalive_payload() {
+        let parsed =
+            parse_interaction_sse_event("keepalive").expect("keepalive payload should be ignored");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_interaction_sse_event_ignores_missing_event_type_object() {
+        let parsed = parse_interaction_sse_event("{\"index\":0}")
+            .expect("payload without event_type should be ignored");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_interaction_sse_event_ignores_unknown_event_type_object() {
+        let parsed =
+            parse_interaction_sse_event("{\"event_type\":\"content.progress\",\"index\":0}")
+                .expect("unknown event_type should be ignored");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_interaction_sse_event_errors_for_malformed_known_event_payload() {
+        let error = parse_interaction_sse_event(
+            "{\"event_type\":\"content.delta\",\"index\":0,\"delta\":{\"type\":\"text\"",
+        )
+        .expect_err("malformed known event should fail");
+        assert!(error.to_string().contains("EOF"));
     }
 
     #[test]
@@ -721,8 +744,19 @@ mod tests {
                 id: Some("1".to_string()),
             }),
         );
-        assert_eq!(second_choices.len(), 1);
+        assert_eq!(second_choices.len(), 2);
         match &second_choices[0] {
+            RawStreamingChoice::ToolCallDelta {
+                id,
+                internal_call_id: _,
+                content: ToolCallDeltaContent::Name(name),
+            } => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "lookup_order");
+            }
+            other => panic!("unexpected second choice: {other:?}"),
+        }
+        match &second_choices[1] {
             RawStreamingChoice::ToolCallDelta {
                 id,
                 internal_call_id: _,

@@ -205,6 +205,7 @@ where
     assistant_items: Vec<AssistantContent>,
     text_item_index: Option<usize>,
     reasoning_item_index: Option<usize>,
+    unresolved_reasoning_item_indices: Vec<usize>,
     /// The final aggregated message from the stream
     /// contains all text and tool calls generated
     pub choice: OneOrMany<AssistantContent>,
@@ -231,6 +232,7 @@ where
             assistant_items: vec![],
             text_item_index: None,
             reasoning_item_index: None,
+            unresolved_reasoning_item_indices: vec![],
             choice: OneOrMany::one(AssistantContent::text("")),
             response: None,
             final_response_yielded: AtomicBool::new(false),
@@ -284,33 +286,25 @@ where
                 id: id.clone(),
                 content: vec![ReasoningContent::Text(text.to_string())],
             }));
-        self.reasoning_item_index = Some(self.assistant_items.len() - 1);
+        let index = self.assistant_items.len() - 1;
+        self.reasoning_item_index = Some(index);
+        self.unresolved_reasoning_item_indices.push(index);
     }
 
     fn replace_reasoning_placeholder(&mut self, reasoning: &Reasoning) -> bool {
-        let replacement_index = self
-            .reasoning_item_index
-            .filter(|&index| {
+        let Some(position) = self
+            .unresolved_reasoning_item_indices
+            .iter()
+            .rposition(|&index| {
                 matches!(
                     self.assistant_items.get(index),
                     Some(AssistantContent::Reasoning(existing)) if existing.id == reasoning.id
                 )
             })
-            .or_else(|| {
-                reasoning.id.as_ref().and_then(|reasoning_id| {
-                    self.assistant_items.iter().rposition(|item| {
-                        matches!(
-                            item,
-                            AssistantContent::Reasoning(existing)
-                                if existing.id.as_deref() == Some(reasoning_id.as_str())
-                        )
-                    })
-                })
-            });
-
-        let Some(index) = replacement_index else {
+        else {
             return false;
         };
+        let index = self.unresolved_reasoning_item_indices.remove(position);
 
         let Some(AssistantContent::Reasoning(existing)) = self.assistant_items.get_mut(index)
         else {
@@ -753,6 +747,27 @@ mod tests {
         StreamingCompletionResponse::stream(to_stream_result(stream))
     }
 
+    fn create_noncontiguous_no_id_reasoning_delta_then_full_stream()
+    -> StreamingCompletionResponse<MockResponse> {
+        let stream = stream! {
+            yield Ok(RawStreamingChoice::ReasoningDelta {
+                id: None,
+                reasoning: "draft reasoning".to_string(),
+            });
+            yield Ok(RawStreamingChoice::Message("visible text".to_string()));
+            yield Ok(RawStreamingChoice::Reasoning {
+                id: None,
+                content: vec![
+                    ReasoningContent::Signature("sig_interleaved_replace".to_string()),
+                    ReasoningContent::Summary("final reasoning".to_string()),
+                ],
+            });
+            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 3 }));
+        };
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
     fn create_interleaved_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
             yield Ok(RawStreamingChoice::Reasoning {
@@ -926,6 +941,26 @@ mod tests {
                 if id == "rs_interleaved_replace"
                     && matches!(content.first(), Some(ReasoningContent::Signature(signature)) if signature == "sig_interleaved_replace")
                     && matches!(content.get(1), Some(ReasoningContent::Text(text)) if text == "final reasoning")
+        ));
+        assert!(matches!(
+            choice_items.get(1),
+            Some(AssistantContent::Text(Text { text })) if text == "visible text"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_stream_replaces_noncontiguous_no_id_reasoning_delta_placeholder_with_full_reasoning()
+     {
+        let mut stream = create_noncontiguous_no_id_reasoning_delta_then_full_stream();
+        while stream.next().await.is_some() {}
+
+        let choice_items: Vec<AssistantContent> = stream.choice.clone().into_iter().collect();
+        assert_eq!(choice_items.len(), 2);
+        assert!(matches!(
+            choice_items.first(),
+            Some(AssistantContent::Reasoning(Reasoning { id: None, content }))
+                if matches!(content.first(), Some(ReasoningContent::Signature(signature)) if signature == "sig_interleaved_replace")
+                    && matches!(content.get(1), Some(ReasoningContent::Summary(text)) if text == "final reasoning")
         ));
         assert!(matches!(
             choice_items.get(1),
