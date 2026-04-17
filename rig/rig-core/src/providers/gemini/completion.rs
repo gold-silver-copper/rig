@@ -27,15 +27,12 @@ use self::gemini_api_types::Schema;
 use crate::http_client::HttpClientExt;
 use crate::message::{self, MimeType, Reasoning};
 
+use crate::completion::{self, CompletionError, CompletionRequest};
 use crate::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, FunctionCallingMode, ToolConfig,
 };
 use crate::providers::gemini::streaming::StreamingCompletionResponse;
 use crate::telemetry::SpanCombinator;
-use crate::{
-    OneOrMany,
-    completion::{self, CompletionError, CompletionRequest},
-};
 use gemini_api_types::{
     Content, FunctionDeclaration, GenerateContentRequest, GenerateContentResponse,
     GenerationConfig, Part, PartKind, Role, Tool,
@@ -493,11 +490,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             )
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::assistant_choice_from_vec(content)?;
 
         let usage = response
             .usage_metadata
@@ -2023,6 +2016,10 @@ pub mod gemini_api_types {
 }
 
 #[cfg(test)]
+#[path = "conformance_tests.rs"]
+mod conformance_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         message,
@@ -2301,7 +2298,7 @@ mod tests {
     fn test_reasoning_signature_is_emitted_in_gemini_part() {
         let msg = message::Message::Assistant {
             id: None,
-            content: OneOrMany::one(message::AssistantContent::Reasoning(
+            content: crate::OneOrMany::one(message::AssistantContent::Reasoning(
                 message::Reasoning::new_with_signature(
                     "structured thought",
                     Some("reuse_sig_456".to_string()),
@@ -2334,7 +2331,7 @@ mod tests {
 
         let msg = message::Message::Assistant {
             id: None,
-            content: OneOrMany::one(message::AssistantContent::ToolCall(tool_call)),
+            content: crate::OneOrMany::one(message::AssistantContent::ToolCall(tool_call)),
         };
 
         let content: Content = msg.try_into().unwrap();

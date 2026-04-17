@@ -374,6 +374,18 @@ pub struct CompletionResponse<T> {
     pub message_id: Option<String>,
 }
 
+pub(crate) fn assistant_choice_from_vec(
+    content: Vec<AssistantContent>,
+) -> Result<OneOrMany<AssistantContent>, CompletionError> {
+    if content.is_empty() {
+        return Ok(OneOrMany::one(AssistantContent::text("")));
+    }
+
+    OneOrMany::many(content).map_err(|_| {
+        CompletionError::ResponseError("Response contained no message or tool call (empty)".into())
+    })
+}
+
 /// A trait for grabbing the token usage of a completion response.
 ///
 /// Primarily designed for streamed completion responses in streamed multi-turn, as otherwise it would be impossible to do.
