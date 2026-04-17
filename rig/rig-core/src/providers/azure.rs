@@ -5,12 +5,12 @@
 //! use rig::providers::azure;
 //! use rig::client::CompletionClient;
 //!
-//! let client = azure::Client::builder()
+//! let client = rig::providers::azure::Client::builder()
 //!     .api_key("test")
 //!     .azure_endpoint("test".to_string()) // add your endpoint here!
 //!     .build()?;
 //!
-//! let gpt4o = client.completion_model(azure::GPT_4O);
+//! let gpt4o = client.completion_model(rig::models::azure::GPT_4O);
 //! ```
 //!
 //! ## Authentication
@@ -348,20 +348,8 @@ enum ApiResponse<T> {
 // ================================================================
 // Azure OpenAI Embedding API
 // ================================================================
-
-/// `text-embedding-3-large` embedding model
-pub const TEXT_EMBEDDING_3_LARGE: &str = "text-embedding-3-large";
-/// `text-embedding-3-small` embedding model
-pub const TEXT_EMBEDDING_3_SMALL: &str = "text-embedding-3-small";
-/// `text-embedding-ada-002` embedding model
-pub const TEXT_EMBEDDING_ADA_002: &str = "text-embedding-ada-002";
-
-fn model_dimensions_from_identifier(identifier: &str) -> Option<usize> {
-    match identifier {
-        TEXT_EMBEDDING_3_LARGE => Some(3_072),
-        TEXT_EMBEDDING_3_SMALL | TEXT_EMBEDDING_ADA_002 => Some(1_536),
-        _ => None,
-    }
+fn embedding_metadata(identifier: &str) -> Option<crate::models::EmbeddingMetadata> {
+    crate::models::azure::lookup(identifier).and_then(|model| model.embedding)
 }
 
 #[derive(Debug, Deserialize)]
@@ -455,7 +443,11 @@ where
             "input": documents,
         });
 
-        if self.ndims > 0 && self.model.as_str() != TEXT_EMBEDDING_ADA_002 {
+        let supports_dimensions_override = embedding_metadata(self.model.as_str())
+            .and_then(|metadata| metadata.supports_dimensions_override)
+            .unwrap_or(true);
+
+        if self.ndims > 0 && supports_dimensions_override {
             body["dimensions"] = json!(self.ndims);
         }
 
@@ -509,7 +501,7 @@ impl<T> EmbeddingModel<T> {
     pub fn new(client: Client<T>, model: impl Into<String>, ndims: Option<usize>) -> Self {
         let model = model.into();
         let ndims = ndims
-            .or(model_dimensions_from_identifier(&model))
+            .or_else(|| embedding_metadata(&model).and_then(|metadata| metadata.default_dimensions))
             .unwrap_or_default();
 
         Self {
@@ -534,43 +526,16 @@ impl<T> EmbeddingModel<T> {
 // Azure OpenAI Completion API
 // ================================================================
 
-/// `o1` completion model
-pub const O1: &str = "o1";
-/// `o1-preview` completion model
-pub const O1_PREVIEW: &str = "o1-preview";
-/// `o1-mini` completion model
-pub const O1_MINI: &str = "o1-mini";
-/// `gpt-4o` completion model
-pub const GPT_4O: &str = "gpt-4o";
-/// `gpt-4o-mini` completion model
-pub const GPT_4O_MINI: &str = "gpt-4o-mini";
-/// `gpt-4o-realtime-preview` completion model
-pub const GPT_4O_REALTIME_PREVIEW: &str = "gpt-4o-realtime-preview";
-/// `gpt-4-turbo` completion model
-pub const GPT_4_TURBO: &str = "gpt-4";
-/// `gpt-4` completion model
-pub const GPT_4: &str = "gpt-4";
-/// `gpt-4-32k` completion model
-pub const GPT_4_32K: &str = "gpt-4-32k";
-/// `gpt-4-32k` completion model
-pub const GPT_4_32K_0613: &str = "gpt-4-32k";
-/// `gpt-3.5-turbo` completion model
-pub const GPT_35_TURBO: &str = "gpt-3.5-turbo";
-/// `gpt-3.5-turbo-instruct` completion model
-pub const GPT_35_TURBO_INSTRUCT: &str = "gpt-3.5-turbo-instruct";
-/// `gpt-3.5-turbo-16k` completion model
-pub const GPT_35_TURBO_16K: &str = "gpt-3.5-turbo-16k";
-
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct AzureOpenAICompletionRequest {
     model: String,
-    pub messages: Vec<openai::Message>,
+    pub messages: Vec<rig::providers::openai::Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<openai::ToolDefinition>,
+    tools: Vec<rig::providers::openai::ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openai::ToolChoice>,
+    tool_choice: Option<rig::providers::openai::ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -587,22 +552,22 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
             );
         }
 
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
+        let mut full_history: Vec<rig::providers::openai::Message> = match &req.preamble {
+            Some(preamble) => vec![rig::providers::openai::Message::system(preamble)],
             None => vec![],
         };
 
         if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
+            let docs: Vec<rig::providers::openai::Message> = docs.try_into()?;
             full_history.extend(docs);
         }
 
-        let chat_history: Vec<openai::Message> = req
+        let chat_history: Vec<rig::providers::openai::Message> = req
             .chat_history
             .clone()
             .into_iter()
             .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
+            .collect::<Result<Vec<Vec<rig::providers::openai::Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
@@ -612,7 +577,7 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
         let tool_choice = req
             .tool_choice
             .clone()
-            .map(crate::providers::openai::ToolChoice::try_from)
+            .map(rig::providers::openai::ToolChoice::try_from)
             .transpose()?;
 
         let additional_params = if let Some(schema) = req.output_schema {
@@ -650,7 +615,7 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
                 .tools
                 .clone()
                 .into_iter()
-                .map(openai::ToolDefinition::from)
+                .map(rig::providers::openai::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
             additional_params,
@@ -678,8 +643,8 @@ impl<T> completion::CompletionModel for CompletionModel<T>
 where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
-    type Response = openai::CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type Response = rig::providers::openai::CompletionResponse;
+    type StreamingResponse = rig::providers::openai::StreamingCompletionResponse;
     type Client = Client<T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
@@ -689,7 +654,10 @@ where
     async fn completion(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<openai::CompletionResponse>, CompletionError> {
+    ) -> Result<
+        completion::CompletionResponse<rig::providers::openai::CompletionResponse>,
+        CompletionError,
+    > {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -733,9 +701,10 @@ where
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
-                    &response_body,
-                )? {
+                match serde_json::from_slice::<
+                    ApiResponse<rig::providers::openai::CompletionResponse>,
+                >(&response_body)?
+                {
                     ApiResponse::Ok(response) => {
                         let span = tracing::Span::current();
                         span.record_response_metadata(&response);
@@ -914,8 +883,8 @@ mod image_generation {
     use crate::image_generation;
     use crate::image_generation::{ImageGenerationError, ImageGenerationRequest};
     use crate::providers::azure::{ApiResponse, Client};
-    use crate::providers::openai::ImageGenerationResponse;
     use bytes::Bytes;
+    use rig::providers::openai::ImageGenerationResponse;
     use serde_json::json;
 
     #[derive(Clone)]
@@ -1071,7 +1040,7 @@ mod azure_tests {
     use crate::completion::CompletionModel;
     use crate::embeddings::EmbeddingModel;
     use crate::prelude::TypedPrompt;
-    use crate::providers::openai::GPT_5_MINI;
+    use rig::models::openai::GPT_5_MINI;
 
     #[tokio::test]
     #[ignore]
@@ -1079,7 +1048,7 @@ mod azure_tests {
         let _ = tracing_subscriber::fmt::try_init();
 
         let client = Client::from_env();
-        let model = client.embedding_model(TEXT_EMBEDDING_3_SMALL);
+        let model = client.embedding_model(crate::models::azure::TEXT_EMBEDDING_3_SMALL);
         let embeddings = model
             .embed_texts(vec!["Hello, world!".to_string()])
             .await
@@ -1095,7 +1064,8 @@ mod azure_tests {
 
         let ndims = 256;
         let client = Client::from_env();
-        let model = client.embedding_model_with_ndims(TEXT_EMBEDDING_3_SMALL, ndims);
+        let model =
+            client.embedding_model_with_ndims(crate::models::azure::TEXT_EMBEDDING_3_SMALL, ndims);
         let embedding = model.embed_text("Hello, world!").await.unwrap();
 
         assert!(embedding.vec.len() == ndims);
@@ -1109,7 +1079,7 @@ mod azure_tests {
         let _ = tracing_subscriber::fmt::try_init();
 
         let client = Client::from_env();
-        let model = client.completion_model(GPT_4O_MINI);
+        let model = client.completion_model(crate::models::azure::GPT_4O_MINI);
         let completion = model
             .completion(CompletionRequest {
                 model: None,
@@ -1161,10 +1131,43 @@ mod azure_tests {
 
     #[tokio::test]
     async fn test_client_initialization() {
-        let _client = crate::providers::azure::Client::builder()
+        let _client = rig::providers::azure::Client::builder()
             .api_key("test")
             .azure_endpoint("test".to_string()) // add your endpoint here!
             .build()
             .expect("Client::builder() failed");
+    }
+
+    #[test]
+    fn known_embedding_models_preserve_catalog_dimensions() {
+        let client = Client::builder()
+            .api_key("test")
+            .azure_endpoint("https://example.com".to_string())
+            .build()
+            .expect("build client");
+
+        let model =
+            super::EmbeddingModel::new(client, crate::models::azure::TEXT_EMBEDDING_3_SMALL, None);
+        assert_eq!(model.ndims, 1_536);
+    }
+
+    #[test]
+    fn ada_embedding_models_disable_dimension_overrides() {
+        let metadata = embedding_metadata(crate::models::azure::TEXT_EMBEDDING_ADA_002)
+            .expect("ada-002 metadata should exist");
+
+        assert_eq!(metadata.supports_dimensions_override, Some(false));
+    }
+
+    #[test]
+    fn unknown_embedding_models_keep_zero_default_dimensions() {
+        let client = Client::builder()
+            .api_key("test")
+            .azure_endpoint("https://example.com".to_string())
+            .build()
+            .expect("build client");
+
+        let model = super::EmbeddingModel::new(client, "future-azure-embed-model", None);
+        assert_eq!(model.ndims, 0);
     }
 }

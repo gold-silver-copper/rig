@@ -6,7 +6,7 @@ use rig::{
     Embed,
     client::ProviderClient,
     embeddings::EmbeddingsBuilder,
-    providers::cohere::{self, Client},
+    providers::cohere::Client,
     vector_store::{
         VectorStoreIndex, in_memory_store::InMemoryVectorStore, request::VectorSearchRequest,
     },
@@ -64,8 +64,10 @@ fn print_matches(matches: &[SearchMatch]) {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let cohere_client = Client::from_env();
-    let document_model = cohere_client.embedding_model(cohere::EMBED_ENGLISH_V3, "search_document");
-    let search_model = cohere_client.embedding_model(cohere::EMBED_ENGLISH_V3, "search_query");
+    let document_model =
+        cohere_client.embedding_model(rig::models::cohere::EMBED_ENGLISH_V3, "search_document");
+    let search_model =
+        cohere_client.embedding_model(rig::models::cohere::EMBED_ENGLISH_V3, "search_query");
     let embeddings = EmbeddingsBuilder::new(document_model.clone())
         .documents(sample_documents())?
         .build()

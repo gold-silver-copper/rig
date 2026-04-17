@@ -4,7 +4,6 @@ use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
 use rig::message::{AssistantContent, Message, Reasoning};
-use rig::providers::moonshot;
 
 use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_response};
 
@@ -21,7 +20,8 @@ fn response_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
 #[tokio::test]
 #[ignore = "requires MOONSHOT_API_KEY"]
 async fn assistant_reasoning_content_roundtrips_in_history() {
-    let model = moonshot::Client::from_env().completion_model(moonshot::KIMI_K2_5);
+    let model = rig::providers::moonshot::Client::from_env()
+        .completion_model(rig::models::moonshot::KIMI_K2_5);
     let assistant = Message::Assistant {
         id: None,
         content: OneOrMany::many(vec![

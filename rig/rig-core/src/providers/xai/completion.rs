@@ -12,20 +12,10 @@ use super::client::Client;
 use crate::OneOrMany;
 use crate::completion::{self, CompletionError, CompletionRequest};
 use crate::http_client::HttpClientExt;
-use crate::providers::openai::completion::ToolChoice;
 use crate::providers::openai::responses_api::streaming::StreamingCompletionResponse;
 use crate::providers::openai::responses_api::{Output, ResponsesUsage};
 use crate::streaming::StreamingCompletionResponse as BaseStreamingCompletionResponse;
-
-/// xAI completion models as of 2025-06-04
-pub const GROK_2_1212: &str = "grok-2-1212";
-pub const GROK_2_VISION_1212: &str = "grok-2-vision-1212";
-pub const GROK_3: &str = "grok-3";
-pub const GROK_3_FAST: &str = "grok-3-fast";
-pub const GROK_3_MINI: &str = "grok-3-mini";
-pub const GROK_3_MINI_FAST: &str = "grok-3-mini-fast";
-pub const GROK_2_IMAGE_1212: &str = "grok-2-image-1212";
-pub const GROK_4: &str = "grok-4-0709";
+use rig::providers::openai::ToolChoice;
 
 // ================================================================
 // Request Types

@@ -13,7 +13,6 @@ use crate::{
     http_client::HttpClientExt,
     json_utils,
     one_or_many::string_or_one_or_many,
-    providers::openai,
 };
 use bytes::Bytes;
 use serde::{Deserialize, Serialize, Serializer};
@@ -23,15 +22,6 @@ use tracing::{Instrument, Level, enabled, info_span};
 // ================================================================
 // OpenRouter Completion API
 // ================================================================
-
-/// The `qwen/qwq-32b` model. Find more models at <https://openrouter.ai/models>.
-pub const QWEN_QWQ_32B: &str = "qwen/qwq-32b";
-/// The `anthropic/claude-3.7-sonnet` model. Find more models at <https://openrouter.ai/models>.
-pub const CLAUDE_3_7_SONNET: &str = "anthropic/claude-3.7-sonnet";
-/// The `perplexity/sonar-pro` model. Find more models at <https://openrouter.ai/models>.
-pub const PERPLEXITY_SONAR_PRO: &str = "perplexity/sonar-pro";
-/// The `google/gemini-2.0-flash-001` model. Find more models at <https://openrouter.ai/models>.
-pub const GEMINI_FLASH_2_0: &str = "google/gemini-2.0-flash-001";
 
 // ================================================================
 // Provider Selection and Prioritization
@@ -607,10 +597,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 let mut content = content
                     .iter()
                     .map(|c| match c {
-                        openai::AssistantContent::Text { text } => {
+                        rig::providers::openai::AssistantContent::Text { text } => {
                             completion::AssistantContent::text(text)
                         }
-                        openai::AssistantContent::Refusal { refusal } => {
+                        rig::providers::openai::AssistantContent::Refusal { refusal } => {
                             completion::AssistantContent::text(refusal)
                         }
                     })
@@ -791,7 +781,9 @@ pub enum UserContent {
     /// Audio content (base64-encoded only; URLs are not supported for audio)
     ///
     /// Supported formats vary by model.
-    InputAudio { input_audio: openai::InputAudio },
+    InputAudio {
+        input_audio: rig::providers::openai::InputAudio,
+    },
 
     /// Video content (URL or base64 data URI)
     ///
@@ -886,7 +878,7 @@ impl UserContent {
     /// * `format` - Audio format (e.g., `AudioMediaType::WAV`, `AudioMediaType::MP3`)
     pub fn audio_base64(data: impl Into<String>, format: AudioMediaType) -> Self {
         UserContent::InputAudio {
-            input_audio: openai::InputAudio {
+            input_audio: rig::providers::openai::InputAudio {
                 data: data.into(),
                 format,
             },
@@ -1106,7 +1098,7 @@ impl TryFrom<message::UserContent> for UserContent {
                         )
                     })?;
                     Ok(UserContent::InputAudio {
-                        input_audio: openai::InputAudio { data, format },
+                        input_audio: rig::providers::openai::InputAudio { data, format },
                     })
                 }
                 DocumentSourceKind::Url(_) => Err(message::MessageError::ConversionError(
@@ -1237,7 +1229,7 @@ pub enum Message {
     #[serde(alias = "developer")]
     System {
         #[serde(deserialize_with = "string_or_one_or_many")]
-        content: OneOrMany<openai::SystemContent>,
+        content: OneOrMany<rig::providers::openai::SystemContent>,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
@@ -1252,11 +1244,11 @@ pub enum Message {
     },
     Assistant {
         #[serde(default, deserialize_with = "json_utils::string_or_vec")]
-        content: Vec<openai::AssistantContent>,
+        content: Vec<rig::providers::openai::AssistantContent>,
         #[serde(skip_serializing_if = "Option::is_none")]
         refusal: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        audio: Option<openai::AudioAssistant>,
+        audio: Option<rig::providers::openai::AudioAssistant>,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         #[serde(
@@ -1264,7 +1256,7 @@ pub enum Message {
             deserialize_with = "json_utils::null_or_vec",
             skip_serializing_if = "Vec::is_empty"
         )]
-        tool_calls: Vec<openai::ToolCall>,
+        tool_calls: Vec<rig::providers::openai::ToolCall>,
         #[serde(skip_serializing_if = "Option::is_none")]
         reasoning: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1324,26 +1316,30 @@ enum ToolCallAdditionalParams {
 }
 
 /// Convert OpenAI's UserContent to OpenRouter's UserContent
-impl From<openai::UserContent> for UserContent {
-    fn from(value: openai::UserContent) -> Self {
+impl From<rig::providers::openai::UserContent> for UserContent {
+    fn from(value: rig::providers::openai::UserContent) -> Self {
         match value {
-            openai::UserContent::Text { text } => UserContent::Text { text },
-            openai::UserContent::Image { image_url } => UserContent::ImageUrl {
+            rig::providers::openai::UserContent::Text { text } => UserContent::Text { text },
+            rig::providers::openai::UserContent::Image { image_url } => UserContent::ImageUrl {
                 image_url: ImageUrl {
                     url: image_url.url,
                     detail: Some(image_url.detail),
                 },
             },
-            openai::UserContent::Audio { input_audio } => UserContent::InputAudio { input_audio },
+            rig::providers::openai::UserContent::Audio { input_audio } => {
+                UserContent::InputAudio { input_audio }
+            }
         }
     }
 }
 
-impl From<openai::Message> for Message {
-    fn from(value: openai::Message) -> Self {
+impl From<rig::providers::openai::Message> for Message {
+    fn from(value: rig::providers::openai::Message) -> Self {
         match value {
-            openai::Message::System { content, name } => Self::System { content, name },
-            openai::Message::User { content, name } => {
+            rig::providers::openai::Message::System { content, name } => {
+                Self::System { content, name }
+            }
+            rig::providers::openai::Message::User { content, name } => {
                 // Convert OpenAI UserContent to OpenRouter UserContent
                 let converted_content = content.map(UserContent::from);
                 Self::User {
@@ -1351,7 +1347,7 @@ impl From<openai::Message> for Message {
                     name,
                 }
             }
-            openai::Message::Assistant {
+            rig::providers::openai::Message::Assistant {
                 content,
                 refusal,
                 audio,
@@ -1366,7 +1362,7 @@ impl From<openai::Message> for Message {
                 reasoning: None,
                 reasoning_details: Vec::new(),
             },
-            openai::Message::ToolResult {
+            rig::providers::openai::Message::ToolResult {
                 tool_call_id,
                 content,
             } => Self::ToolResult {
@@ -1559,9 +1555,9 @@ pub(super) struct OpenrouterCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<crate::providers::openai::completion::ToolDefinition>,
+    tools: Vec<rig::providers::openai::ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openai::completion::ToolChoice>,
+    tool_choice: Option<rig::providers::openai::ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -1612,15 +1608,15 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
         let tool_choice = req
             .tool_choice
             .clone()
-            .map(crate::providers::openai::completion::ToolChoice::try_from)
+            .map(rig::providers::openai::ToolChoice::try_from)
             .transpose()?;
 
-        let tools: Vec<crate::providers::openai::completion::ToolDefinition> = req
+        let tools: Vec<rig::providers::openai::ToolDefinition> = req
             .tools
             .clone()
             .into_iter()
             .map(|tool| {
-                let def = crate::providers::openai::completion::ToolDefinition::from(tool);
+                let def = rig::providers::openai::ToolDefinition::from(tool);
                 if strict_tools { def.with_strict() } else { def }
             })
             .collect();
@@ -3027,7 +3023,7 @@ mod tests {
     #[test]
     fn test_openai_user_content_conversion() {
         // Test that OpenAI UserContent can be converted to OpenRouter UserContent
-        let openai_text = openai::UserContent::Text {
+        let openai_text = rig::providers::openai::UserContent::Text {
             text: "Hello".to_string(),
         };
         let converted: UserContent = openai_text.into();
@@ -3038,8 +3034,8 @@ mod tests {
             }
         );
 
-        let openai_image = openai::UserContent::Image {
-            image_url: openai::ImageUrl {
+        let openai_image = rig::providers::openai::UserContent::Image {
+            image_url: rig::providers::openai::ImageUrl {
                 url: "https://example.com/img.png".to_string(),
                 detail: ImageDetail::Auto,
             },
@@ -3053,8 +3049,8 @@ mod tests {
             _ => panic!("Expected ImageUrl"),
         }
 
-        let openai_audio = openai::UserContent::Audio {
-            input_audio: openai::InputAudio {
+        let openai_audio = rig::providers::openai::UserContent::Audio {
+            input_audio: rig::providers::openai::InputAudio {
                 data: "audiodata".to_string(),
                 format: AudioMediaType::FLAC,
             },

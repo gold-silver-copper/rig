@@ -1,7 +1,6 @@
 use anyhow::Result;
 use rig::integrations::cli_chatbot::ChatBotBuilder;
 use rig::prelude::*;
-use rig::providers::openai;
 use rig::{
     agent::{Agent, AgentBuilder},
     completion::{Chat, CompletionModel, Message, PromptError, ToolDefinition},
@@ -67,7 +66,7 @@ impl<M: CompletionModel + 'static> Tool for TranslatorTool<M> {
 async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
     let openai_client = OpenAIClient::from_env();
-    let model = openai_client.completion_model(openai::GPT_4O);
+    let model = openai_client.completion_model(rig::models::openai::GPT_4O);
 
     let translator_agent = AgentBuilder::new(model.clone())
                 .preamble(

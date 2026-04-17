@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicUsize;
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Chat, Message};
-use rig::providers::xai;
 use rig::streaming::StreamingChat;
 
 use crate::reasoning::{self, WeatherTool};
@@ -17,9 +16,9 @@ use crate::reasoning::{self, WeatherTool};
 #[ignore = "requires XAI_API_KEY - validate with grok-4-0725 once key is available"]
 async fn streaming() {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = xai::Client::from_env();
+    let client = rig::providers::xai::Client::from_env();
     let agent = client
-        .agent(xai::GROK_3_MINI)
+        .agent(rig::models::xai::GROK_3_MINI)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
         .tool(WeatherTool::new(call_count.clone()))
@@ -38,9 +37,9 @@ async fn streaming() {
 #[ignore = "requires XAI_API_KEY - validate with grok-4-0725 once key is available"]
 async fn nonstreaming() {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = xai::Client::from_env();
+    let client = rig::providers::xai::Client::from_env();
     let agent = client
-        .agent(xai::GROK_3_MINI)
+        .agent(rig::models::xai::GROK_3_MINI)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
         .tool(WeatherTool::new(call_count.clone()))

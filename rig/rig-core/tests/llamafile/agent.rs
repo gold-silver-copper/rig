@@ -2,16 +2,15 @@
 
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
-use rig::providers::llamafile;
 
 use crate::support::assert_nonempty_response;
 
 #[tokio::test]
 #[ignore = "requires a local llamafile server at http://localhost:8080"]
 async fn completion_smoke() {
-    let client = llamafile::Client::from_url("http://localhost:8080");
+    let client = rig::providers::llamafile::Client::from_url("http://localhost:8080");
     let agent = client
-        .agent(llamafile::LLAMA_CPP)
+        .agent(rig::models::llamafile::LLAMA_CPP)
         .preamble("You are a helpful assistant.")
         .build();
 

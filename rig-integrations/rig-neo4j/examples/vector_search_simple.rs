@@ -10,7 +10,6 @@ use std::env;
 
 use futures::{StreamExt, TryStreamExt};
 use rig::client::{EmbeddingsClient, ProviderClient};
-use rig::providers::openai;
 use rig::vector_store::request::VectorSearchRequest;
 use rig::{
     Embed, embeddings::EmbeddingsBuilder, providers::openai::Client,
@@ -38,7 +37,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let neo4j_client = Neo4jClient::connect(&neo4j_uri, &neo4j_username, &neo4j_password).await?;
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     let embeddings = EmbeddingsBuilder::new(model.clone())
         .document(Word {

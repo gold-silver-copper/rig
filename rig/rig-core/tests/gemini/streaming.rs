@@ -1,7 +1,6 @@
 //! Gemini streaming coverage, including the migrated example path.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::gemini;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig, ThinkingConfig, ThinkingLevel,
 };
@@ -24,9 +23,9 @@ async fn streaming_smoke() {
     };
     let additional_params = AdditionalParameters::default().with_config(thinking_config);
 
-    let client = gemini::Client::from_env();
+    let client = rig::providers::gemini::Client::from_env();
     let agent = client
-        .agent(gemini::completion::GEMINI_3_FLASH_PREVIEW)
+        .agent(rig::models::gemini::GEMINI_3_FLASH_PREVIEW)
         .preamble(STREAMING_PREAMBLE)
         .additional_params(
             serde_json::to_value(additional_params)
@@ -54,8 +53,8 @@ async fn example_streaming_prompt() {
         ..Default::default()
     };
     let params = AdditionalParameters::default().with_config(generation_config);
-    let agent = gemini::Client::from_env()
-        .agent(gemini::completion::GEMINI_3_FLASH_PREVIEW)
+    let agent = rig::providers::gemini::Client::from_env()
+        .agent(rig::models::gemini::GEMINI_3_FLASH_PREVIEW)
         .preamble("Be precise and concise.")
         .temperature(0.5)
         .additional_params(serde_json::to_value(params).expect("params should serialize"))

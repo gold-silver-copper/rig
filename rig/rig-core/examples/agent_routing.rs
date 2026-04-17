@@ -18,7 +18,7 @@ fn build_router_agent(
     client: &Client,
 ) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
     client
-        .agent(openai::GPT_4)
+        .agent(rig::models::openai::GPT_4)
         .preamble(ROUTER_PREAMBLE)
         .build()
 }
@@ -26,7 +26,7 @@ fn build_router_agent(
 fn build_response_agent(
     client: &Client,
 ) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
-    client.agent(openai::GPT_4).build()
+    client.agent(rig::models::openai::GPT_4).build()
 }
 
 fn follow_up_prompt(category: &str) -> Result<&'static str> {

@@ -114,7 +114,7 @@ async fn vector_search_test() {
         .unwrap();
 
     // Select an embedding model.
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     // Initialize LanceDB locally.
     let db = lancedb::connect("data/lancedb-store")
@@ -329,7 +329,7 @@ async fn agent_with_dynamic_context_test() {
         .unwrap();
 
     // Select an embedding model.
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     // Initialize LanceDB locally.
     let db = lancedb::connect("data/lancedb-store")
@@ -395,7 +395,7 @@ async fn agent_with_dynamic_context_test() {
 
     // Build RAG agent with dynamic context
     let agent = openai_client
-        .completion_model(openai::GPT_4O)
+        .completion_model(rig::models::openai::GPT_4O)
         .completions_api()
         .into_agent_builder()
         .dynamic_context(top_k, vector_store_index)

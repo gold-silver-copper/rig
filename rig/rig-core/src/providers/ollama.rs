@@ -7,10 +7,10 @@
 //! use rig::providers::ollama;
 //!
 //! // Create a new Ollama client (defaults to http://localhost:11434, no auth)
-//! let client = ollama::Client::new(Nothing).unwrap();
+//! let client = rig::providers::ollama::Client::new(Nothing).unwrap();
 //!
 //! // Or connect to a remote/proxied Ollama instance with authentication
-//! let client = ollama::Client::builder()
+//! let client = rig::providers::ollama::Client::builder()
 //!     .api_key("my-secret-key")
 //!     .base_url("http://remote-ollama:11434")
 //!     .build()
@@ -195,15 +195,10 @@ enum ApiResponse<T> {
 
 // ---------- Embedding API ----------
 
-pub const ALL_MINILM: &str = "all-minilm";
-pub const NOMIC_EMBED_TEXT: &str = "nomic-embed-text";
-
 fn model_dimensions_from_identifier(identifier: &str) -> Option<usize> {
-    match identifier {
-        ALL_MINILM => Some(384),
-        NOMIC_EMBED_TEXT => Some(768),
-        _ => None,
-    }
+    crate::models::ollama::lookup(identifier)
+        .and_then(|model| model.embedding)
+        .and_then(|metadata| metadata.default_dimensions)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -322,10 +317,6 @@ where
 }
 
 // ---------- Completion API ----------
-
-pub const LLAMA3_2: &str = "llama3.2";
-pub const LLAVA: &str = "llava";
-pub const MISTRAL: &str = "mistral";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionResponse {
@@ -1761,8 +1752,8 @@ mod tests {
 
     #[test]
     fn test_client_initialization() {
-        let _client = crate::providers::ollama::Client::new(Nothing).expect("Client::new() failed");
-        let _client_from_builder = crate::providers::ollama::Client::builder()
+        let _client = rig::providers::ollama::Client::new(Nothing).expect("Client::new() failed");
+        let _client_from_builder = rig::providers::ollama::Client::builder()
             .api_key(Nothing)
             .build()
             .expect("Client::builder() failed");

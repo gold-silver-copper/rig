@@ -1,6 +1,5 @@
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers;
 use rig_derive::rig_tool;
 
 // Simple example with no attributes (`required` is still needed for OpenAI's strict function tool calling)
@@ -52,8 +51,8 @@ fn sum_numbers(numbers: Vec<i64>) -> Result<i64, rig::tool::ToolError> {
 async fn main() {
     tracing_subscriber::fmt().pretty().init();
 
-    let calculator_agent = providers::openai::Client::from_env()
-        .agent(providers::openai::GPT_4O)
+    let calculator_agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
         .tool(Add)

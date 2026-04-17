@@ -2,7 +2,7 @@ use crate::{
     client::ModelLister,
     http_client::{self, HttpClientExt},
     model::{Model, ModelList, ModelListingError},
-    providers::openai::Client,
+    rig::providers::openai::Client,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
 use serde::Deserialize;

@@ -2,16 +2,15 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::openai;
 
 use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn completion_smoke() {
-    let client = openai::Client::from_env();
+    let client = rig::providers::openai::Client::from_env();
     let agent = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble(BASIC_PREAMBLE)
         .build();
 

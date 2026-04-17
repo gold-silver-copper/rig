@@ -4,9 +4,9 @@
 //! ```
 //! use rig::providers::gemini;
 //!
-//! let client = gemini::Client::new("YOUR_API_KEY");
+//! let client = rig::providers::gemini::Client::new("YOUR_API_KEY");
 //!
-//! let gemini_embedding_model = client.embedding_model(gemini::EMBEDDING_001);
+//! let gemini_embedding_model = client.embedding_model(rig::models::gemini::EMBEDDING_001);
 //! ```
 
 pub mod client;
@@ -19,7 +19,7 @@ pub mod transcription;
 
 pub use client::{Client, InteractionsClient};
 pub use completion::CompletionModel;
-pub use embedding::{EMBEDDING_001, EMBEDDING_004, EmbeddingModel};
+pub use embedding::EmbeddingModel;
 pub use model_listing::*;
 
 pub mod gemini_api_types {

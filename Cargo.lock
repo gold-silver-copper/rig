@@ -9424,6 +9424,7 @@ dependencies = [
  "reqwest-middleware",
  "reqwest-retry",
  "rig-derive",
+ "rig-models",
  "rmcp",
  "schemars 1.2.1",
  "serde",
@@ -9534,6 +9535,22 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "rig-models"
+version = "0.1.0"
+
+[[package]]
+name = "rig-models-generator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rig-core",
+ "rig-models",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

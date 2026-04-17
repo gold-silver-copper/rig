@@ -15,7 +15,7 @@ use rig::{
     Embed,
     client::{EmbeddingsClient, ProviderClient},
     embeddings::EmbeddingsBuilder,
-    providers::openai::{self, Client},
+    providers::openai::Client,
     vector_store::request::VectorSearchRequest,
     vector_store::{InsertDocuments, VectorStoreIndex},
 };
@@ -31,7 +31,7 @@ struct Word {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let openai_client = Client::from_env();
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_3_SMALL);
 
     let vector_store = VectorizeVectorStore::new(
         model.clone(),

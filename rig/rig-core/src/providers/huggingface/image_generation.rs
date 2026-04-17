@@ -4,14 +4,6 @@ use crate::image_generation;
 use crate::image_generation::{ImageGenerationError, ImageGenerationRequest};
 use serde_json::json;
 
-#[allow(non_upper_case_globals)]
-pub mod image_generation_models {
-    pub const Flux1: &str = "black-forest-labs/FLUX.1-dev";
-    pub const Kolors: &str = "Kwai-Kolors/Kolors";
-    pub const StableDiffusion3: &str = "stabilityai/stable-diffusion-3-medium-diffusers";
-}
-pub use image_generation_models::*;
-
 #[derive(Debug)]
 pub struct ImageGenerationResponse {
     data: Vec<u8>,

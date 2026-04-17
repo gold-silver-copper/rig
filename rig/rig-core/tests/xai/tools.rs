@@ -2,7 +2,6 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::xai;
 
 use crate::support::{
     Adder, Subtract, TOOLS_PREAMBLE, TOOLS_PROMPT, assert_mentions_expected_number,
@@ -11,9 +10,9 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
 async fn tools_smoke() {
-    let client = xai::Client::from_env();
+    let client = rig::providers::xai::Client::from_env();
     let agent = client
-        .agent(xai::completion::GROK_3_MINI)
+        .agent(rig::models::xai::GROK_3_MINI)
         .preamble(TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)

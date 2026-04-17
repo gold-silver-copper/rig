@@ -2,14 +2,13 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::huggingface;
 
 use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
 async fn completion_smoke() {
-    let client = huggingface::Client::from_env();
+    let client = rig::providers::huggingface::Client::from_env();
     let agent = client
         .agent("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B")
         .preamble(BASIC_PREAMBLE)

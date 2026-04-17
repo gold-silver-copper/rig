@@ -2,7 +2,6 @@ use anyhow::Result;
 use rig::agent::{HookAction, PromptHook, ToolCallHookAction, stream_to_stdout};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{CompletionModel, Prompt, ToolDefinition};
-use rig::providers;
 use rig::streaming::StreamingPrompt;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -151,8 +150,8 @@ impl<M: CompletionModel> PromptHook<M> for PermissionHook {
 async fn permission_control_prompt_example() -> Result<()> {
     let _cleanup = FileCleanup::new()?;
 
-    let agent = providers::openai::Client::from_env()
-        .agent(providers::openai::GPT_4O_MINI)
+    let agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O_MINI)
         .preamble("You are a helpful assistant that can read files using different methods.")
         .tool(ReadFileHead)
         .tool(ReadFileTail)
@@ -185,8 +184,8 @@ async fn permission_control_prompt_example() -> Result<()> {
 async fn permission_control_streaming_example() -> Result<()> {
     let _cleanup = FileCleanup::new()?;
 
-    let agent = providers::openai::Client::from_env()
-        .agent(providers::openai::GPT_4O_MINI)
+    let agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O_MINI)
         .preamble("You are a helpful assistant that can read files using different methods.")
         .tool(ReadFileHead)
         .tool(ReadFileTail)

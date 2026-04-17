@@ -3,14 +3,13 @@
 use futures::StreamExt;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
-use rig::providers::ollama;
 use rig::streaming::StreamedAssistantContent;
 use tokio::time::{Duration, sleep};
 
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]
 async fn streaming_pause_and_resume() {
-    let model = ollama::Client::from_env().completion_model("gemma3:4b");
+    let model = rig::providers::ollama::Client::from_env().completion_model("gemma3:4b");
     let request = model
         .completion_request("Explain backpropagation in neural networks.")
         .preamble("You are a helpful AI assistant. Provide concise explanations.".to_string())

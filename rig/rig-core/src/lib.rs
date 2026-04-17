@@ -20,7 +20,7 @@
 //! async fn main() {
 //!     // Create OpenAI client and agent.
 //!     // This requires the `OPENAI_API_KEY` environment variable to be set.
-//!     let openai_client = openai::Client::from_env();
+//!     let openai_client = rig::providers::openai::Client::from_env();
 //!
 //!     let gpt4 = openai_client.agent("gpt-4").build();
 //!
@@ -144,6 +144,7 @@ pub use completion::message;
 pub use embeddings::Embed;
 pub use extractor::ExtractionResponse;
 pub use one_or_many::{EmptyListError, OneOrMany};
+pub use rig_models as models;
 
 #[cfg(feature = "derive")]
 #[cfg_attr(docsrs, doc(cfg(feature = "derive")))]

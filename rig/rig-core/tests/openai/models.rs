@@ -1,12 +1,11 @@
 //! OpenAI model listing smoke test.
 
 use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::openai;
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn list_models_smoke() {
-    let client = openai::Client::from_env();
+    let client = rig::providers::openai::Client::from_env();
     let models = match client.list_models().await {
         Ok(models) => models,
         Err(error) => {

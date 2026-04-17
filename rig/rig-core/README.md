@@ -35,7 +35,7 @@ use rig::{completion::Prompt, providers::openai};
 async fn main() {
     // Create OpenAI client and model
     // This requires the `OPENAI_API_KEY` environment variable to be set.
-    let openai_client = openai::Client::from_env();
+    let openai_client = rig::providers::openai::Client::from_env();
 
     let gpt4 = openai_client.model("gpt-4").build();
 

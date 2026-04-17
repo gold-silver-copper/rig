@@ -17,7 +17,7 @@ pub trait EmbeddingsClient {
     /// // Initialize the OpenAI client
     /// let openai = Client::new("your-open-ai-api-key");
     ///
-    /// let embedding_model = openai.embedding_model(openai::TEXT_EMBEDDING_3_LARGE);
+    /// let embedding_model = openai.embedding_model(rig::models::openai::TEXT_EMBEDDING_3_LARGE);
     /// ```
     fn embedding_model(&self, model: impl Into<String>) -> Self::EmbeddingModel;
 
@@ -51,7 +51,7 @@ pub trait EmbeddingsClient {
     /// // Initialize the OpenAI client
     /// let openai = Client::new("your-open-ai-api-key");
     ///
-    /// let embeddings = openai.embeddings(openai::TEXT_EMBEDDING_3_LARGE)
+    /// let embeddings = openai.embeddings(rig::models::openai::TEXT_EMBEDDING_3_LARGE)
     ///     .simple_document("doc0", "Hello, world!")
     ///     .simple_document("doc1", "Goodbye, world!")
     ///     .build()
@@ -75,7 +75,7 @@ pub trait EmbeddingsClient {
     /// // Initialize the OpenAI client
     /// let openai = Client::new("your-open-ai-api-key");
     ///
-    /// let embeddings = openai.embeddings_with_ndims(openai::TEXT_EMBEDDING_3_LARGE, 3072)
+    /// let embeddings = openai.embeddings_with_ndims(rig::models::openai::TEXT_EMBEDDING_3_LARGE, 3072)
     ///     .simple_document("doc0", "Hello, world!")
     ///     .simple_document("doc1", "Goodbye, world!")
     ///     .build()

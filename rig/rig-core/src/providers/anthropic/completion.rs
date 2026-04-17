@@ -21,13 +21,6 @@ use tracing::{Instrument, Level, enabled, info_span};
 // Anthropic Completion API
 // ================================================================
 
-/// `claude-opus-4-6` completion model
-pub const CLAUDE_OPUS_4_6: &str = "claude-opus-4-6";
-/// `claude-sonnet-4-6` completion model
-pub const CLAUDE_SONNET_4_6: &str = "claude-sonnet-4-6";
-/// `claude-haiku-4-5` completion model
-pub const CLAUDE_HAIKU_4_5: &str = "claude-haiku-4-5";
-
 pub const ANTHROPIC_VERSION_2023_01_01: &str = "2023-01-01";
 pub const ANTHROPIC_VERSION_2023_06_01: &str = "2023-06-01";
 pub const ANTHROPIC_VERSION_LATEST: &str = ANTHROPIC_VERSION_2023_06_01;
@@ -923,7 +916,7 @@ where
     /// extended TTL.
     ///
     /// ```ignore
-    /// let model = client.completion_model(anthropic::completion::CLAUDE_SONNET_4_6)
+    /// let model = client.completion_model(rig::models::anthropic::CLAUDE_SONNET_4_6)
     ///     .with_automatic_caching();
     /// ```
     ///
@@ -952,11 +945,11 @@ where
     /// `extended-cache-ttl-2025-04-11` beta header to be sent with the client:
     ///
     /// ```ignore
-    /// let client = anthropic::Client::builder()
+    /// let client = rig::providers::anthropic::Client::builder()
     ///     .api_key(std::env::var("ANTHROPIC_API_KEY").unwrap())
     ///     .anthropic_beta("extended-cache-ttl-2025-04-11")
     ///     .build()?;
-    /// let model = client.completion_model(anthropic::completion::CLAUDE_SONNET_4_6)
+    /// let model = client.completion_model(rig::models::anthropic::CLAUDE_SONNET_4_6)
     ///     .with_automatic_caching_1h();
     /// ```
     ///
@@ -972,16 +965,11 @@ where
 /// set or if set too high, the request will fail. The following values are based on the models
 /// available at the time of writing.
 fn default_max_tokens_for_model(model: &str) -> Option<u64> {
-    if model.starts_with("claude-opus-4-6") {
-        Some(128_000)
-    } else if model.starts_with("claude-opus-4")
-        || model.starts_with("claude-sonnet-4")
-        || model.starts_with("claude-haiku-4-5")
-    {
-        Some(64_000)
-    } else {
-        None
-    }
+    crate::models::anthropic::ALL_MODELS
+        .iter()
+        .find(|metadata| model.starts_with(metadata.id))
+        .and_then(|metadata| metadata.completion)
+        .and_then(|metadata| metadata.default_max_tokens)
 }
 
 fn default_max_tokens_with_fallback(model: &str) -> u64 {

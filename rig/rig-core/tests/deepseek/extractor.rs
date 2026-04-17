@@ -1,16 +1,15 @@
 //! DeepSeek extractor smoke test.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::deepseek;
 
 use crate::support::{EXTRACTOR_TEXT, SmokePerson, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
 async fn extractor_smoke() {
-    let client = deepseek::Client::from_env();
+    let client = rig::providers::deepseek::Client::from_env();
     let extractor = client
-        .extractor::<SmokePerson>(deepseek::DEEPSEEK_CHAT)
+        .extractor::<SmokePerson>(rig::models::deepseek::DEEPSEEK_CHAT)
         .build();
 
     let person = extractor

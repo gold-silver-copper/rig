@@ -15,28 +15,6 @@ use crate::{
     telemetry::SpanCombinator,
 };
 
-/// The latest version of the `codestral` Mistral model
-pub const CODESTRAL: &str = "codestral-latest";
-/// The latest version of the `mistral-large` Mistral model
-pub const MISTRAL_LARGE: &str = "mistral-large-latest";
-/// The latest version of the `pixtral-large` Mistral multimodal model
-pub const PIXTRAL_LARGE: &str = "pixtral-large-latest";
-/// The latest version of the `mistral` Mistral multimodal model, trained on datasets from the Middle East & South Asia
-pub const MISTRAL_SABA: &str = "mistral-saba-latest";
-/// The latest version of the `mistral-3b` Mistral completions model
-pub const MINISTRAL_3B: &str = "ministral-3b-latest";
-/// The latest version of the `mistral-8b` Mistral completions model
-pub const MINISTRAL_8B: &str = "ministral-8b-latest";
-
-/// The latest version of the `mistral-small` Mistral completions model
-pub const MISTRAL_SMALL: &str = "mistral-small-latest";
-/// The `24-09` version of the `pixtral-small` Mistral multimodal model
-pub const PIXTRAL_SMALL: &str = "pixtral-12b-2409";
-/// The `open-mistral-nemo` model
-pub const MISTRAL_NEMO: &str = "open-mistral-nemo";
-/// The `open-mistral-mamba` model
-pub const CODESTRAL_MAMBA: &str = "open-codestral-mamba";
-
 // =================================================================
 // Rig Implementation Types
 // =================================================================
@@ -338,7 +316,7 @@ pub(super) struct MistralCompletionRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openai::completion::ToolChoice>,
+    tool_choice: Option<rig::providers::openai::ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -385,7 +363,7 @@ impl TryFrom<(&str, CompletionRequest)> for MistralCompletionRequest {
         let tool_choice = req
             .tool_choice
             .clone()
-            .map(crate::providers::openai::completion::ToolChoice::try_from)
+            .map(rig::providers::openai::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
@@ -706,7 +684,10 @@ mod tests {
         }
         "#;
         let completion_response = serde_json::from_str::<CompletionResponse>(json_data).unwrap();
-        assert_eq!(completion_response.model, MISTRAL_SMALL);
+        assert_eq!(
+            completion_response.model,
+            crate::models::mistral::MISTRAL_SMALL
+        );
 
         let CompletionResponse {
             id,
@@ -832,7 +813,8 @@ mod tests {
             output_schema: None,
         };
 
-        let result = MistralCompletionRequest::try_from((MISTRAL_SMALL, request));
+        let result =
+            MistralCompletionRequest::try_from((crate::models::mistral::MISTRAL_SMALL, request));
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
     }
 }

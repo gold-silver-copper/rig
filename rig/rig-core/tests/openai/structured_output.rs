@@ -2,7 +2,6 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Prompt, TypedPrompt};
-use rig::providers::openai;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -47,8 +46,8 @@ fn assert_weather_forecast(forecast: &WeatherForecast, expected_city: &[&str]) {
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn structured_output_smoke() {
-    let client = openai::Client::from_env();
-    let agent = client.agent(openai::GPT_4O).build();
+    let client = rig::providers::openai::Client::from_env();
+    let agent = client.agent(rig::models::openai::GPT_4O).build();
 
     let response: SmokeStructuredOutput = agent
         .prompt_typed(STRUCTURED_OUTPUT_PROMPT)
@@ -61,9 +60,9 @@ async fn structured_output_smoke() {
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn prompt_typed_and_output_schema() {
-    let client = openai::Client::from_env();
+    let client = rig::providers::openai::Client::from_env();
     let agent = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are a helpful weather assistant. Respond with realistic weather data.")
         .build();
 
@@ -82,7 +81,7 @@ async fn prompt_typed_and_output_schema() {
     assert!(extended.usage.total_tokens > 0, "usage should be populated");
 
     let agent_with_schema = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are a helpful weather assistant. Respond with realistic weather data.")
         .output_schema::<WeatherForecast>()
         .build();

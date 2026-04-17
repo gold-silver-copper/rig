@@ -11,12 +11,12 @@ mod request_hook;
 mod streaming;
 mod streaming_tools;
 
-use rig::providers::chatgpt::{self, ChatGPTAuth};
+use rig::providers::chatgpt::ChatGPTAuth;
 use serde::Deserialize;
 use std::path::PathBuf;
 
 const TOKEN_EXPIRY_SKEW_SECONDS: i64 = 60;
-pub(crate) const LIVE_MODEL: &str = chatgpt::GPT_5_3_CODEX;
+pub(crate) const LIVE_MODEL: &str = rig::models::chatgpt::GPT_5_3_CODEX;
 
 #[derive(Debug, Deserialize)]
 struct CachedAuthRecord {
@@ -25,8 +25,8 @@ struct CachedAuthRecord {
     expires_at: Option<i64>,
 }
 
-pub(crate) fn live_builder() -> chatgpt::ClientBuilder {
-    let mut builder = chatgpt::Client::builder();
+pub(crate) fn live_builder() -> rig::providers::chatgpt::ClientBuilder {
+    let mut builder = rig::providers::chatgpt::Client::builder();
 
     if let Ok(base_url) =
         std::env::var("CHATGPT_API_BASE").or_else(|_| std::env::var("OPENAI_CHATGPT_API_BASE"))
@@ -47,7 +47,7 @@ pub(crate) fn live_builder() -> chatgpt::ClientBuilder {
     }
 }
 
-pub(crate) fn live_client() -> chatgpt::Client {
+pub(crate) fn live_client() -> rig::providers::chatgpt::Client {
     live_builder().build().expect("ChatGPT client should build")
 }
 

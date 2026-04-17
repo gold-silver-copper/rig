@@ -4,7 +4,6 @@ use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
 use rig::message::AssistantContent;
-use rig::providers::openai;
 use rig::providers::openai::responses_api::streaming::{ItemChunkKind, ResponseChunkKind};
 use rig::providers::openai::responses_api::websocket::ResponsesWebSocketEvent;
 
@@ -24,8 +23,8 @@ fn extract_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY and --features websocket"]
 async fn websocket_session_roundtrip() -> Result<()> {
-    let client = openai::Client::from_env();
-    let model_name = openai::GPT_4O_MINI;
+    let client = rig::providers::openai::Client::from_env();
+    let model_name = rig::models::openai::GPT_4O_MINI;
     let model = client.completion_model(model_name);
     let mut session = client.responses_websocket(model_name).await?;
 

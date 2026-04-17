@@ -2,7 +2,6 @@ use rig::prelude::*;
 
 use rig::completion::Prompt;
 
-use rig::providers::openai;
 use rig::providers::openai::client::Client;
 
 use schemars::JsonSchema;
@@ -30,7 +29,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let openai_client = Client::from_env();
 
     let generator_agent = openai_client
-        .agent(openai::GPT_4)
+        .agent(rig::models::openai::GPT_4)
         .preamble(
             "
             Your goal is to complete the task based on <user input>. If there are feedback
@@ -47,7 +46,7 @@ async fn main() -> Result<(), anyhow::Error> {
         )
         .build();
 
-    let evaluator_agent = openai_client.extractor::<Evaluation>(openai::GPT_4)
+    let evaluator_agent = openai_client.extractor::<Evaluation>(rig::models::openai::GPT_4)
         .preamble("
             Evaluate this following code implementation for:
             1. code correctness

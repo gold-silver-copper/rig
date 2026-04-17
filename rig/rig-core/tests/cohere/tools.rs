@@ -2,7 +2,6 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::cohere;
 
 use crate::support::{
     Adder, Subtract, TOOLS_PREAMBLE, TOOLS_PROMPT, assert_mentions_expected_number,
@@ -11,9 +10,9 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires COHERE_API_KEY"]
 async fn tools_smoke() {
-    let client = cohere::Client::from_env();
+    let client = rig::providers::cohere::Client::from_env();
     let agent = client
-        .agent(cohere::COMMAND_R)
+        .agent(rig::models::cohere::COMMAND_R)
         .preamble(TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)

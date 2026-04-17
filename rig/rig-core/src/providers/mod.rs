@@ -23,7 +23,7 @@
 //! use rig::{providers::openai, agent::AgentBuilder};
 //!
 //! // Initialize the OpenAI client
-//! let openai = openai::Client::new("your-openai-api-key");
+//! let openai = rig::providers::openai::Client::new("your-openai-api-key");
 //!
 //! // Create a model and initialize an agent
 //! let gpt_4o = openai.completion_model("gpt-4o");

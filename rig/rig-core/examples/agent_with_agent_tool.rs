@@ -2,7 +2,6 @@ use anyhow::Result;
 use rig::prelude::*;
 use rig::{
     completion::{Prompt, ToolDefinition},
-    providers,
     tool::Tool,
 };
 use serde::{Deserialize, Serialize};
@@ -100,11 +99,11 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     // Create OpenAI client
-    let openai_client = providers::openai::Client::from_env();
+    let openai_client = rig::providers::openai::Client::from_env();
 
     // Create agent with a single context prompt and two tools
     let calculator_agent = openai_client
-        .agent(providers::openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are a calculator here to help the user perform arithmetic operations. Use the tools provided to answer the user's question.")
         .max_tokens(1024)
         .tool(Adder)
@@ -113,7 +112,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Create agent which has the calculator_agent as a tool
     let agent_using_agent = openai_client
-        .agent(providers::openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are a helpful assistant that can solve problems. Use the tool provided to answer the user's question.")
         .max_tokens(1024)
         .tool(calculator_agent)

@@ -1,6 +1,6 @@
+use super::Client;
+use super::completion::ApiResponse;
 use crate::http_client::HttpClientExt;
-use crate::providers::huggingface::Client;
-use crate::providers::huggingface::completion::ApiResponse;
 use crate::transcription;
 use crate::transcription::TranscriptionError;
 use crate::wasm_compat::WasmCompatSync;
@@ -8,11 +8,6 @@ use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use serde::Deserialize;
 use serde_json::json;
-
-pub const WHISPER_LARGE_V3: &str = "openai/whisper-large-v3";
-pub const WHISPER_LARGE_V3_TURBO: &str = "openai/whisper-large-v3-turbo";
-
-pub const WHISPER_SMALL: &str = "openai/whisper-small";
 
 #[derive(Debug, Deserialize)]
 pub struct TranscriptionResponse {

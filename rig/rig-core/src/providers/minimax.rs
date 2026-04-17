@@ -8,8 +8,8 @@
 //! use rig::client::CompletionClient;
 //! use rig::providers::minimax;
 //!
-//! let client = minimax::Client::new("YOUR_API_KEY").expect("Failed to build client");
-//! let model = client.completion_model(minimax::MINIMAX_M2_7);
+//! let client = rig::providers::minimax::Client::new("YOUR_API_KEY").expect("Failed to build client");
+//! let model = client.completion_model(rig::models::minimax::MINIMAX_M2_7);
 //! ```
 //!
 //! # Anthropic-compatible example
@@ -17,8 +17,8 @@
 //! use rig::client::CompletionClient;
 //! use rig::providers::minimax;
 //!
-//! let client = minimax::AnthropicClient::new("YOUR_API_KEY").expect("Failed to build client");
-//! let model = client.completion_model(minimax::MINIMAX_M2);
+//! let client = rig::providers::minimax::AnthropicClient::new("YOUR_API_KEY").expect("Failed to build client");
+//! let model = client.completion_model(rig::models::minimax::MINIMAX_M2);
 //! ```
 
 use crate::client::{
@@ -38,21 +38,6 @@ pub const CHINA_API_BASE_URL: &str = "https://api.minimaxi.com/v1";
 pub const GLOBAL_ANTHROPIC_API_BASE_URL: &str = "https://api.minimax.io/anthropic";
 /// China Anthropic-compatible base URL.
 pub const CHINA_ANTHROPIC_API_BASE_URL: &str = "https://api.minimaxi.com/anthropic";
-
-/// `MiniMax-M2.7`
-pub const MINIMAX_M2_7: &str = "MiniMax-M2.7";
-/// `MiniMax-M2.7-highspeed`
-pub const MINIMAX_M2_7_HIGHSPEED: &str = "MiniMax-M2.7-highspeed";
-/// `MiniMax-M2.5`
-pub const MINIMAX_M2_5: &str = "MiniMax-M2.5";
-/// `MiniMax-M2.5-highspeed`
-pub const MINIMAX_M2_5_HIGHSPEED: &str = "MiniMax-M2.5-highspeed";
-/// `MiniMax-M2.1`
-pub const MINIMAX_M2_1: &str = "MiniMax-M2.1";
-/// `MiniMax-M2.1-highspeed`
-pub const MINIMAX_M2_1_HIGHSPEED: &str = "MiniMax-M2.1-highspeed";
-/// `MiniMax-M2`
-pub const MINIMAX_M2: &str = "MiniMax-M2";
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MiniMaxExt;
@@ -296,14 +281,14 @@ mod tests {
 
     #[test]
     fn test_client_initialization() {
-        let _client = crate::providers::minimax::Client::new("dummy-key").expect("Client::new()");
-        let _client_from_builder = crate::providers::minimax::Client::builder()
+        let _client = rig::providers::minimax::Client::new("dummy-key").expect("Client::new()");
+        let _client_from_builder = rig::providers::minimax::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder()");
-        let _anthropic_client = crate::providers::minimax::AnthropicClient::new("dummy-key")
+        let _anthropic_client = rig::providers::minimax::AnthropicClient::new("dummy-key")
             .expect("AnthropicClient::new()");
-        let _anthropic_client_from_builder = crate::providers::minimax::AnthropicClient::builder()
+        let _anthropic_client_from_builder = rig::providers::minimax::AnthropicClient::builder()
             .api_key("dummy-key")
             .build()
             .expect("AnthropicClient::builder()");

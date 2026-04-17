@@ -764,31 +764,31 @@ mod wasm_model_listing_compile_checks {
     }
 
     fn assert_simple_model_listers_accept_wasm_only_http_clients() {
-        let _ = openrouter::Client::builder()
+        let _ = rig::providers::openrouter::Client::builder()
             .api_key("dummy-key")
             .http_client(WasmOnlyHttpClient::default())
             .build()
             .map(assert_model_listing_client);
 
-        let _ = openai::Client::builder()
+        let _ = rig::providers::openai::Client::builder()
             .api_key("dummy-key")
             .http_client(WasmOnlyHttpClient::default())
             .build()
             .map(assert_model_listing_client);
 
-        let _ = mistral::Client::builder()
+        let _ = rig::providers::mistral::Client::builder()
             .api_key("dummy-key")
             .http_client(WasmOnlyHttpClient::default())
             .build()
             .map(assert_model_listing_client);
 
-        let _ = anthropic::Client::builder()
+        let _ = rig::providers::anthropic::Client::builder()
             .api_key("dummy-key")
             .http_client(WasmOnlyHttpClient::default())
             .build()
             .map(assert_model_listing_client);
 
-        let _ = ollama::Client::builder()
+        let _ = rig::providers::ollama::Client::builder()
             .api_key(Nothing)
             .http_client(WasmOnlyHttpClient::default())
             .build()
@@ -803,14 +803,12 @@ mod wasm_model_listing_compile_checks {
 
 #[cfg(test)]
 mod tests {
-    use crate::providers::anthropic;
-
     /// Type-level test that `Client::builder()` methods do not require annotation to determine
     /// backig HTTP client
     #[test]
     fn ensures_client_builder_no_annotation() {
         let http_client = reqwest::Client::default();
-        let _ = anthropic::Client::builder()
+        let _ = rig::providers::anthropic::Client::builder()
             .http_client(http_client)
             .api_key("Foo")
             .build()

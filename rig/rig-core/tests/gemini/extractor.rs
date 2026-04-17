@@ -1,7 +1,6 @@
 //! Gemini extractor coverage, including the migrated example path.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::gemini;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
@@ -23,9 +22,9 @@ async fn extractor_smoke() {
     let additional_params =
         AdditionalParameters::default().with_config(GenerationConfig::default());
 
-    let client = gemini::Client::from_env();
+    let client = rig::providers::gemini::Client::from_env();
     let extractor = client
-        .extractor::<SmokePerson>(gemini::completion::GEMINI_2_5_FLASH)
+        .extractor::<SmokePerson>(rig::models::gemini::GEMINI_2_5_FLASH)
         .additional_params(
             serde_json::to_value(additional_params)
                 .expect("Gemini additional params should serialize"),
@@ -56,9 +55,9 @@ async fn extractor_smoke() {
 #[ignore = "requires GEMINI_API_KEY"]
 async fn extractor_with_additional_params() {
     let params = AdditionalParameters::default().with_config(GenerationConfig::default());
-    let client = gemini::Client::from_env();
+    let client = rig::providers::gemini::Client::from_env();
     let extractor = client
-        .extractor::<Person>(gemini::completion::GEMINI_2_5_FLASH)
+        .extractor::<Person>(rig::models::gemini::GEMINI_2_5_FLASH)
         .additional_params(serde_json::to_value(params).expect("params should serialize"))
         .build();
 

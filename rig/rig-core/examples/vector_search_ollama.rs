@@ -4,7 +4,6 @@
 
 use rig::client::Nothing;
 use rig::prelude::*;
-use rig::providers::ollama;
 use rig::vector_store::request::VectorSearchRequest;
 use rig::{
     Embed,
@@ -71,7 +70,7 @@ fn print_id_matches(label: &str, matches: &[(f64, String)]) {
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let client = ollama::Client::builder()
+    let client = rig::providers::ollama::Client::builder()
         .api_key(Nothing)
         .base_url("http://localhost:11434")
         .build()?;

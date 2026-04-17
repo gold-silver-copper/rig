@@ -3,7 +3,7 @@ use mongodb::{
     bson::{self, doc},
     options::ClientOptions,
 };
-use rig::{client::ProviderClient, providers::openai, vector_store::request::VectorSearchRequest};
+use rig::{client::ProviderClient, vector_store::request::VectorSearchRequest};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::env;
@@ -67,7 +67,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .collection("context");
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     let words = vec![
         Word {

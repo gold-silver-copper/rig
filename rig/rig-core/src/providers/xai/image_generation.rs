@@ -12,8 +12,6 @@ use serde_json::json;
 // ================================================================
 // xAI Image Generation API
 // ================================================================
-pub const GROK_IMAGINE_IMAGE: &str = "grok-imagine-image";
-pub const GROK_IMAGINE_IMAGE_PRO: &str = "grok-imagine-image-pro";
 
 #[derive(Debug, Deserialize)]
 pub struct ImageGenerationData {

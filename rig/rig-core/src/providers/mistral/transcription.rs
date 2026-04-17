@@ -4,18 +4,13 @@ use serde::Deserialize;
 
 use crate::http_client::multipart::Part;
 use crate::http_client::{HttpClientExt, MultipartForm};
-use crate::providers::mistral::Client;
 use crate::transcription::{self, TranscriptionError};
 use crate::wasm_compat::WasmCompatSend;
+use rig::providers::mistral::Client;
 
 // ================================================================
 // Mistral Transcription API
 // ================================================================
-
-/// Voxtral Mini model (latest version)
-pub const VOXTRAL_MINI: &str = "voxtral-mini-latest";
-/// Voxtral Small model (latest version)
-pub const VOXTRAL_SMALL: &str = "voxtral-small-latest";
 
 /// Request usage statistics
 #[derive(Debug, Deserialize)]
@@ -209,7 +204,7 @@ mod test {
             serde_json::from_str(json).expect("should deserialize");
 
         assert_eq!(response.language, None);
-        assert_eq!(response.model, VOXTRAL_MINI);
+        assert_eq!(response.model, crate::models::mistral::VOXTRAL_MINI);
         assert_eq!(response.segments.len(), 1);
 
         let seg0 = &response.segments[0];
@@ -232,7 +227,7 @@ mod test {
     fn test_response_conversion() {
         let mistral_response = MistralTranscriptionResponse {
             language: Some("en".to_string()),
-            model: VOXTRAL_MINI.to_string(),
+            model: crate::models::mistral::VOXTRAL_MINI.to_string(),
             segments: vec![SegmentChunk {
                 start: 0.0,
                 end: 1.0,
@@ -261,7 +256,10 @@ mod test {
             response.text,
             "Lorem Ipsum is simply dummy text of the printing and typesetting industry."
         );
-        assert_eq!(response.response.model, VOXTRAL_MINI);
+        assert_eq!(
+            response.response.model,
+            crate::models::mistral::VOXTRAL_MINI
+        );
         assert_eq!(response.response.language, Some("en".to_string()));
     }
 }

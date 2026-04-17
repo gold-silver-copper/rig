@@ -4,7 +4,6 @@ use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::message::{Document, DocumentMediaType, DocumentSourceKind, Message, UserContent};
-use rig::providers::anthropic;
 
 use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_response};
 
@@ -28,9 +27,9 @@ Key Features:
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn plaintext_document_prompt() {
-    let client = anthropic::Client::from_env();
+    let client = rig::providers::anthropic::Client::from_env();
     let agent = client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble("You are a helpful assistant that analyzes documents.")
         .temperature(0.5)
         .build();
@@ -52,9 +51,9 @@ async fn plaintext_document_prompt() {
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn plaintext_document_with_instruction() {
-    let client = anthropic::Client::from_env();
+    let client = rig::providers::anthropic::Client::from_env();
     let agent = client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble("You are a helpful assistant that analyzes documents.")
         .temperature(0.5)
         .build();

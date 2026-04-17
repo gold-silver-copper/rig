@@ -1,6 +1,5 @@
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers;
 use rig::tool::Tool;
 use rig_derive::rig_tool;
 
@@ -33,8 +32,8 @@ fn calculator(x: i32, y: i32, operation: String) -> Result<i32, rig::tool::ToolE
 async fn main() {
     tracing_subscriber::fmt().pretty().init();
 
-    let calculator_agent = providers::openai::Client::from_env()
-        .agent(providers::openai::GPT_4O)
+    let calculator_agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
         .tool(Calculator)

@@ -3,15 +3,14 @@
 use rig::client::ProviderClient;
 use rig::client::image_generation::ImageGenerationClient;
 use rig::image_generation::ImageGenerationModel;
-use rig::providers::openai;
 
 use crate::support::{IMAGE_PROMPT, assert_nonempty_bytes};
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn image_generation_smoke() {
-    let client = openai::Client::from_env();
-    let model = client.image_generation_model(openai::DALL_E_2);
+    let client = rig::providers::openai::Client::from_env();
+    let model = client.image_generation_model(rig::models::openai::DALL_E_2);
 
     let response = model
         .image_generation_request()

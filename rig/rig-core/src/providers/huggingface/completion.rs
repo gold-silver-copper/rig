@@ -1,7 +1,6 @@
 use super::client::Client;
 use crate::completion::GetTokenUsage;
 use crate::http_client::HttpClientExt;
-use crate::providers::openai::StreamingCompletionResponse;
 use crate::telemetry::SpanCombinator;
 use crate::{
     OneOrMany,
@@ -10,6 +9,7 @@ use crate::{
     message::{self},
     one_or_many::string_or_one_or_many,
 };
+use rig::providers::openai::StreamingCompletionResponse;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::{convert::Infallible, str::FromStr};
@@ -28,23 +28,8 @@ pub enum ApiResponse<T> {
 // ================================================================
 
 // Conversational LLMs
-/// `google/gemma-2-2b-it` completion model
-pub const GEMMA_2: &str = "google/gemma-2-2b-it";
-/// `meta-llama/Meta-Llama-3.1-8B-Instruct` completion model
-pub const META_LLAMA_3_1: &str = "meta-llama/Meta-Llama-3.1-8B-Instruct";
-/// `PowerInfer/SmallThinker-3B-Preview` completion model
-pub const SMALLTHINKER_PREVIEW: &str = "PowerInfer/SmallThinker-3B-Preview";
-/// `Qwen/Qwen2.5-7B-Instruct` completion model
-pub const QWEN2_5: &str = "Qwen/Qwen2.5-7B-Instruct";
-/// `Qwen/Qwen2.5-Coder-32B-Instruct` completion model
-pub const QWEN2_5_CODER: &str = "Qwen/Qwen2.5-Coder-32B-Instruct";
 
 // Conversational VLMs
-
-/// `Qwen/Qwen2-VL-7B-Instruct` visual-language completion model
-pub const QWEN2_VL: &str = "Qwen/Qwen2-VL-7B-Instruct";
-/// `Qwen/QVQ-72B-Preview` visual-language completion model
-pub const QWEN_QVQ_PREVIEW: &str = "Qwen/QVQ-72B-Preview";
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct Function {
@@ -617,7 +602,7 @@ pub(super) struct HuggingfaceCompletionRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openai::completion::ToolChoice>,
+    tool_choice: Option<rig::providers::openai::ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -664,7 +649,7 @@ impl TryFrom<(&str, CompletionRequest)> for HuggingfaceCompletionRequest {
         let tool_choice = req
             .tool_choice
             .clone()
-            .map(crate::providers::openai::completion::ToolChoice::try_from)
+            .map(rig::providers::openai::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {

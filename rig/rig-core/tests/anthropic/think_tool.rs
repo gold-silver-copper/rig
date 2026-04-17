@@ -2,7 +2,6 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::anthropic;
 use rig::tools::ThinkTool;
 
 use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_response};
@@ -10,8 +9,8 @@ use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_respo
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn think_tool_menu_planning() {
-    let agent = anthropic::Client::from_env()
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+    let agent = rig::providers::anthropic::Client::from_env()
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .name("Anthropic Thinker")
         .preamble(
             "You are a helpful assistant that can solve complex problems. \

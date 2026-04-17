@@ -875,7 +875,6 @@ mod tests {
     use crate::{
         client::CompletionClient,
         completion::{Message, ToolDefinition},
-        providers::openai,
         streaming::StreamingChat,
         tool::{Tool, ToolError},
     };
@@ -925,7 +924,7 @@ mod tests {
     async fn first_error_from_event(
         event: serde_json::Value,
     ) -> crate::completion::CompletionError {
-        let client = openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .http_client(MockStreamingClient {
                 sse_bytes: sse_event_bytes(event),
             })
@@ -944,7 +943,7 @@ mod tests {
     }
 
     async fn final_usage_from_event(event: serde_json::Value) -> ResponsesUsage {
-        let client = openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .http_client(MockStreamingClient {
                 sse_bytes: sse_event_bytes(event),
             })
@@ -1240,7 +1239,7 @@ mod tests {
             serde_json::to_string(&failed).expect("failed should serialize"),
         ));
 
-        let client = openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .http_client(MockStreamingClient { sse_bytes })
             .api_key("test-key")
             .build()
@@ -1294,7 +1293,7 @@ mod tests {
     #[ignore = "requires API key"]
     async fn test_openai_streaming_tools_reasoning() {
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY env var should exist");
-        let client = openai::Client::new(&api_key).expect("Failed to build client");
+        let client = rig::providers::openai::Client::new(&api_key).expect("Failed to build client");
         let agent = client
             .agent("gpt-5.2")
             .max_tokens(8192)

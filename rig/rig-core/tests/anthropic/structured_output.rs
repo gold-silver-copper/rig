@@ -2,7 +2,7 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::anthropic::{self, completion::CLAUDE_SONNET_4_6};
+use rig::models::anthropic::CLAUDE_SONNET_4_6;
 
 use crate::support::{
     STRUCTURED_OUTPUT_PROMPT, SmokeStructuredOutput, assert_smoke_structured_output,
@@ -11,7 +11,7 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn structured_output_smoke() {
-    let client = anthropic::Client::from_env();
+    let client = rig::providers::anthropic::Client::from_env();
     let agent = client
         .agent(CLAUDE_SONNET_4_6)
         .output_schema::<SmokeStructuredOutput>()

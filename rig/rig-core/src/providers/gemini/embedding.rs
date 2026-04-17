@@ -12,20 +12,13 @@ use crate::{
     wasm_compat::WasmCompatSend,
 };
 
-/// `gemini-embedding-001` embedding model (3072 dimensions by default)
-pub const EMBEDDING_001: &str = "gemini-embedding-001";
-/// `text-embedding-004` embedding model (768 dimensions by default)
-pub const EMBEDDING_004: &str = "text-embedding-004";
-
 /// Returns the default output dimensionality for known Gemini embedding models.
 ///
 /// See <https://ai.google.dev/gemini-api/docs/models#gemini-embedding>
 fn model_default_ndims(model: &str) -> Option<usize> {
-    match model {
-        EMBEDDING_001 => Some(3072),
-        EMBEDDING_004 => Some(768),
-        _ => None,
-    }
+    crate::models::gemini::lookup(model)
+        .and_then(|metadata| metadata.embedding)
+        .and_then(|metadata| metadata.default_dimensions)
 }
 
 #[derive(Clone)]
@@ -262,8 +255,14 @@ mod tests {
 
     #[test]
     fn test_model_default_ndims_lookup() {
-        assert_eq!(model_default_ndims(EMBEDDING_001), Some(3072));
-        assert_eq!(model_default_ndims(EMBEDDING_004), Some(768));
+        assert_eq!(
+            model_default_ndims(crate::models::gemini::EMBEDDING_001),
+            Some(3072)
+        );
+        assert_eq!(
+            model_default_ndims(crate::models::gemini::EMBEDDING_004),
+            Some(768)
+        );
         assert_eq!(model_default_ndims("unknown-model"), None);
     }
 
@@ -272,13 +271,19 @@ mod tests {
         let client = Client::new("test_key").unwrap();
 
         // EMBEDDING_001 defaults to 3072
-        let model =
-            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, None);
+        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &client,
+            crate::models::gemini::EMBEDDING_001,
+            None,
+        );
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 3072);
 
         // EMBEDDING_004 defaults to 768
-        let model =
-            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_004, None);
+        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &client,
+            crate::models::gemini::EMBEDDING_004,
+            None,
+        );
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 768);
 
         // Unknown model falls back to 768
@@ -294,8 +299,11 @@ mod tests {
     fn test_make_respects_explicit_dims() {
         let client = Client::new("test_key").unwrap();
 
-        let model =
-            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, Some(256));
+        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &client,
+            crate::models::gemini::EMBEDDING_001,
+            Some(256),
+        );
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 256);
     }
 
@@ -303,7 +311,7 @@ mod tests {
     fn test_new_uses_provided_ndims() {
         let client = Client::new("test_key").unwrap();
 
-        let model = EmbeddingModel::new(client, EMBEDDING_001, 512);
+        let model = EmbeddingModel::new(client, crate::models::gemini::EMBEDDING_001, 512);
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 512);
     }
 }

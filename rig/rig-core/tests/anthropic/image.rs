@@ -6,7 +6,6 @@ use rig::completion::Prompt;
 use rig::completion::message::Image;
 use rig::message::DocumentSourceKind;
 use rig::message::ImageMediaType;
-use rig::providers::anthropic;
 use tokio::fs;
 
 use crate::support::{
@@ -16,9 +15,9 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn image_prompt_from_fixture() {
-    let client = anthropic::Client::from_env();
+    let client = rig::providers::anthropic::Client::from_env();
     let agent = client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble("You are an image describer.")
         .temperature(0.5)
         .build();

@@ -7,7 +7,6 @@ use rig::agent::{HookAction, PromptHook};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{CompletionModel, CompletionResponse, Message, Prompt};
 use rig::message::UserContent;
-use rig::providers::openai;
 
 #[derive(Clone)]
 struct LoggingHook<'a> {
@@ -51,8 +50,8 @@ where
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let agent = openai::Client::from_env()
-        .agent(openai::GPT_4O)
+    let agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .build();
 

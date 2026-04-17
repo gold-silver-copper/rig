@@ -3,7 +3,6 @@
 use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Prompt, ToolDefinition};
-use rig::providers::anthropic;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -81,8 +80,8 @@ impl Tool for Divide {
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn default_max_turns_allows_multi_step_tool_use() -> Result<()> {
-    let agent = anthropic::Client::from_env()
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+    let agent = rig::providers::anthropic::Client::from_env()
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble(
             "You are an assistant that must use the available tools for arithmetic. \
              Never compute the result yourself.",

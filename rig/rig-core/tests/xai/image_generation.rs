@@ -3,7 +3,6 @@
 use rig::client::ProviderClient;
 use rig::client::image_generation::ImageGenerationClient;
 use rig::image_generation::ImageGenerationModel;
-use rig::providers::xai;
 use serde_json::json;
 
 use crate::support::{IMAGE_PROMPT, assert_nonempty_bytes};
@@ -11,8 +10,8 @@ use crate::support::{IMAGE_PROMPT, assert_nonempty_bytes};
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
 async fn image_generation_smoke() {
-    let client = xai::Client::from_env();
-    let model = client.image_generation_model(xai::image_generation::GROK_IMAGINE_IMAGE_PRO);
+    let client = rig::providers::xai::Client::from_env();
+    let model = client.image_generation_model(rig::models::xai::GROK_IMAGINE_IMAGE_PRO);
 
     let response = model
         .image_generation_request()

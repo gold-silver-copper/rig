@@ -1,9 +1,5 @@
 use rig::prelude::*;
-use rig::providers::{huggingface, mistral};
-use rig::{
-    providers::{azure, gemini, groq, openai},
-    transcription::TranscriptionModel,
-};
+use rig::transcription::TranscriptionModel;
 use std::env::args;
 
 #[tokio::main]
@@ -26,8 +22,8 @@ async fn main() {
 }
 
 async fn whisper(file_path: &str) {
-    let openai = openai::Client::from_env();
-    let whisper = openai.transcription_model(openai::WHISPER_1);
+    let openai = rig::providers::openai::Client::from_env();
+    let whisper = openai.transcription_model(rig::models::openai::WHISPER_1);
     let response = whisper
         .transcription_request()
         .load_file(file_path)
@@ -39,8 +35,8 @@ async fn whisper(file_path: &str) {
 }
 
 async fn gemini(file_path: &str) {
-    let gemini = gemini::Client::from_env();
-    let model = gemini.transcription_model(gemini::completion::GEMINI_3_FLASH_PREVIEW);
+    let gemini = rig::providers::gemini::Client::from_env();
+    let model = gemini.transcription_model(rig::models::gemini::GEMINI_3_FLASH_PREVIEW);
     let response = model
         .transcription_request()
         .load_file(file_path)
@@ -52,7 +48,7 @@ async fn gemini(file_path: &str) {
 }
 
 async fn azure(file_path: &str) {
-    let azure = azure::Client::from_env();
+    let azure = rig::providers::azure::Client::from_env();
     let whisper = azure.transcription_model("whisper");
     let response = whisper
         .transcription_request()
@@ -65,8 +61,8 @@ async fn azure(file_path: &str) {
 }
 
 async fn groq(file_path: &str) {
-    let groq = groq::Client::from_env();
-    let whisper = groq.transcription_model(groq::WHISPER_LARGE_V3);
+    let groq = rig::providers::groq::Client::from_env();
+    let whisper = groq.transcription_model(rig::models::groq::WHISPER_LARGE_V3);
     let response = whisper
         .transcription_request()
         .load_file(file_path)
@@ -78,7 +74,7 @@ async fn groq(file_path: &str) {
 }
 
 async fn huggingface(file_path: &str) {
-    let huggingface = huggingface::Client::from_env();
+    let huggingface = rig::providers::huggingface::Client::from_env();
     let whisper = huggingface.transcription_model("whisper-large-v3");
     let response = whisper
         .transcription_request()
@@ -91,8 +87,8 @@ async fn huggingface(file_path: &str) {
 }
 
 async fn mistral(file_path: &str) {
-    let client = mistral::Client::from_env();
-    let model = client.transcription_model(mistral::VOXTRAL_MINI);
+    let client = rig::providers::mistral::Client::from_env();
+    let model = client.transcription_model(rig::models::mistral::VOXTRAL_MINI);
     let response = model
         .transcription_request()
         .load_file(file_path)

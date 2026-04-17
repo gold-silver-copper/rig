@@ -12,8 +12,8 @@
 //! use rig::client::CompletionClient;
 //! use rig::providers::copilot;
 //!
-//! let client = copilot::Client::from_env();
-//! let model = client.completion_model(copilot::GPT_4O);
+//! let client = rig::providers::copilot::Client::from_env();
+//! let model = client.completion_model(rig::models::copilot::GPT_4O);
 //! ```
 
 mod auth;
@@ -46,38 +46,17 @@ const EDITOR_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
 const USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
 const API_VERSION: &str = "2025-04-01";
 
-/// `gpt-4`
-pub const GPT_4: &str = "gpt-4";
-/// `gpt-4o`
-pub const GPT_4O: &str = "gpt-4o";
-/// `gpt-4o-mini`
-pub const GPT_4O_MINI: &str = "gpt-4o-mini";
-/// `gpt-4.1`
-pub const GPT_4_1: &str = "gpt-4.1";
-/// `gpt-4.1-mini`
-pub const GPT_4_1_MINI: &str = "gpt-4.1-mini";
-/// `gpt-4.1-nano`
-pub const GPT_4_1_NANO: &str = "gpt-4.1-nano";
-/// `gpt-5.3-codex`
-pub const GPT_5_3_CODEX: &str = "gpt-5.3-codex";
-/// `gpt-5.1-codex`
-pub const GPT_5_1_CODEX: &str = "gpt-5.1-codex";
-/// `claude-sonnet-4` completion model (Anthropic, via Copilot)
-pub const CLAUDE_SONNET_4: &str = "claude-sonnet-4";
-/// `claude-3.5-sonnet` completion model (Anthropic, via Copilot)
-pub const CLAUDE_3_5_SONNET: &str = "claude-3.5-sonnet";
-/// `gemini-2.0-flash-001` completion model (Google, via Copilot)
-pub const GEMINI_2_0_FLASH: &str = "gemini-2.0-flash-001";
-/// `o3-mini` reasoning model (OpenAI, via Copilot)
-pub const O3_MINI: &str = "o3-mini";
-/// `text-embedding-3-small`
-pub const TEXT_EMBEDDING_3_SMALL: &str = "text-embedding-3-small";
-/// `text-embedding-3-large`
-pub const TEXT_EMBEDDING_3_LARGE: &str = "text-embedding-3-large";
-/// `text-embedding-ada-002`
-pub const TEXT_EMBEDDING_ADA_002: &str = "text-embedding-ada-002";
+pub use rig::providers::openai::EncodingFormat;
 
-pub use openai::EncodingFormat;
+fn completion_request_api(model: &str) -> Option<crate::models::CompletionRequestApi> {
+    crate::models::copilot::lookup(model)
+        .and_then(|metadata| metadata.completion)
+        .and_then(|metadata| metadata.request_api)
+}
+
+fn embedding_metadata(model: &str) -> Option<crate::models::EmbeddingMetadata> {
+    crate::models::copilot::lookup(model).and_then(|metadata| metadata.embedding)
+}
 
 #[derive(Clone)]
 pub enum CopilotAuth {
@@ -420,10 +399,9 @@ enum CompletionRoute {
 }
 
 fn route_for_model(model: &str) -> CompletionRoute {
-    if model.to_ascii_lowercase().contains("codex") {
-        CompletionRoute::Responses
-    } else {
-        CompletionRoute::ChatCompletions
+    match completion_request_api(model) {
+        Some(crate::models::CompletionRequestApi::Responses) => CompletionRoute::Responses,
+        _ => CompletionRoute::ChatCompletions,
     }
 }
 
@@ -460,14 +438,14 @@ pub struct ChatCompletionResponse {
     pub model: String,
     pub system_fingerprint: Option<String>,
     pub choices: Vec<ChatChoice>,
-    pub usage: Option<openai::completion::Usage>,
+    pub usage: Option<rig::providers::openai::Usage>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatChoice {
     #[serde(default)]
     pub index: usize,
-    pub message: openai::completion::Message,
+    pub message: rig::providers::openai::Message,
     pub logprobs: Option<serde_json::Value>,
     #[serde(default)]
     pub finish_reason: Option<String>,
@@ -482,7 +460,7 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
         })?;
 
         let content = match &choice.message {
-            openai::completion::Message::Assistant {
+            rig::providers::openai::Message::Assistant {
                 content,
                 tool_calls,
                 ..
@@ -491,8 +469,10 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
                     .iter()
                     .filter_map(|c| {
                         let s = match c {
-                            openai::completion::AssistantContent::Text { text } => text,
-                            openai::completion::AssistantContent::Refusal { refusal } => refusal,
+                            rig::providers::openai::AssistantContent::Text { text } => text,
+                            rig::providers::openai::AssistantContent::Refusal { refusal } => {
+                                refusal
+                            }
                         };
                         if s.is_empty() {
                             None
@@ -624,13 +604,15 @@ where
     fn chat_request(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<openai::completion::CompletionRequest, CompletionError> {
-        openai::completion::CompletionRequest::try_from(openai::completion::OpenAIRequestParams {
-            model: self.model.clone(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })
+    ) -> Result<rig::providers::openai::CompletionRequest, CompletionError> {
+        rig::providers::openai::CompletionRequest::try_from(
+            rig::providers::openai::OpenAIRequestParams {
+                model: self.model.clone(),
+                request: completion_request,
+                strict_tools: self.strict_tools,
+                tool_result_array_content: self.tool_result_array_content,
+            },
+        )
     }
 
     fn responses_request(
@@ -1083,7 +1065,7 @@ where
 pub struct EmbeddingModel<H = reqwest::Client> {
     client: Client<H>,
     pub model: String,
-    pub encoding_format: Option<openai::EncodingFormat>,
+    pub encoding_format: Option<rig::providers::openai::EncodingFormat>,
     pub user: Option<String>,
     ndims: usize,
 }
@@ -1124,11 +1106,9 @@ where
 
     fn make(client: &Self::Client, model: impl Into<String>, ndims: Option<usize>) -> Self {
         let model = model.into();
-        let dims = ndims.unwrap_or(match model.as_str() {
-            TEXT_EMBEDDING_3_LARGE => 3072,
-            TEXT_EMBEDDING_3_SMALL | TEXT_EMBEDDING_ADA_002 => 1536,
-            _ => 0,
-        });
+        let dims = ndims
+            .or_else(|| embedding_metadata(&model).and_then(|metadata| metadata.default_dimensions))
+            .unwrap_or_default();
         Self::new(client.clone(), model, dims)
     }
 
@@ -1155,7 +1135,11 @@ where
             "input": documents,
         });
 
-        if self.ndims > 0 && self.model.as_str() != TEXT_EMBEDDING_ADA_002 {
+        let supports_dimensions_override = embedding_metadata(self.model.as_str())
+            .and_then(|metadata| metadata.supports_dimensions_override)
+            .unwrap_or(true);
+
+        if self.ndims > 0 && supports_dimensions_override {
             body["dimensions"] = json!(self.ndims);
         }
         if let Some(encoding_format) = &self.encoding_format {
@@ -1268,7 +1252,7 @@ struct ChatStreamingChoice {
 #[derive(Deserialize, Debug)]
 struct ChatStreamingChunk {
     choices: Vec<ChatStreamingChoice>,
-    usage: Option<openai::completion::Usage>,
+    usage: Option<rig::providers::openai::Usage>,
 }
 
 async fn send_copilot_chat_streaming_request<T>(
@@ -1488,14 +1472,15 @@ fn config_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChatApiErrorResponse, ChatCompletionResponse, Client, CompletionRoute,
-        TEXT_EMBEDDING_3_SMALL, env_api_key, env_base_url, env_github_access_token,
-        route_for_model,
+        ChatApiErrorResponse, ChatCompletionResponse, Client, CompletionRoute, embedding_metadata,
+        env_api_key, env_base_url, env_github_access_token, route_for_model,
     };
     use crate::client::CompletionClient;
     use crate::completion::CompletionModel;
+    use crate::embeddings;
     use crate::http_client::mock::MockStreamingClient;
     use crate::http_client::{self, HttpClientExt, LazyBody, MultipartForm, Request, Response};
+    use crate::models::copilot::TEXT_EMBEDDING_3_SMALL;
     use crate::streaming::StreamedAssistantContent;
     use bytes::Bytes;
     use futures::StreamExt;
@@ -1822,15 +1807,42 @@ mod tests {
 
     #[test]
     fn routes_codex_models_to_responses() {
-        assert_eq!(route_for_model("gpt-5.3-codex"), CompletionRoute::Responses);
+        assert_eq!(
+            route_for_model(crate::models::copilot::GPT_5_3_CODEX),
+            CompletionRoute::Responses
+        );
+        assert_eq!(
+            route_for_model(crate::models::copilot::GPT_5_1_CODEX),
+            CompletionRoute::Responses
+        );
         assert_eq!(
             route_for_model("gpt-5.1-CODEX-mini"),
-            CompletionRoute::Responses
+            CompletionRoute::ChatCompletions
         );
         assert_eq!(route_for_model("gpt-5.2"), CompletionRoute::ChatCompletions);
         assert_eq!(
             route_for_model("claude-sonnet-4.5"),
             CompletionRoute::ChatCompletions
+        );
+    }
+
+    #[test]
+    fn embedding_metadata_preserves_default_dims_and_override_behavior() {
+        let client = Client::builder()
+            .api_key("copilot-token")
+            .build()
+            .expect("build client");
+        let model = <super::EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &client,
+            TEXT_EMBEDDING_3_SMALL,
+            None,
+        );
+
+        assert_eq!(model.ndims, 1_536);
+        assert_eq!(
+            embedding_metadata(crate::models::copilot::TEXT_EMBEDDING_ADA_002)
+                .and_then(|metadata| metadata.supports_dimensions_override),
+            Some(false)
         );
     }
 

@@ -2,13 +2,9 @@ use anyhow::Result;
 use futures::StreamExt;
 use rig::completion::CompletionModel;
 use rig::prelude::*;
-use rig::providers::gemini::{
-    self,
-    interactions_api::{
-        AdditionalParameters, AgentConfig, Content, ContentDelta, InteractionSseEvent,
-        InteractionStatus, TextDelta, ThinkingSummaries, ThoughtSummaryContent,
-        ThoughtSummaryDelta,
-    },
+use rig::providers::gemini::interactions_api::{
+    AdditionalParameters, AgentConfig, Content, ContentDelta, InteractionSseEvent,
+    InteractionStatus, TextDelta, ThinkingSummaries, ThoughtSummaryContent, ThoughtSummaryDelta,
 };
 use std::time::Duration;
 use tokio::time::sleep;
@@ -132,7 +128,7 @@ async fn main() -> Result<()> {
         .init();
 
     let use_streaming = std::env::args().any(|arg| arg == "--stream");
-    let client = gemini::Client::from_env().interactions_api();
+    let client = rig::providers::gemini::Client::from_env().interactions_api();
     let model = client.completion_model("gemini-3-pro-preview");
     let prompt = "Research the history of Google TPUs.";
 

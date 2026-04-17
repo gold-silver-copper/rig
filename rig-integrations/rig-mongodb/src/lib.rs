@@ -82,7 +82,7 @@ fn mongodb_to_rig_error(e: mongodb::error::Error) -> VectorStoreError {
 ///
 /// let collection = mongodb_client.database("db").collection::<WordDefinition>(""); // <-- replace with your mongodb collection.
 ///
-/// let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002); // <-- replace with your embedding model.
+/// let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002); // <-- replace with your embedding model.
 /// let index = MongoDbVectorIndex::new(
 ///     collection,
 ///     model,

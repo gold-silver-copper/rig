@@ -4,9 +4,9 @@
 //! ```
 //! use rig::providers::openai;
 //!
-//! let client = openai::Client::new("YOUR_API_KEY");
+//! let client = rig::providers::openai::Client::new("YOUR_API_KEY");
 //!
-//! let gpt4o = client.completion_model(openai::GPT_4O);
+//! let gpt4o = client.completion_model(rig::models::openai::GPT_4O);
 //! ```
 pub mod client;
 pub mod completion;
@@ -109,7 +109,7 @@ pub(crate) fn sanitize_schema(schema: &mut serde_json::Value) {
 }
 
 #[cfg(feature = "audio")]
-pub use audio_generation::{TTS_1, TTS_1_HD};
+pub use audio_generation::AudioGenerationModel;
 
 pub use streaming::*;
 pub use transcription::*;

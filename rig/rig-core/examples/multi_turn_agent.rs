@@ -1,7 +1,6 @@
 use rig::prelude::*;
 use rig::{
     completion::{Prompt, ToolDefinition},
-    providers::anthropic,
     tool::Tool,
 };
 use serde::{Deserialize, Serialize};
@@ -15,11 +14,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Create OpenAI client
-    let openai_client = anthropic::Client::from_env();
+    let openai_client = rig::providers::anthropic::Client::from_env();
 
     // Create RAG agent with a single context prompt and a dynamic tool source
     let agent = openai_client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble(
             "You are an assistant here to help the user select which tool is most appropriate to perform arithmetic operations.
             Follow these instructions closely.

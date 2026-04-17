@@ -2,20 +2,20 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::moonshot;
 
 use crate::support::{CONTEXT_DOCS, CONTEXT_PROMPT, assert_contains_any_case_insensitive};
 
 #[tokio::test]
 #[ignore = "requires MOONSHOT_API_KEY"]
 async fn context_smoke() {
-    let client = moonshot::Client::from_env();
+    let client = rig::providers::moonshot::Client::from_env();
     let agent = CONTEXT_DOCS
         .iter()
         .copied()
-        .fold(client.agent(moonshot::MOONSHOT_CHAT), |builder, doc| {
-            builder.context(doc)
-        })
+        .fold(
+            client.agent(rig::models::moonshot::MOONSHOT_CHAT),
+            |builder, doc| builder.context(doc),
+        )
         .build();
 
     let response = agent

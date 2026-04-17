@@ -3,7 +3,6 @@
 use rig::Embed;
 use rig::client::{EmbeddingsClient, ProviderClient};
 use rig::embeddings::EmbeddingsBuilder;
-use rig::providers::mistral;
 use rig::vector_store::VectorStoreIndex;
 use rig::vector_store::in_memory_store::InMemoryVectorStore;
 use rig::vector_store::request::VectorSearchRequest;
@@ -18,8 +17,8 @@ struct Greetings {
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY and --features derive"]
 async fn derive_embeddings_and_vector_search() {
-    let client = mistral::Client::from_env();
-    let embedding_model = client.embedding_model(mistral::embedding::MISTRAL_EMBED);
+    let client = rig::providers::mistral::Client::from_env();
+    let embedding_model = client.embedding_model(rig::models::mistral::MISTRAL_EMBED);
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
         .document(Greetings {
             message: "Hello, world!".to_string(),

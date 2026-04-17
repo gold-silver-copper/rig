@@ -5,9 +5,9 @@
 //! use rig::providers::moonshot;
 //! use rig::client::CompletionClient;
 //!
-//! let client = moonshot::Client::new("YOUR_API_KEY").expect("Failed to build client");
+//! let client = rig::providers::moonshot::Client::new("YOUR_API_KEY").expect("Failed to build client");
 //!
-//! let kimi_model = client.completion_model(moonshot::KIMI_K2_5);
+//! let kimi_model = client.completion_model(rig::models::moonshot::KIMI_K2_5);
 //! ```
 //!
 //! # Custom base URL
@@ -16,7 +16,7 @@
 //! ```no_run
 //! use rig::providers::moonshot;
 //!
-//! let client = moonshot::Client::builder()
+//! let client = rig::providers::moonshot::Client::builder()
 //!     .api_key("YOUR_API_KEY")
 //!     .base_url("https://api.moonshot.ai/v1")
 //!     .build()
@@ -35,7 +35,6 @@ use crate::streaming::StreamingCompletionResponse;
 use crate::{
     completion::{self, CompletionError, CompletionRequest},
     json_utils,
-    providers::openai,
 };
 use crate::{http_client, message};
 use serde::{Deserialize, Serialize};
@@ -290,15 +289,6 @@ enum ApiResponse<T> {
 // Moonshot Completion API
 // ================================================================
 
-/// Moonshot v1 128K context model (legacy)
-pub const MOONSHOT_CHAT: &str = "moonshot-v1-128k";
-
-/// Kimi K2 — Mixture-of-Experts model (1T total params, 32B active)
-pub const KIMI_K2: &str = "kimi-k2";
-
-/// Kimi K2.5 — Native multimodal agentic model with 256K context
-pub const KIMI_K2_5: &str = "kimi-k2.5";
-
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct MoonshotCompletionRequest {
     model: String,
@@ -306,11 +296,11 @@ pub(super) struct MoonshotCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<openai::ToolDefinition>,
+    tools: Vec<rig::providers::openai::ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openai::completion::ToolChoice>,
+    tool_choice: Option<rig::providers::openai::ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -331,7 +321,9 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
         partial_history.extend(req.chat_history);
 
         let mut full_history: Vec<Value> = match &req.preamble {
-            Some(preamble) => vec![serde_json::to_value(openai::Message::system(preamble))?],
+            Some(preamble) => vec![serde_json::to_value(
+                rig::providers::openai::Message::system(preamble),
+            )?],
             None => vec![],
         };
 
@@ -343,10 +335,10 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
             match choice {
                 message::ToolChoice::Required => {
                     tool_choice_required = true;
-                    tool_choice = Some(crate::providers::openai::completion::ToolChoice::Auto);
+                    tool_choice = Some(rig::providers::openai::ToolChoice::Auto);
                 }
                 other => {
-                    tool_choice = Some(crate::providers::openai::ToolChoice::try_from(other)?);
+                    tool_choice = Some(rig::providers::openai::ToolChoice::try_from(other)?);
                 }
             }
         }
@@ -370,7 +362,7 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
                 .tools
                 .clone()
                 .into_iter()
-                .map(openai::ToolDefinition::from)
+                .map(rig::providers::openai::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
             additional_params: req.additional_params,
@@ -390,7 +382,7 @@ fn moonshot_history_values(history: Vec<message::Message>) -> Result<Vec<Value>,
             }
             other => {
                 result.extend(
-                    Vec::<openai::Message>::try_from(other)?
+                    Vec::<rig::providers::openai::Message>::try_from(other)?
                         .into_iter()
                         .map(serde_json::to_value)
                         .collect::<Result<Vec<_>, _>>()?,
@@ -412,10 +404,11 @@ fn moonshot_assistant_message_value(
     for item in content {
         match item {
             message::AssistantContent::Text(text) => {
-                text_content.push(openai::AssistantContent::Text { text: text.text });
+                text_content
+                    .push(rig::providers::openai::AssistantContent::Text { text: text.text });
             }
             message::AssistantContent::ToolCall(tool_call) => {
-                tool_calls.push(openai::ToolCall::from(tool_call));
+                tool_calls.push(rig::providers::openai::ToolCall::from(tool_call));
             }
             message::AssistantContent::Reasoning(reasoning) => {
                 let display = reasoning.display_text();
@@ -479,8 +472,8 @@ impl<T> completion::CompletionModel for CompletionModel<T>
 where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
-    type Response = openai::CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type Response = rig::providers::openai::CompletionResponse;
+    type StreamingResponse = rig::providers::openai::StreamingCompletionResponse;
 
     type Client = Client<T>;
 
@@ -491,7 +484,10 @@ where
     async fn completion(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<openai::CompletionResponse>, CompletionError> {
+    ) -> Result<
+        completion::CompletionResponse<rig::providers::openai::CompletionResponse>,
+        CompletionError,
+    > {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -536,9 +532,10 @@ where
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
-                    &response_body,
-                )? {
+                match serde_json::from_slice::<
+                    ApiResponse<rig::providers::openai::CompletionResponse>,
+                >(&response_body)?
+                {
                     ApiResponse::Ok(response) => {
                         let span = tracing::Span::current();
                         span.record("gen_ai.response.id", response.id.clone());
@@ -659,14 +656,14 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::moonshot::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::moonshot::Client::builder()
+            rig::providers::moonshot::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::moonshot::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");
-        let _anthropic_client = crate::providers::moonshot::AnthropicClient::new("dummy-key")
+        let _anthropic_client = rig::providers::moonshot::AnthropicClient::new("dummy-key")
             .expect("AnthropicClient::new() failed");
-        let _anthropic_client_from_builder = crate::providers::moonshot::AnthropicClient::builder()
+        let _anthropic_client_from_builder = rig::providers::moonshot::AnthropicClient::builder()
             .api_key("dummy-key")
             .build()
             .expect("AnthropicClient::builder() failed");
@@ -740,7 +737,7 @@ mod tests {
             MoonshotCompletionRequest::try_from(("kimi-k2.5", request)).expect("convert");
         assert!(matches!(
             converted.tool_choice,
-            Some(crate::providers::openai::completion::ToolChoice::Auto)
+            Some(rig::providers::openai::ToolChoice::Auto)
         ));
         assert_eq!(
             converted

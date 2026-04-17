@@ -2,6 +2,7 @@ use super::{Client, client::ApiResponse};
 use crate::http_client::HttpClientExt;
 use crate::image_generation::{ImageGenerationError, ImageGenerationRequest};
 use crate::json_utils::merge_inplace;
+use crate::models::ImageGenerationResponseFormatMode;
 use crate::{http_client, image_generation};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
@@ -11,10 +12,6 @@ use serde_json::json;
 // ================================================================
 // OpenAI Image Generation API
 // ================================================================
-pub const DALL_E_2: &str = "dall-e-2";
-pub const DALL_E_3: &str = "dall-e-3";
-pub const GPT_IMAGE_1: &str = "gpt-image-1";
-pub const GPT_IMAGE_1_5: &str = "gpt-image-1.5";
 
 #[derive(Debug, Deserialize)]
 pub struct ImageGenerationData {
@@ -62,6 +59,32 @@ impl<T> ImageGenerationModel<T> {
     }
 }
 
+fn request_payload(model: &str, generation_request: &ImageGenerationRequest) -> serde_json::Value {
+    let mut request = json!({
+        "model": model,
+        "prompt": generation_request.prompt,
+        "size": format!("{}x{}", generation_request.width, generation_request.height),
+    });
+
+    let response_format_mode = crate::models::openai::lookup(model)
+        .and_then(|model| model.image_generation)
+        .and_then(|metadata| metadata.response_format_mode);
+
+    if !matches!(
+        response_format_mode,
+        Some(ImageGenerationResponseFormatMode::OmitField)
+    ) {
+        merge_inplace(
+            &mut request,
+            json!({
+                "response_format": "b64_json"
+            }),
+        );
+    }
+
+    request
+}
+
 impl<T> image_generation::ImageGenerationModel for ImageGenerationModel<T>
 where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
@@ -79,21 +102,7 @@ where
         generation_request: ImageGenerationRequest,
     ) -> Result<image_generation::ImageGenerationResponse<Self::Response>, ImageGenerationError>
     {
-        let mut request = json!({
-            "model": self.model,
-            "prompt": generation_request.prompt,
-            "size": format!("{}x{}", generation_request.width, generation_request.height),
-        });
-
-        if self.model.as_str() != GPT_IMAGE_1 && self.model.as_str() != GPT_IMAGE_1_5 {
-            merge_inplace(
-                &mut request,
-                json!({
-                    "response_format": "b64_json"
-                }),
-            );
-        }
-
+        let request = request_payload(self.model.as_str(), &generation_request);
         let body = serde_json::to_vec(&request)?;
 
         let request = self
@@ -120,5 +129,41 @@ where
             ApiResponse::Ok(response) => response.try_into(),
             ApiResponse::Err(err) => Err(ImageGenerationError::ProviderError(err.message)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn test_request(model: &str) -> serde_json::Value {
+        request_payload(
+            model,
+            &ImageGenerationRequest {
+                prompt: "draw a lighthouse".into(),
+                width: 512,
+                height: 512,
+                additional_params: None,
+            },
+        )
+    }
+
+    #[test]
+    fn request_omits_response_format_for_catalogued_gpt_image_models() {
+        let request = test_request(crate::models::openai::GPT_IMAGE_1_5);
+        assert_eq!(request.get("response_format"), None);
+    }
+
+    #[test]
+    fn request_keeps_response_format_for_dalle_models() {
+        let request = test_request(crate::models::openai::DALL_E_3);
+        assert_eq!(request.get("response_format"), Some(&json!("b64_json")));
+    }
+
+    #[test]
+    fn request_keeps_response_format_for_unknown_models() {
+        let request = test_request("future-image-model");
+        assert_eq!(request.get("response_format"), Some(&json!("b64_json")));
     }
 }

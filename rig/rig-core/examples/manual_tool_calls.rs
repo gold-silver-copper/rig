@@ -14,7 +14,6 @@ use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Completion, ToolDefinition};
 use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
-use rig::providers::openai;
 use rig::tool::{Tool, ToolSet};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -116,8 +115,8 @@ fn tool_result_message(tool_call: &ToolCall, output: String) -> Message {
 async fn main() -> Result<()> {
     const MAX_ROUNDS: usize = 8;
 
-    let agent = openai::Client::from_env()
-        .agent(openai::GPT_4O_MINI)
+    let agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O_MINI)
         .preamble(
             "You are a calculator. Never do arithmetic from memory. \
              Use the provided tools for every intermediate step. \

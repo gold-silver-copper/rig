@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use reqwest_middleware::ClientBuilder;
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
-use rig::{client::CompletionClient, completion::Prompt, providers::anthropic};
+use rig::{client::CompletionClient, completion::Prompt};
 
 fn build_http_client() -> reqwest_middleware::ClientWithMiddleware {
     let retry_policy = ExponentialBackoff::builder().build_with_max_retries(5);
@@ -18,13 +18,13 @@ fn build_http_client() -> reqwest_middleware::ClientWithMiddleware {
 async fn main() -> Result<()> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").context("ANTHROPIC_API_KEY is not set")?;
     let http_client = build_http_client();
-    let client = anthropic::Client::builder()
+    let client = rig::providers::anthropic::Client::builder()
         .http_client(http_client)
         .api_key(api_key)
         .build()?;
 
     let agent = client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble("You are a helpful assistant.")
         .build();
 

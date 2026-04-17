@@ -1,8 +1,8 @@
 use super::completion::CompletionModel;
+use super::completion::HuggingfaceCompletionRequest;
 use crate::completion::{CompletionError, CompletionRequest};
 use crate::http_client::HttpClientExt;
 use crate::json_utils::{self};
-use crate::providers::huggingface::completion::HuggingfaceCompletionRequest;
 use crate::providers::openai::{StreamingCompletionResponse, send_compatible_streaming_request};
 use crate::streaming;
 use tracing::{Instrument, info_span};

@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::ToolDefinition;
-use rig::providers::anthropic;
 use rig::streaming::StreamingPrompt;
 use rig::tool::Tool;
 use schemars::{JsonSchema, schema_for};
@@ -158,9 +157,9 @@ async fn multi_turn_streaming_tools() {
     let multiply_calls = Arc::new(AtomicUsize::new(0));
     let divide_calls = Arc::new(AtomicUsize::new(0));
 
-    let client = anthropic::Client::from_env();
+    let client = rig::providers::anthropic::Client::from_env();
     let agent = client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble("You must use tools for arithmetic.")
         .tool(Add::new(add_calls.clone()))
         .tool(Subtract::new(subtract_calls.clone()))

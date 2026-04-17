@@ -7,7 +7,6 @@ use futures::StreamExt;
 use rig::agent::{MultiTurnStreamItem, StreamingResult};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::message::Message;
-use rig::providers::openai;
 use rig::streaming::StreamingChat;
 
 const PREAMBLE: &str = "You are a comedian here to entertain the user using humour and jokes.";
@@ -34,8 +33,8 @@ fn sample_history() -> Vec<Message> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let agent = openai::Client::from_env()
-        .agent(openai::GPT_4)
+    let agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4)
         .preamble(PREAMBLE)
         .build();
 

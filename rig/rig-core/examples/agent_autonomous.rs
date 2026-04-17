@@ -22,7 +22,7 @@ fn build_counter_extractor(
     client: &Client,
 ) -> rig::extractor::Extractor<openai::responses_api::ResponsesCompletionModel, Counter> {
     client
-        .extractor::<Counter>(openai::GPT_4)
+        .extractor::<Counter>(rig::models::openai::GPT_4)
         .preamble(
             "
             Add a random whole number between 1 and 64 to the number you receive.

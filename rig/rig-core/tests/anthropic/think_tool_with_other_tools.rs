@@ -8,7 +8,6 @@ use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::completion::{Prompt, ToolDefinition};
 use rig::message::{AssistantContent, Message};
-use rig::providers::anthropic;
 use rig::tool::Tool;
 use rig::tools::ThinkTool;
 use serde::Deserialize;
@@ -273,13 +272,13 @@ async fn think_tool_with_other_tools() -> Result<()> {
     let database_lookup_calls = Arc::new(AtomicUsize::new(0));
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
-    let client = anthropic::Client::builder()
+    let client = rig::providers::anthropic::Client::builder()
         .api_key(&api_key)
         .build()
         .expect("client should build");
 
     let agent = client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .name("Customer Service Agent")
         .preamble(
             "You are a customer service agent for an online store.

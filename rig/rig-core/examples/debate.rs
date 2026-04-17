@@ -1,15 +1,10 @@
 use anyhow::Result;
 use rig::prelude::*;
-use rig::{
-    agent::Agent,
-    completion::Prompt,
-    message::Message,
-    providers::{cohere, openai},
-};
+use rig::{agent::Agent, completion::Prompt, message::Message, providers::openai};
 
 struct Debater {
     gpt_4: Agent<openai::responses_api::ResponsesCompletionModel>,
-    coral: Agent<cohere::CompletionModel>,
+    coral: Agent<rig::providers::cohere::CompletionModel>,
 }
 
 impl Debater {
@@ -18,16 +13,16 @@ impl Debater {
             .with_max_level(tracing::Level::INFO)
             .with_target(false)
             .init();
-        let openai_client = openai::Client::from_env();
-        let cohere_client = cohere::Client::from_env();
+        let openai_client = rig::providers::openai::Client::from_env();
+        let cohere_client = rig::providers::cohere::Client::from_env();
 
         Self {
             gpt_4: openai_client
-                .agent(openai::GPT_4)
+                .agent(rig::models::openai::GPT_4)
                 .preamble(position_a)
                 .build(),
             coral: cohere_client
-                .agent(cohere::COMMAND_R)
+                .agent(rig::models::cohere::COMMAND_R)
                 .preamble(position_b)
                 .build(),
         }

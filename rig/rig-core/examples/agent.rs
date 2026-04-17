@@ -5,15 +5,14 @@
 use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::openai;
 
 const PREAMBLE: &str = "You are a comedian here to entertain the user using humour and jokes.";
 const PROMPT: &str = "Entertain me!";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let agent = openai::Client::from_env()
-        .agent(openai::GPT_4O)
+    let agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O)
         .preamble(PREAMBLE)
         .build();
 

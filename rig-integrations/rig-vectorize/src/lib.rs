@@ -10,7 +10,7 @@
 //! use rig_vectorize::VectorizeVectorStore;
 //!
 //! let openai = openai::Client::from_env();
-//! let embedding_model = openai.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+//! let embedding_model = openai.embedding_model(rig::models::openai::TEXT_EMBEDDING_3_SMALL);
 //!
 //! let vector_store = VectorizeVectorStore::new(
 //!     embedding_model,

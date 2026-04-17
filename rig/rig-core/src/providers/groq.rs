@@ -4,9 +4,9 @@
 //! ```
 //! use rig::providers::groq;
 //!
-//! let client = groq::Client::new("YOUR_API_KEY");
+//! let client = rig::providers::groq::Client::new("YOUR_API_KEY");
 //!
-//! let gpt4o = client.completion_model(groq::GPT_4O);
+//! let gpt4o = client.completion_model(rig::providers::groq::GPT_4O);
 //! ```
 use bytes::Bytes;
 use http::Request;
@@ -35,7 +35,7 @@ use crate::{
     completion::{self, CompletionError, CompletionRequest},
     json_utils,
     message::{self},
-    providers::openai::ToolDefinition,
+    rig::providers::openai::ToolDefinition,
     transcription::{self, TranscriptionError},
 };
 use serde::{Deserialize, Serialize};
@@ -124,33 +124,6 @@ enum ApiResponse<T> {
 // Groq Completion API
 // ================================================================
 
-/// The `deepseek-r1-distill-llama-70b` model. Used for chat completion.
-pub const DEEPSEEK_R1_DISTILL_LLAMA_70B: &str = "deepseek-r1-distill-llama-70b";
-/// The `gemma2-9b-it` model. Used for chat completion.
-pub const GEMMA2_9B_IT: &str = "gemma2-9b-it";
-/// The `llama-3.1-8b-instant` model. Used for chat completion.
-pub const LLAMA_3_1_8B_INSTANT: &str = "llama-3.1-8b-instant";
-/// The `llama-3.2-11b-vision-preview` model. Used for chat completion.
-pub const LLAMA_3_2_11B_VISION_PREVIEW: &str = "llama-3.2-11b-vision-preview";
-/// The `llama-3.2-1b-preview` model. Used for chat completion.
-pub const LLAMA_3_2_1B_PREVIEW: &str = "llama-3.2-1b-preview";
-/// The `llama-3.2-3b-preview` model. Used for chat completion.
-pub const LLAMA_3_2_3B_PREVIEW: &str = "llama-3.2-3b-preview";
-/// The `llama-3.2-90b-vision-preview` model. Used for chat completion.
-pub const LLAMA_3_2_90B_VISION_PREVIEW: &str = "llama-3.2-90b-vision-preview";
-/// The `llama-3.2-70b-specdec` model. Used for chat completion.
-pub const LLAMA_3_2_70B_SPECDEC: &str = "llama-3.2-70b-specdec";
-/// The `llama-3.2-70b-versatile` model. Used for chat completion.
-pub const LLAMA_3_2_70B_VERSATILE: &str = "llama-3.2-70b-versatile";
-/// The `llama-guard-3-8b` model. Used for chat completion.
-pub const LLAMA_GUARD_3_8B: &str = "llama-guard-3-8b";
-/// The `llama3-70b-8192` model. Used for chat completion.
-pub const LLAMA_3_70B_8192: &str = "llama3-70b-8192";
-/// The `llama3-8b-8192` model. Used for chat completion.
-pub const LLAMA_3_8B_8192: &str = "llama3-8b-8192";
-/// The `mixtral-8x7b-32768` model. Used for chat completion.
-pub const MIXTRAL_8X7B_32768: &str = "mixtral-8x7b-32768";
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningFormat {
@@ -168,7 +141,7 @@ pub(super) struct GroqCompletionRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openai::completion::ToolChoice>,
+    tool_choice: Option<rig::providers::openai::ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<GroqAdditionalParameters>,
     pub(super) stream: bool,
@@ -216,7 +189,7 @@ impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
         let tool_choice = req
             .tool_choice
             .clone()
-            .map(crate::providers::openai::ToolChoice::try_from)
+            .map(rig::providers::openai::ToolChoice::try_from)
             .transpose()?;
 
         let mut additional_params_payload = req.additional_params.take().unwrap_or(Value::Null);
@@ -509,10 +482,6 @@ where
 // Groq Transcription API
 // ================================================================
 
-pub const WHISPER_LARGE_V3: &str = "whisper-large-v3";
-pub const WHISPER_LARGE_V3_TURBO: &str = "whisper-large-v3-turbo";
-pub const DISTIL_WHISPER_LARGE_V3_EN: &str = "distil-whisper-large-v3-en";
-
 #[derive(Clone)]
 pub struct TranscriptionModel<T> {
     client: Client<T>,
@@ -774,7 +743,7 @@ where
                 continue;
             };
 
-            tool_calls.push(rig::providers::openai::completion::ToolCall {
+            tool_calls.push(rig::providers::openai::ToolCall {
                 id: id.clone(),
                 r#type: ToolType::Function,
                 function: Function {
@@ -787,7 +756,7 @@ where
             ));
         }
 
-        let response_message = crate::providers::openai::completion::Message::Assistant {
+        let response_message = rig::providers::openai::Message::Assistant {
             content: vec![AssistantContent::Text { text: text_response }],
             refusal: None,
             audio: None,
@@ -872,9 +841,8 @@ mod tests {
     }
     #[test]
     fn test_client_initialization() {
-        let _client =
-            crate::providers::groq::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::groq::Client::builder()
+        let _client = rig::providers::groq::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::groq::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");

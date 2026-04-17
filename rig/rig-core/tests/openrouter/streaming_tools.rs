@@ -1,7 +1,6 @@
 //! OpenRouter streaming tools smoke test.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::openrouter;
 use rig::streaming::StreamingPrompt;
 
 use crate::support::{
@@ -12,9 +11,9 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
 async fn streaming_tools_smoke() {
-    let client = openrouter::Client::from_env();
+    let client = rig::providers::openrouter::Client::from_env();
     let agent = client
-        .agent(openrouter::GEMINI_FLASH_2_0)
+        .agent(rig::models::openrouter::GEMINI_FLASH_2_0)
         .preamble(STREAMING_TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)

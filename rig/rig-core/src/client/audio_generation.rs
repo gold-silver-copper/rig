@@ -17,7 +17,7 @@ mod audio {
         /// // Initialize the OpenAI client
         /// let openai = Client::new("your-open-ai-api-key");
         ///
-        /// let tts = openai.audio_generation_model(openai::TTS_1);
+        /// let tts = openai.audio_generation_model(rig::models::openai::TTS_1);
         /// ```
         fn audio_generation_model(&self, model: impl Into<String>) -> Self::AudioGenerationModel {
             Self::AudioGenerationModel::make(self, model)

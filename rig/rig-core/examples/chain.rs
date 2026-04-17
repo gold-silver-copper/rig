@@ -3,7 +3,6 @@
 //! Run it to see the pipeline retrieve context and fold it into the final prompt.
 
 use rig::prelude::*;
-use rig::providers::openai;
 use rig::{
     embeddings::EmbeddingsBuilder,
     parallel,
@@ -24,9 +23,9 @@ fn sample_definitions() -> [&'static str; 3] {
 
 fn build_dictionary_agent(
     client: &Client,
-) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
+) -> rig::agent::Agent<rig::providers::openai::responses_api::ResponsesCompletionModel> {
     client
-        .agent(openai::GPT_4)
+        .agent(rig::models::openai::GPT_4)
         .preamble(
             "
             You are a dictionary assistant here to help the user understand non-standard words.
@@ -50,7 +49,7 @@ fn lookup_context(docs: Vec<(f64, String, String)>, prompt: &str) -> String {
 async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt().init();
     let client = Client::from_env();
-    let embedding_model = client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let embedding_model = client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     let mut builder = EmbeddingsBuilder::new(embedding_model.clone());
     for definition in sample_definitions() {

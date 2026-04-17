@@ -2,7 +2,7 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
-use rig::providers::deepseek::{self, DEEPSEEK_CHAT};
+use rig::models::deepseek::DEEPSEEK_CHAT;
 use rig::streaming::StreamingChat;
 
 use crate::support::{
@@ -12,7 +12,7 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
 async fn streaming_chat_with_tools() {
-    let client = deepseek::Client::from_env();
+    let client = rig::providers::deepseek::Client::from_env();
     let agent = client
         .agent(DEEPSEEK_CHAT)
         .preamble("You are a calculator here to help the user perform arithmetic operations.")

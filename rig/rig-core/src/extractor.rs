@@ -8,7 +8,7 @@
 //! use rig::providers::openai;
 //!
 //! // Initialize the OpenAI client
-//! let openai = openai::Client::new("your-open-ai-api-key");
+//! let openai = rig::providers::openai::Client::new("your-open-ai-api-key");
 //!
 //! // Define the structure of the data you want to extract
 //! #[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -19,7 +19,7 @@
 //! }
 //!
 //! // Create the extractor
-//! let extractor = openai.extractor::<Person>(openai::GPT_4O)
+//! let extractor = openai.extractor::<Person>(rig::models::openai::GPT_4O)
 //!     .build();
 //!
 //! // Extract structured data from text

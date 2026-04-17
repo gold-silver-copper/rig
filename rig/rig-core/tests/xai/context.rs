@@ -2,19 +2,18 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::xai;
 
 use crate::support::{CONTEXT_DOCS, CONTEXT_PROMPT, assert_contains_any_case_insensitive};
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
 async fn context_smoke() {
-    let client = xai::Client::from_env();
+    let client = rig::providers::xai::Client::from_env();
     let agent = CONTEXT_DOCS
         .iter()
         .copied()
         .fold(
-            client.agent(xai::completion::GROK_3_MINI),
+            client.agent(rig::models::xai::GROK_3_MINI),
             |builder, doc| builder.context(doc),
         )
         .build();

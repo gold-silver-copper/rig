@@ -6,7 +6,7 @@ use crate::{
         ProviderClient,
     },
     http_client,
-    providers::mistral::MistralModelLister,
+    rig::providers::mistral::MistralModelLister,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -114,8 +114,8 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::mistral::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::mistral::Client::builder()
+            rig::providers::mistral::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::mistral::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");

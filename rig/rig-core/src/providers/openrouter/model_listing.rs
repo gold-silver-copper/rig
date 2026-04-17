@@ -2,7 +2,7 @@ use crate::{
     client::ModelLister,
     http_client::{self, HttpClientExt},
     model::{Model, ModelList, ModelListingError},
-    providers::openrouter::Client,
+    rig::providers::openrouter::Client,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
 use serde::Deserialize;

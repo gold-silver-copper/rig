@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rig::client::CompletionClient;
 use rig::completion::{ToolDefinition, TypedPrompt};
-use rig::providers::openai;
 use rig::tool::Tool;
 
 #[derive(Debug, Deserialize, JsonSchema, Serialize)]
@@ -74,7 +73,7 @@ impl Tool for WeatherTool {
 async fn prompt_typed_with_tool_call_roundtrip() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
     let api_key = std::env::var("OPENAI_API_KEY")?;
-    let mut builder = openai::Client::builder().api_key(&api_key);
+    let mut builder = rig::providers::openai::Client::builder().api_key(&api_key);
 
     if let Ok(base_url) = std::env::var("OPENAI_BASE_URL") {
         builder = builder.base_url(&base_url);
@@ -82,7 +81,7 @@ async fn prompt_typed_with_tool_call_roundtrip() -> Result<()> {
 
     let client = builder.build()?.completions_api();
     let agent = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble(
             "You are a helpful assistant. When asked about weather, use the weather tool to get the current conditions. \
              After calling the tool, return a JSON response with the city name and the weather description. \

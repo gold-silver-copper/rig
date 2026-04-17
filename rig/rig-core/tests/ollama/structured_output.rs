@@ -2,7 +2,6 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::ollama;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +18,7 @@ struct Character {
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]
 async fn structured_output_prompt() {
-    let client = ollama::Client::from_env();
+    let client = rig::providers::ollama::Client::from_env();
     let agent = client
         .agent("qwen3:4b")
         .preamble("You are a creative fiction writer. Create detailed characters.")

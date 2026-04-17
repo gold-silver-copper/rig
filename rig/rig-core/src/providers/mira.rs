@@ -13,7 +13,6 @@ use crate::client::{
 };
 use crate::http_client::{self, HttpClientExt};
 use crate::message::{Document, DocumentSourceKind};
-use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
 use crate::streaming::StreamingCompletionResponse;
 use crate::{
@@ -323,7 +322,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = rig::providers::openai::StreamingCompletionResponse;
 
     type Client = Client<T>;
 

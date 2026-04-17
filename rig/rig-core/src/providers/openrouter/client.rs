@@ -128,8 +128,8 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::openrouter::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::openrouter::Client::builder()
+            rig::providers::openrouter::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::openrouter::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");

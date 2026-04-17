@@ -10,11 +10,11 @@
 //! use rig::completion::Prompt;
 //!
 //! // Create a new Llamafile client (defaults to http://localhost:8080)
-//! let client = llamafile::Client::from_url("http://localhost:8080");
+//! let client = rig::providers::llamafile::Client::from_url("http://localhost:8080");
 //!
 //! // Create an agent with a preamble
 //! let agent = client
-//!     .agent(llamafile::LLAMA_CPP)
+//!     .agent(rig::models::llamafile::LLAMA_CPP)
 //!     .preamble("You are a helpful assistant.")
 //!     .build();
 //!
@@ -30,7 +30,7 @@ use crate::completion::GetTokenUsage;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::json_utils::empty_or_none;
-use crate::providers::openai::{self, StreamingToolCall};
+use crate::providers::openai::StreamingToolCall;
 use crate::{
     completion::{self, CompletionError, CompletionRequest},
     embeddings::{self, EmbeddingError},
@@ -48,9 +48,6 @@ use tracing_futures::Instrument;
 // Main Llamafile Client
 // ================================================================
 const LLAMAFILE_API_BASE_URL: &str = "http://localhost:8080";
-
-/// The default model identifier reported by llamafile.
-pub const LLAMA_CPP: &str = "LLaMA_CPP";
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LlamafileExt;
@@ -149,13 +146,13 @@ enum ApiResponse<T> {
 #[derive(Debug, Serialize, Deserialize)]
 struct LlamafileCompletionRequest {
     model: String,
-    messages: Vec<openai::Message>,
+    messages: Vec<rig::providers::openai::Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<openai::ToolDefinition>,
+    tools: Vec<rig::providers::openai::ToolDefinition>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     additional_params: Option<serde_json::Value>,
 }
@@ -170,22 +167,22 @@ impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
 
         // Build message history: preamble -> documents -> chat history
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
+        let mut full_history: Vec<rig::providers::openai::Message> = match &req.preamble {
+            Some(preamble) => vec![rig::providers::openai::Message::system(preamble)],
             None => vec![],
         };
 
         if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
+            let docs: Vec<rig::providers::openai::Message> = docs.try_into()?;
             full_history.extend(docs);
         }
 
-        let chat_history: Vec<openai::Message> = req
+        let chat_history: Vec<rig::providers::openai::Message> = req
             .chat_history
             .clone()
             .into_iter()
             .map(|msg| msg.try_into())
-            .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
+            .collect::<Result<Vec<Vec<rig::providers::openai::Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
@@ -200,7 +197,7 @@ impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
             tools: req
                 .tools
                 .into_iter()
-                .map(openai::ToolDefinition::from)
+                .map(rig::providers::openai::ToolDefinition::from)
                 .collect(),
             additional_params: req.additional_params,
         })
@@ -233,7 +230,7 @@ impl<T> completion::CompletionModel for CompletionModel<T>
 where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
-    type Response = openai::CompletionResponse;
+    type Response = rig::providers::openai::CompletionResponse;
     type StreamingResponse = StreamingCompletionResponse;
     type Client = Client<T>;
 
@@ -244,7 +241,10 @@ where
     async fn completion(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<openai::CompletionResponse>, CompletionError> {
+    ) -> Result<
+        completion::CompletionResponse<rig::providers::openai::CompletionResponse>,
+        CompletionError,
+    > {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -285,9 +285,10 @@ where
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
-                    &response_body,
-                )? {
+                match serde_json::from_slice::<
+                    ApiResponse<rig::providers::openai::CompletionResponse>,
+                >(&response_body)?
+                {
                     ApiResponse::Ok(response) => {
                         let span = tracing::Span::current();
                         span.record("gen_ai.response.id", response.id.clone());
@@ -392,14 +393,14 @@ struct StreamingChoice {
 #[derive(Deserialize, Debug)]
 struct StreamingCompletionChunk {
     choices: Vec<StreamingChoice>,
-    usage: Option<openai::Usage>,
+    usage: Option<rig::providers::openai::Usage>,
 }
 
 /// Final streaming response containing usage information.
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct StreamingCompletionResponse {
     /// Token usage from the streaming response.
-    pub usage: openai::Usage,
+    pub usage: rig::providers::openai::Usage,
 }
 
 impl GetTokenUsage for StreamingCompletionResponse {
@@ -427,7 +428,7 @@ where
 
     let stream = stream! {
         let span = tracing::Span::current();
-        let mut final_usage = openai::Usage {
+        let mut final_usage = rig::providers::openai::Usage {
             prompt_tokens: 0,
             total_tokens: 0,
             prompt_tokens_details: None,
@@ -606,7 +607,8 @@ where
 
         if response.status().is_success() {
             let body: Vec<u8> = response.into_body().await?;
-            let body: ApiResponse<openai::EmbeddingResponse> = serde_json::from_slice(&body)?;
+            let body: ApiResponse<rig::providers::openai::EmbeddingResponse> =
+                serde_json::from_slice(&body)?;
 
             match body {
                 ApiResponse::Ok(response) => {
@@ -655,8 +657,8 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::llamafile::Client::new(Nothing).expect("Client::new() failed");
-        let _client_from_builder = crate::providers::llamafile::Client::builder()
+            rig::providers::llamafile::Client::new(Nothing).expect("Client::new() failed");
+        let _client_from_builder = rig::providers::llamafile::Client::builder()
             .api_key(Nothing)
             .build()
             .expect("Client::builder() failed");
@@ -664,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_client_from_url() {
-        let _client = crate::providers::llamafile::Client::from_url("http://localhost:8080");
+        let _client = rig::providers::llamafile::Client::from_url("http://localhost:8080");
     }
 
     #[test]
@@ -690,10 +692,13 @@ mod tests {
             output_schema: None,
         };
 
-        let request = LlamafileCompletionRequest::try_from((LLAMA_CPP, completion_request))
-            .expect("Failed to create request");
+        let request = LlamafileCompletionRequest::try_from((
+            crate::models::llamafile::LLAMA_CPP,
+            completion_request,
+        ))
+        .expect("Failed to create request");
 
-        assert_eq!(request.model, LLAMA_CPP);
+        assert_eq!(request.model, crate::models::llamafile::LLAMA_CPP);
         assert_eq!(request.messages.len(), 2); // system + user
         assert_eq!(request.temperature, Some(0.7));
         assert_eq!(request.max_tokens, Some(256));

@@ -9,8 +9,8 @@
 //! use rig::client::CompletionClient;
 //! use rig::providers::zai;
 //!
-//! let client = zai::Client::new("YOUR_API_KEY").expect("Failed to build client");
-//! let glm_4_6 = client.completion_model(zai::GLM_4_6);
+//! let client = rig::providers::zai::Client::new("YOUR_API_KEY").expect("Failed to build client");
+//! let glm_4_6 = client.completion_model(rig::models::zai::GLM_4_6);
 //! ```
 //!
 //! # Anthropic-compatible example
@@ -18,8 +18,8 @@
 //! use rig::client::CompletionClient;
 //! use rig::providers::zai;
 //!
-//! let client = zai::AnthropicClient::new("YOUR_API_KEY").expect("Failed to build client");
-//! let glm_4_6 = client.completion_model(zai::GLM_4_6);
+//! let client = rig::providers::zai::AnthropicClient::new("YOUR_API_KEY").expect("Failed to build client");
+//! let glm_4_6 = client.completion_model(rig::models::zai::GLM_4_6);
 //! ```
 
 use crate::client::{
@@ -37,21 +37,6 @@ pub const GENERAL_API_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
 pub const CODING_API_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
 /// Anthropic-compatible base URL.
 pub const ANTHROPIC_API_BASE_URL: &str = "https://api.z.ai/api/anthropic";
-
-/// `glm-4.6`
-pub const GLM_4_6: &str = "glm-4.6";
-/// `glm-4.6-air`
-pub const GLM_4_6_AIR: &str = "glm-4.6-air";
-/// `glm-4.6-x`
-pub const GLM_4_6_X: &str = "glm-4.6-x";
-/// `glm-4.5`
-pub const GLM_4_5: &str = "glm-4.5";
-/// `glm-4.5-air`
-pub const GLM_4_5_AIR: &str = "glm-4.5-air";
-/// `glm-4.5v`
-pub const GLM_4_5V: &str = "glm-4.5v";
-/// `glm-4.5-airx`
-pub const GLM_4_5_AIRX: &str = "glm-4.5-airx";
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ZAiExt;
@@ -290,14 +275,14 @@ mod tests {
 
     #[test]
     fn test_client_initialization() {
-        let _client = crate::providers::zai::Client::new("dummy-key").expect("Client::new()");
-        let _client_from_builder = crate::providers::zai::Client::builder()
+        let _client = rig::providers::zai::Client::new("dummy-key").expect("Client::new()");
+        let _client_from_builder = rig::providers::zai::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder()");
-        let _anthropic_client = crate::providers::zai::AnthropicClient::new("dummy-key")
-            .expect("AnthropicClient::new()");
-        let _anthropic_client_from_builder = crate::providers::zai::AnthropicClient::builder()
+        let _anthropic_client =
+            rig::providers::zai::AnthropicClient::new("dummy-key").expect("AnthropicClient::new()");
+        let _anthropic_client_from_builder = rig::providers::zai::AnthropicClient::builder()
             .api_key("dummy-key")
             .build()
             .expect("AnthropicClient::builder()");

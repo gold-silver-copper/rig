@@ -10,7 +10,6 @@ use rig::agent::Agent;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{self, CompletionError, CompletionModel, PromptError, ToolDefinition};
 use rig::message::{AssistantContent, Message, Text, ToolResultContent, UserContent};
-use rig::providers::gemini;
 use rig::streaming::{StreamedAssistantContent, StreamingCompletion};
 use rig::tool::{Tool, ToolError, ToolSetError};
 use schemars::{JsonSchema, schema_for};
@@ -42,9 +41,9 @@ async fn manual_multi_turn_streaming_loop() {
     let multiply_calls = Arc::new(AtomicUsize::new(0));
     let divide_calls = Arc::new(AtomicUsize::new(0));
 
-    let client = gemini::Client::from_env();
+    let client = rig::providers::gemini::Client::from_env();
     let agent = client
-        .agent(gemini::completion::GEMINI_2_5_FLASH)
+        .agent(rig::models::gemini::GEMINI_2_5_FLASH)
         .preamble("You must use tools to answer arithmetic prompts.")
         .tool(Add::new(add_calls.clone()))
         .tool(Subtract::new(subtract_calls.clone()))

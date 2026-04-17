@@ -2,12 +2,9 @@ use crate::audio_generation::{
     self, AudioGenerationError, AudioGenerationRequest, AudioGenerationResponse,
 };
 use crate::http_client::{self, HttpClientExt};
-use crate::providers::openai::Client;
 use bytes::{Buf, Bytes};
+use rig::providers::openai::Client;
 use serde_json::json;
-
-pub const TTS_1: &str = "tts-1";
-pub const TTS_1_HD: &str = "tts-1-hd";
 
 #[derive(Clone)]
 pub struct AudioGenerationModel<T = reqwest::Client> {

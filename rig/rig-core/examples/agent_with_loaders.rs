@@ -7,7 +7,6 @@ use rig::agent::AgentBuilder;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::loaders::FileLoader;
-use rig::providers::openai;
 
 const LOADERS_GLOB: &str = "rig-core/examples/*.rs";
 const LOADERS_PROMPT: &str = "Which example builds an agent from files loaded via FileLoader::with_glob(\"rig-core/examples/*.rs\")? Answer with just the file name.";
@@ -21,8 +20,8 @@ fn load_example_contexts() -> Result<impl Iterator<Item = (std::path::PathBuf, S
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let client = openai::Client::from_env();
-    let model = client.completion_model(openai::GPT_4O);
+    let client = rig::providers::openai::Client::from_env();
+    let model = client.completion_model(rig::models::openai::GPT_4O);
     let files = load_example_contexts()?;
 
     let agent = files

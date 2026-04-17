@@ -4,13 +4,12 @@
 //! ```
 //! use rig::providers::perplexity;
 //!
-//! let client = perplexity::Client::new("YOUR_API_KEY");
+//! let client = rig::providers::perplexity::Client::new("YOUR_API_KEY");
 //!
-//! let llama_3_1_sonar_small_online = client.completion_model(perplexity::LLAMA_3_1_SONAR_SMALL_ONLINE);
+//! let llama_3_1_sonar_small_online = client.completion_model(rig::providers::perplexity::LLAMA_3_1_SONAR_SMALL_ONLINE);
 //! ```
 use crate::client::BearerAuth;
 use crate::completion::CompletionRequest;
-use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
 use crate::streaming::StreamingCompletionResponse;
 use crate::{
@@ -112,9 +111,6 @@ enum ApiResponse<T> {
 // ================================================================
 // Perplexity Completion API
 // ================================================================
-
-pub const SONAR_PRO: &str = "sonar_pro";
-pub const SONAR: &str = "sonar";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CompletionResponse {
@@ -341,7 +337,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = rig::providers::openai::StreamingCompletionResponse;
 
     type Client = Client<T>;
 
@@ -545,8 +541,8 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::perplexity::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::perplexity::Client::builder()
+            rig::providers::perplexity::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::perplexity::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");

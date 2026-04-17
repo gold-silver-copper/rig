@@ -1,7 +1,6 @@
 //! Gemini streaming tools coverage, including the migrated example path.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::gemini;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
@@ -18,9 +17,9 @@ async fn streaming_tools_smoke() {
     let additional_params =
         AdditionalParameters::default().with_config(GenerationConfig::default());
 
-    let client = gemini::Client::from_env();
+    let client = rig::providers::gemini::Client::from_env();
     let agent = client
-        .agent(gemini::completion::GEMINI_2_5_FLASH)
+        .agent(rig::models::gemini::GEMINI_2_5_FLASH)
         .preamble(STREAMING_TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)
@@ -42,8 +41,8 @@ async fn streaming_tools_smoke() {
 #[ignore = "requires GEMINI_API_KEY"]
 async fn example_streaming_with_tools() {
     let config = AdditionalParameters::default().with_config(GenerationConfig::default());
-    let agent = gemini::Client::from_env()
-        .agent(gemini::completion::GEMINI_2_5_FLASH)
+    let agent = rig::providers::gemini::Client::from_env()
+        .agent(rig::models::gemini::GEMINI_2_5_FLASH)
         .preamble(
             "You are a calculator here to help the user perform arithmetic operations. \
              Use the tools provided to answer the user's question.",

@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use rig::client::Nothing;
 use rig::integrations::cli_chatbot::ChatBotBuilder;
 use rig::prelude::*;
-use rig::providers::ollama;
 use rig::{
     Embed, embeddings::EmbeddingsBuilder, loaders::PdfFileLoader,
     vector_store::in_memory_store::InMemoryVectorStore,
@@ -56,7 +55,7 @@ fn load_pdf(path: PathBuf) -> Result<Vec<String>> {
 async fn main() -> Result<()> {
     // Initialize Ollama client
     // because Ollama is local and does not require an api key, we pass in `Nothing`
-    let client = ollama::Client::builder()
+    let client = rig::providers::ollama::Client::builder()
         .api_key(Nothing)
         .base_url("http://localhost:11434/v1")
         .build()

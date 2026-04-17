@@ -117,7 +117,7 @@ pub struct TranscriptionRequest {
 /// };
 ///
 /// let openai = Client::new("your-openai-api-key");
-/// let model = openai.transcription_model(openai::WHISPER_1).build();
+/// let model = openai.transcription_model(rig::models::openai::WHISPER_1).build();
 ///
 /// // Create the completion request and execute it separately
 /// let request = TranscriptionRequestBuilder::new(model, "~/audio.mp3".to_string())
@@ -137,7 +137,7 @@ pub struct TranscriptionRequest {
 /// };
 ///
 /// let openai = Client::new("your-openai-api-key");
-/// let model = openai.transcription_model(openai::WHISPER_1).build();
+/// let model = openai.transcription_model(rig::models::openai::WHISPER_1).build();
 ///
 /// // Create the completion request and execute it directly
 /// let response = TranscriptionRequestBuilder::new(model, "~/audio.mp3".to_string())

@@ -10,7 +10,6 @@ use redis::{
 use rig::{
     client::{EmbeddingsClient, ProviderClient},
     embeddings::EmbeddingModel,
-    providers::openai,
     vector_store::{VectorSearchRequest, VectorStoreError, VectorStoreIndex, request::Filter},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -180,9 +179,10 @@ struct Document {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenAI client from environment
-    let openai_client = openai::Client::from_env();
+    let openai_client = rig::providers::openai::Client::from_env();
     // Convert it to an EmbeddingModel
-    let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let embedding_model =
+        openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     // Create the Redis vector store
     let mut store =

@@ -5,7 +5,6 @@ use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{CompletionModel, GetTokenUsage};
 use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
-use rig::providers::gemini;
 use rig::providers::gemini::interactions_api::{AdditionalParameters, Tool};
 use rig::streaming::StreamedAssistantContent;
 
@@ -32,7 +31,8 @@ fn first_tool_call(choice: &OneOrMany<AssistantContent>) -> Option<ToolCall> {
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
 async fn basic_interaction_returns_id() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+    let model = rig::providers::gemini::InteractionsClient::from_env()
+        .completion_model("gemini-3-flash-preview");
     let params = AdditionalParameters {
         store: Some(true),
         ..Default::default()
@@ -57,7 +57,8 @@ async fn basic_interaction_returns_id() {
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
 async fn followup_with_previous_interaction_id() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+    let model = rig::providers::gemini::InteractionsClient::from_env()
+        .completion_model("gemini-3-flash-preview");
     let initial = model
         .completion(
             model
@@ -98,7 +99,8 @@ async fn followup_with_previous_interaction_id() {
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
 async fn google_search_tool_interaction() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+    let model = rig::providers::gemini::InteractionsClient::from_env()
+        .completion_model("gemini-3-flash-preview");
     let response = model
         .completion(
             model
@@ -125,7 +127,8 @@ async fn google_search_tool_interaction() {
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
 async fn tool_result_roundtrip() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+    let model = rig::providers::gemini::InteractionsClient::from_env()
+        .completion_model("gemini-3-flash-preview");
     let tool = rig::completion::ToolDefinition {
         name: "add".to_string(),
         description: "Add two numbers together".to_string(),
@@ -191,7 +194,8 @@ async fn tool_result_roundtrip() {
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
 async fn streaming_interaction() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+    let model = rig::providers::gemini::InteractionsClient::from_env()
+        .completion_model("gemini-3-flash-preview");
     let request = model
         .completion_request("Write a 3-line poem about rust and rivers.")
         .temperature(0.4)

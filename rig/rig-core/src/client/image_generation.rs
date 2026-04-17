@@ -18,7 +18,7 @@ mod image {
         /// // Initialize the OpenAI client
         /// let openai = Client::new("your-open-ai-api-key");
         ///
-        /// let gpt4 = openai.image_generation_model(openai::DALL_E_3);
+        /// let gpt4 = openai.image_generation_model(rig::models::openai::DALL_E_3);
         /// ```
         fn image_generation_model(&self, model: impl Into<String>) -> Self::ImageGenerationModel;
 
@@ -32,7 +32,7 @@ mod image {
         /// // Initialize the OpenAI client
         /// let openai = Client::new("your-open-ai-api-key");
         ///
-        /// let gpt4 = openai.image_generation_model(openai::DALL_E_3);
+        /// let gpt4 = openai.image_generation_model(rig::models::openai::DALL_E_3);
         /// ```
         fn custom_image_generation_model(
             &self,

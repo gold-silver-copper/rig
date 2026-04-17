@@ -102,28 +102,10 @@ impl<T> EmbeddingModel<T> {
 // Voyage AI Embedding API
 // ================================================================
 
-/// `voyage-3-large` embedding model (Voyage AI)
-pub const VOYAGE_3_LARGE: &str = "voyage-3-large";
-/// `voyage-3.5` embedding model (Voyage AI)
-pub const VOYAGE_3_5: &str = "voyage-3.5";
-/// `voyage-3.5-lite` embedding model (Voyage AI)
-pub const VOYAGE_3_5_LITE: &str = "voyage.3-5.lite";
-/// `voyage-code-3` embedding model (Voyage AI)
-pub const VOYAGE_CODE_3: &str = "voyage-code-3";
-/// `voyage-finance-2` embedding model (Voyage AI)
-pub const VOYAGE_FINANCE_2: &str = "voyage-finance-2";
-/// `voyage-law-2` embedding model (Voyage AI)
-pub const VOYAGE_LAW_2: &str = "voyage-law-2";
-/// `voyage-code-2` embedding model (Voyage AI)
-pub const VOYAGE_CODE_2: &str = "voyage-code-2";
-
 pub fn model_dimensions_from_identifier(model_identifier: &str) -> Option<usize> {
-    match model_identifier {
-        "voyage-code-2" => Some(1536),
-        "voyage-3-large" | "voyage-3.5" | "voyage.3-5.lite" | "voyage-code-3"
-        | "voyage-finance-2" | "voyage-law-2" => Some(1024),
-        _ => None,
-    }
+    crate::models::voyageai::lookup(model_identifier)
+        .and_then(|model| model.embedding)
+        .and_then(|metadata| metadata.default_dimensions)
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,8 +243,8 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::voyageai::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::voyageai::Client::builder()
+            rig::providers::voyageai::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::voyageai::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");

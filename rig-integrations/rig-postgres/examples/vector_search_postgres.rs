@@ -36,7 +36,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Create OpenAI client
     let openai_client = openai::Client::from_env();
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_3_SMALL);
 
     // setup Postgres
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL not set");

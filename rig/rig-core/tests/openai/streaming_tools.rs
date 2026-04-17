@@ -1,7 +1,6 @@
 //! OpenAI streaming tools coverage, including the migrated example path.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::openai;
 use rig::streaming::StreamingPrompt;
 
 use crate::support::{
@@ -12,9 +11,9 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn streaming_tools_smoke() {
-    let client = openai::Client::from_env();
+    let client = rig::providers::openai::Client::from_env();
     let agent = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble(STREAMING_TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)
@@ -31,9 +30,9 @@ async fn streaming_tools_smoke() {
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn example_streaming_with_tools() {
-    let client = openai::Client::from_env();
+    let client = rig::providers::openai::Client::from_env();
     let agent = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble(
             "You are a calculator here to help the user perform arithmetic operations. \
              Use the tools provided to answer the user's question and answer in a full sentence.",

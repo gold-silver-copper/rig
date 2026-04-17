@@ -2,15 +2,14 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::minimax;
 
 use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires MINIMAX_API_KEY"]
 async fn anthropic_compatible_completion_smoke() {
-    let response = minimax::AnthropicClient::from_env()
-        .agent(minimax::MINIMAX_M2)
+    let response = rig::providers::minimax::AnthropicClient::from_env()
+        .agent(rig::models::minimax::MINIMAX_M2)
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)

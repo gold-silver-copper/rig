@@ -1,7 +1,6 @@
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
-use crate::providers::cohere::CompletionModel;
 use crate::providers::cohere::completion::{
     AssistantContent, CohereCompletionRequest, Message, ToolCall, ToolCallFunction, ToolType, Usage,
 };
@@ -10,6 +9,7 @@ use crate::telemetry::SpanCombinator;
 use crate::{json_utils, streaming};
 use async_stream::stream;
 use futures::StreamExt;
+use rig::providers::cohere::CompletionModel;
 use serde::{Deserialize, Serialize};
 use tracing::{Level, enabled, info_span};
 use tracing_futures::Instrument;

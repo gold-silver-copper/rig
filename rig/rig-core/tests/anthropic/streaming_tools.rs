@@ -1,7 +1,6 @@
 //! Anthropic streaming tools smoke test.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::anthropic;
 use rig::streaming::StreamingPrompt;
 
 use crate::support::{
@@ -12,9 +11,9 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn streaming_tools_smoke() {
-    let client = anthropic::Client::from_env();
+    let client = rig::providers::anthropic::Client::from_env();
     let agent = client
-        .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+        .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
         .preamble(STREAMING_TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)

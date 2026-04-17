@@ -23,7 +23,7 @@
 //!     providers::openai,
 //! };
 //!
-//! let openai = openai::Client::from_env();
+//! let openai = rig::providers::openai::Client::from_env();
 //!
 //! // Configure the agent
 //! let agent = openai.agent("gpt-4o")
@@ -71,10 +71,10 @@
 //! };
 //!
 //! // Initialize OpenAI client
-//! let openai = openai::Client::from_env();
+//! let openai = rig::providers::openai::Client::from_env();
 //!
 //! // Initialize OpenAI embedding model
-//! let embedding_model = openai.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+//! let embedding_model = openai.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 //!
 //! // Create vector store, compute embeddings and load them in the store
 //! let mut vector_store = InMemoryVectorStore::default();
@@ -94,7 +94,7 @@
 //! // Create vector store index
 //! let index = vector_store.index(embedding_model);
 //!
-//! let agent = openai.agent(openai::GPT_4O)
+//! let agent = openai.agent(rig::models::openai::GPT_4O)
 //!     .preamble("
 //!         You are a dictionary assistant here to assist the user in understanding the meaning of words.
 //!         You will find additional non-standard word definitions that could be useful below.

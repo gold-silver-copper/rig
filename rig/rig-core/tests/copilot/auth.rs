@@ -3,7 +3,6 @@
 use assert_fs::TempDir;
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
-use rig::providers::copilot;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -23,7 +22,7 @@ fn required_copilot_github_access_token() -> String {
         .expect("COPILOT_GITHUB_ACCESS_TOKEN or GITHUB_TOKEN should be set")
 }
 
-fn oauth_builder_with_token_dir(path: &Path) -> copilot::ClientBuilder {
+fn oauth_builder_with_token_dir(path: &Path) -> rig::providers::copilot::ClientBuilder {
     oauth_builder().token_dir(path)
 }
 

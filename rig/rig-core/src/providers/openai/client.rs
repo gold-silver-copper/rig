@@ -620,8 +620,8 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::openai::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::openai::Client::builder()
+            rig::providers::openai::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::openai::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");
@@ -629,20 +629,20 @@ mod tests {
 
     #[test]
     fn test_legacy_chat_completion_model_type_annotation_still_compiles() {
-        let client = crate::providers::openai::Client::new("dummy-key")
+        let client = rig::providers::openai::Client::new("dummy-key")
             .expect("Client::new() failed")
             .completions_api();
 
-        let _model: crate::providers::openai::completion::CompletionModel<reqwest::Client> =
+        let _model: rig::providers::openai::CompletionModel<reqwest::Client> =
             client.completion_model("gpt-4o");
     }
 
     #[test]
     fn test_legacy_embedding_model_type_annotation_still_compiles() {
         let client =
-            crate::providers::openai::Client::new("dummy-key").expect("Client::new() failed");
+            rig::providers::openai::Client::new("dummy-key").expect("Client::new() failed");
 
-        let _model: crate::providers::openai::EmbeddingModel<reqwest::Client> =
-            client.embedding_model(crate::providers::openai::TEXT_EMBEDDING_3_SMALL);
+        let _model: rig::providers::openai::EmbeddingModel<reqwest::Client> =
+            client.embedding_model(rig::models::openai::TEXT_EMBEDDING_3_SMALL);
     }
 }

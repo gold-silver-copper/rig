@@ -4,7 +4,6 @@ use arrow_array::RecordBatchIterator;
 use fixture::{Word, as_record_batch, schema, words};
 use lancedb::index::vector::IvfPqIndexBuilder;
 use rig::client::{EmbeddingsClient, ProviderClient};
-use rig::providers::openai;
 use rig::vector_store::request::VectorSearchRequest;
 use rig::{
     embeddings::{EmbeddingModel, EmbeddingsBuilder},
@@ -22,7 +21,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let openai_client = Client::from_env();
 
     // Select an embedding model.
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     // Initialize LanceDB locally.
     let db = lancedb::connect("data/lancedb-store").execute().await?;

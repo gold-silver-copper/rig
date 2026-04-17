@@ -3,14 +3,13 @@ use crate::audio_generation::{
 };
 use crate::http_client::{self, HttpClientExt};
 use crate::json_utils::merge_inplace;
-use crate::providers::xai::Client;
 use bytes::Bytes;
+use rig::providers::xai::Client;
 use serde_json::json;
 
 // ================================================================
 // xAI TTS API
 // ================================================================
-pub const TTS_1: &str = "tts-1";
 
 #[derive(Clone)]
 pub struct AudioGenerationModel<T = reqwest::Client> {

@@ -1,6 +1,5 @@
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers;
 use rig::tool::{Tool, ToolError};
 use rig_derive::rig_tool;
 use std::time::Duration;
@@ -28,8 +27,8 @@ async fn async_operation(input: String, delay_ms: u64) -> Result<String, ToolErr
 async fn main() {
     tracing_subscriber::fmt().pretty().init();
 
-    let async_agent = providers::openai::Client::from_env()
-        .agent(providers::openai::GPT_4O)
+    let async_agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
         .tool(AsyncOperation)

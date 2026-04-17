@@ -1036,7 +1036,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1115,7 +1115,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1221,7 +1221,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1317,7 +1317,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1459,7 +1459,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1546,7 +1546,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1666,7 +1666,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1771,7 +1771,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1813,7 +1813,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1857,7 +1857,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1898,7 +1898,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()
@@ -1974,7 +1974,7 @@ mod tests {
         });
 
         let base_url = format!("http://{address}/v1");
-        let client = crate::providers::openai::Client::builder()
+        let client = rig::providers::openai::Client::builder()
             .api_key("test-key")
             .base_url(&base_url)
             .build()

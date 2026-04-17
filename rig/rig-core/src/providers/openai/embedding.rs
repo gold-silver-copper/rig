@@ -11,13 +11,6 @@ use serde_json::json;
 // ================================================================
 // OpenAI Embedding API
 // ================================================================
-/// `text-embedding-3-large` embedding model
-pub const TEXT_EMBEDDING_3_LARGE: &str = "text-embedding-3-large";
-/// `text-embedding-3-small` embedding model
-pub const TEXT_EMBEDDING_3_SMALL: &str = "text-embedding-3-small";
-/// `text-embedding-ada-002` embedding model
-pub const TEXT_EMBEDDING_ADA_002: &str = "text-embedding-ada-002";
-
 #[derive(Debug, Deserialize)]
 pub struct EmbeddingResponse {
     pub object: String,
@@ -71,12 +64,8 @@ pub struct GenericEmbeddingModel<Ext = super::OpenAIResponsesExt, H = reqwest::C
 /// parameter is the HTTP client type.
 pub type EmbeddingModel<H = reqwest::Client> = GenericEmbeddingModel<super::OpenAIResponsesExt, H>;
 
-fn model_dimensions_from_identifier(identifier: &str) -> Option<usize> {
-    match identifier {
-        TEXT_EMBEDDING_3_LARGE => Some(3_072),
-        TEXT_EMBEDDING_3_SMALL | TEXT_EMBEDDING_ADA_002 => Some(1_536),
-        _ => None,
-    }
+fn embedding_metadata(identifier: &str) -> Option<crate::models::EmbeddingMetadata> {
+    crate::models::openai::lookup(identifier).and_then(|model| model.embedding)
 }
 
 impl<Ext, H> embeddings::EmbeddingModel for GenericEmbeddingModel<Ext, H>
@@ -92,7 +81,7 @@ where
     fn make(client: &Self::Client, model: impl Into<String>, ndims: Option<usize>) -> Self {
         let model = model.into();
         let dims = ndims
-            .or(model_dimensions_from_identifier(&model))
+            .or_else(|| embedding_metadata(&model).and_then(|metadata| metadata.default_dimensions))
             .unwrap_or_default();
 
         Self::new(client.clone(), model, dims)
@@ -113,7 +102,11 @@ where
             "input": documents,
         });
 
-        if self.ndims > 0 && self.model.as_str() != TEXT_EMBEDDING_ADA_002 {
+        let supports_dimensions_override = embedding_metadata(self.model.as_str())
+            .and_then(|metadata| metadata.supports_dimensions_override)
+            .unwrap_or(true);
+
+        if self.ndims > 0 && supports_dimensions_override {
             body["dimensions"] = json!(self.ndims);
         }
 
@@ -226,5 +219,42 @@ where
     pub fn user(mut self, user: impl Into<String>) -> Self {
         self.user = Some(user.into());
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn make_uses_catalog_default_dimensions_for_known_models() {
+        let client = crate::providers::openai::Client::new("test-key").expect("build client");
+        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &client,
+            crate::models::openai::TEXT_EMBEDDING_3_LARGE,
+            None,
+        );
+
+        assert_eq!(model.ndims, 3_072);
+    }
+
+    #[test]
+    fn known_ada_models_disable_dimension_overrides() {
+        let metadata = embedding_metadata(crate::models::openai::TEXT_EMBEDDING_ADA_002)
+            .expect("ada-002 metadata should exist");
+
+        assert_eq!(metadata.supports_dimensions_override, Some(false));
+    }
+
+    #[test]
+    fn unknown_models_keep_zero_default_dimensions() {
+        let client = crate::providers::openai::Client::new("test-key").expect("build client");
+        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &client,
+            "future-embed-model",
+            None,
+        );
+
+        assert_eq!(model.ndims, 0);
     }
 }

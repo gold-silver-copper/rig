@@ -8,8 +8,8 @@
 //! use rig::client::CompletionClient;
 //! use rig::providers::chatgpt;
 //!
-//! let client = chatgpt::Client::from_env();
-//! let model = client.completion_model(chatgpt::GPT_5_3_CODEX);
+//! let client = rig::providers::chatgpt::Client::from_env();
+//! let model = client.completion_model(rig::models::chatgpt::GPT_5_3_CODEX);
 //! ```
 
 mod auth;
@@ -33,19 +33,6 @@ use tracing::{Level, enabled, info_span};
 const CHATGPT_API_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const DEFAULT_ORIGINATOR: &str = "rig";
 const DEFAULT_INSTRUCTIONS: &str = "You are ChatGPT, a helpful AI assistant.";
-
-/// `gpt-5.4`
-pub const GPT_5_4: &str = "gpt-5.4";
-/// `gpt-5.4-pro`
-pub const GPT_5_4_PRO: &str = "gpt-5.4-pro";
-/// `gpt-5.3-codex`
-pub const GPT_5_3_CODEX: &str = "gpt-5.3-codex";
-/// `gpt-5.3-codex-spark`
-pub const GPT_5_3_CODEX_SPARK: &str = "gpt-5.3-codex-spark";
-/// `gpt-5.3-instant`
-pub const GPT_5_3_INSTANT: &str = "gpt-5.3-instant";
-/// `gpt-5.3-chat-latest`
-pub const GPT_5_3_CHAT_LATEST: &str = "gpt-5.3-chat-latest";
 
 #[derive(Clone)]
 pub enum ChatGPTAuth {
@@ -675,7 +662,7 @@ data: [DONE]"#;
 
     #[test]
     fn test_client_initialization() {
-        let _client = crate::providers::chatgpt::Client::builder()
+        let _client = rig::providers::chatgpt::Client::builder()
             .oauth()
             .build()
             .expect("Client::builder()");
@@ -739,11 +726,11 @@ data: [DONE]"#;
 
     #[test]
     fn test_create_request_drops_temperature() {
-        let client = crate::providers::chatgpt::Client::builder()
+        let client = rig::providers::chatgpt::Client::builder()
             .oauth()
             .build()
             .expect("client");
-        let model = ResponsesCompletionModel::new(client, GPT_5_3_CODEX);
+        let model = ResponsesCompletionModel::new(client, crate::models::chatgpt::GPT_5_3_CODEX);
 
         let request = model
             .create_request(completion::CompletionRequest {

@@ -4,7 +4,6 @@ use rig::{
     completion::{CompletionError, CompletionModel, Prompt, PromptError, ToolDefinition},
     extractor::Extractor,
     message::Message,
-    providers::anthropic,
     tool::Tool,
 };
 use schemars::JsonSchema;
@@ -72,15 +71,15 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Create Anthropic client
-    let anthropic_client = anthropic::Client::from_env();
+    let anthropic_client = rig::providers::anthropic::Client::from_env();
     let agent = ReasoningAgent {
         chain_of_thought_extractor: anthropic_client
-            .extractor(anthropic::completion::CLAUDE_SONNET_4_6)
+            .extractor(rig::models::anthropic::CLAUDE_SONNET_4_6)
             .preamble(CHAIN_OF_THOUGHT_PROMPT)
             .build(),
 
         executor: anthropic_client
-            .agent(anthropic::completion::CLAUDE_SONNET_4_6)
+            .agent(rig::models::anthropic::CLAUDE_SONNET_4_6)
             .preamble(
                 "You are an assistant here to help the user select which tool is most appropriate to perform arithmetic operations.
                 Follow these instructions closely.

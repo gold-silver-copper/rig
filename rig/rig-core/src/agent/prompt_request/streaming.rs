@@ -795,7 +795,6 @@ mod tests {
         CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
     };
     use crate::message::{AssistantContent, Message, ReasoningContent, UserContent};
-    use crate::providers::anthropic;
     use crate::streaming::StreamingPrompt;
     use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
     use futures::StreamExt;
@@ -1276,9 +1275,9 @@ mod tests {
 
         // Make streaming request WITHOUT an outer span so rig creates its own invoke_agent span
         // (rig reuses current span if one exists, so we need to ensure there's no current span)
-        let client = anthropic::Client::from_env();
+        let client = rig::providers::anthropic::Client::from_env();
         let agent = client
-            .agent(anthropic::completion::CLAUDE_HAIKU_4_5)
+            .agent(rig::models::anthropic::CLAUDE_HAIKU_4_5)
             .preamble("You are a helpful assistant.")
             .temperature(0.1)
             .max_tokens(100)
@@ -1331,9 +1330,9 @@ mod tests {
     async fn test_chat_history_in_final_response() {
         use crate::message::Message;
 
-        let client = anthropic::Client::from_env();
+        let client = rig::providers::anthropic::Client::from_env();
         let agent = client
-            .agent(anthropic::completion::CLAUDE_HAIKU_4_5)
+            .agent(rig::models::anthropic::CLAUDE_HAIKU_4_5)
             .preamble("You are a helpful assistant. Keep responses brief.")
             .temperature(0.1)
             .max_tokens(50)

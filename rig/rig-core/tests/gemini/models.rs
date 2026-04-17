@@ -1,12 +1,11 @@
 //! Gemini model listing smoke test.
 
 use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::gemini;
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
 async fn list_models_smoke() {
-    let client = gemini::Client::from_env();
+    let client = rig::providers::gemini::Client::from_env();
     let models = match client.list_models().await {
         Ok(models) => models,
         Err(error) => {

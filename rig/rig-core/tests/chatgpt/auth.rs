@@ -2,7 +2,6 @@
 
 use assert_fs::TempDir;
 use rig::client::CompletionClient;
-use rig::providers::chatgpt;
 use rig::streaming::StreamingPrompt;
 use serde_json::json;
 use std::fs;
@@ -13,8 +12,10 @@ use crate::support::{
     BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response, collect_stream_final_response,
 };
 
-fn oauth_builder_with_auth_file(path: &Path) -> chatgpt::ClientBuilder {
-    let mut builder = chatgpt::Client::builder().oauth().auth_file(path);
+fn oauth_builder_with_auth_file(path: &Path) -> rig::providers::chatgpt::ClientBuilder {
+    let mut builder = rig::providers::chatgpt::Client::builder()
+        .oauth()
+        .auth_file(path);
 
     if let Ok(base_url) =
         std::env::var("CHATGPT_API_BASE").or_else(|_| std::env::var("OPENAI_CHATGPT_API_BASE"))

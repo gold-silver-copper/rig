@@ -11,8 +11,6 @@ use serde::Deserialize;
 // OpenAI Transcription API
 // ================================================================
 
-pub const WHISPER_1: &str = "whisper-1";
-
 #[derive(Debug, Deserialize)]
 pub struct TranscriptionResponse {
     pub text: String,

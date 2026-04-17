@@ -11,7 +11,6 @@ use super::client::{ApiResponse, Client, Usage};
 // ================================================================
 // Mistral Embedding API
 // ================================================================
-pub const MISTRAL_EMBED: &str = "mistral-embed";
 
 pub const MAX_DOCUMENTS: usize = 1024;
 

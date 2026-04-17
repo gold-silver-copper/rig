@@ -1,5 +1,4 @@
 use rig::client::{EmbeddingsClient, ProviderClient};
-use rig::providers::openai;
 use rig::vector_store::request::VectorSearchRequest;
 use rig::{
     Embed,
@@ -71,7 +70,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let conn = Connection::open("vector_store.db").await?;
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     let documents = vec![
         Document {

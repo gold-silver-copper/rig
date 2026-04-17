@@ -3,7 +3,6 @@
 use rig::audio_generation::AudioGenerationModel;
 use rig::client::ProviderClient;
 use rig::client::audio_generation::AudioGenerationClient;
-use rig::providers::xai;
 use serde_json::json;
 
 use crate::support::{AUDIO_TEXT, assert_nonempty_bytes};
@@ -11,8 +10,8 @@ use crate::support::{AUDIO_TEXT, assert_nonempty_bytes};
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
 async fn audio_generation_smoke() {
-    let client = xai::Client::from_env();
-    let model = client.audio_generation_model(xai::TTS_1);
+    let client = rig::providers::xai::Client::from_env();
+    let model = client.audio_generation_model(rig::models::xai::TTS_1);
 
     let response = model
         .audio_generation_request()

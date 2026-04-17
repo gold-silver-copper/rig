@@ -1,5 +1,4 @@
 use rig::prelude::*;
-use rig::providers::gemini;
 use rig::providers::gemini::client::Client;
 use rig::{
     Embed, embeddings::EmbeddingsBuilder, vector_store::in_memory_store::InMemoryVectorStore,
@@ -64,7 +63,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Create Gemini client
     let gemini_client = Client::from_env();
-    let embedding_model = gemini_client.embedding_model(gemini::EMBEDDING_001);
+    let embedding_model = gemini_client.embedding_model(rig::models::gemini::EMBEDDING_001);
 
     // Generate embeddings for the definitions of all the documents using the specified embedding model.
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())

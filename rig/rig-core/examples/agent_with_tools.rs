@@ -5,7 +5,6 @@
 use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Prompt, ToolDefinition};
-use rig::providers::openai;
 use rig::tool::{Tool, ToolDyn};
 use serde::Deserialize;
 use serde::Serialize;
@@ -85,8 +84,8 @@ fn boxed_tools() -> Vec<Box<dyn ToolDyn>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let agent = openai::Client::from_env()
-        .agent(openai::GPT_4O)
+    let agent = rig::providers::openai::Client::from_env()
+        .agent(rig::models::openai::GPT_4O)
         .preamble(
             "You are a calculator here to help the user perform arithmetic operations. \
              You must use the provided tools before answering.",

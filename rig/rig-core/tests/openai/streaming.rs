@@ -1,7 +1,6 @@
 //! OpenAI streaming coverage, including the migrated example path.
 
 use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::openai;
 use rig::streaming::StreamingPrompt;
 
 use crate::support::{
@@ -11,9 +10,9 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn streaming_smoke() {
-    let client = openai::Client::from_env();
+    let client = rig::providers::openai::Client::from_env();
     let agent = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble(STREAMING_PREAMBLE)
         .build();
 
@@ -28,9 +27,9 @@ async fn streaming_smoke() {
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
 async fn example_streaming_prompt() {
-    let client = openai::Client::from_env();
+    let client = rig::providers::openai::Client::from_env();
     let agent = client
-        .agent(openai::GPT_4O)
+        .agent(rig::models::openai::GPT_4O)
         .preamble("Be precise and concise.")
         .temperature(0.5)
         .build();

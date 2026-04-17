@@ -4,9 +4,9 @@
 //! ```
 //! use rig::providers::openrouter;
 //!
-//! let client = openrouter::Client::new("YOUR_API_KEY");
+//! let client = rig::providers::openrouter::Client::new("YOUR_API_KEY");
 //!
-//! let llama_3_1_8b = client.completion_model(openrouter::LLAMA_3_1_8B);
+//! let llama_3_1_8b = client.completion_model(rig::providers::openrouter::LLAMA_3_1_8B);
 //! ```
 
 pub mod client;

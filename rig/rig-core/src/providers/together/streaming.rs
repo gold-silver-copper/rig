@@ -2,10 +2,9 @@ use super::completion::CompletionModel;
 use crate::completion::{CompletionError, CompletionRequest};
 use crate::http_client::HttpClientExt;
 use crate::json_utils;
-use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
-use crate::providers::together::completion::TogetherAICompletionRequest;
 use crate::streaming::StreamingCompletionResponse;
+use rig::providers::together::TogetherAICompletionRequest;
 
 use tracing::{Instrument, Level, enabled, info_span};
 
@@ -16,8 +15,10 @@ where
     pub(crate) async fn stream(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<openai::StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<
+        StreamingCompletionResponse<rig::providers::openai::StreamingCompletionResponse>,
+        CompletionError,
+    > {
         let preamble = completion_request.preamble.clone();
         let mut request = TogetherAICompletionRequest::try_from((
             self.model.to_string().as_ref(),

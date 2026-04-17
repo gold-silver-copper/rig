@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicUsize;
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Chat, Message};
-use rig::providers::openrouter;
 use rig::streaming::StreamingChat;
 
 use crate::reasoning::{self, WeatherTool};
@@ -17,7 +16,7 @@ use crate::reasoning::{self, WeatherTool};
 #[ignore = "requires OPENROUTER_API_KEY"]
 async fn streaming() {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = openrouter::Client::from_env();
+    let client = rig::providers::openrouter::Client::from_env();
     let agent = client
         .agent("openai/gpt-5.2")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -42,7 +41,7 @@ async fn streaming() {
 #[ignore = "requires OPENROUTER_API_KEY"]
 async fn nonstreaming() {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = openrouter::Client::from_env();
+    let client = rig::providers::openrouter::Client::from_env();
     let agent = client
         .agent("openai/gpt-5.2")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)

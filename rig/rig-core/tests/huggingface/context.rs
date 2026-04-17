@@ -2,14 +2,13 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::huggingface;
 
 use crate::support::{CONTEXT_DOCS, CONTEXT_PROMPT, assert_contains_any_case_insensitive};
 
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
 async fn context_smoke() {
-    let client = huggingface::Client::from_env();
+    let client = rig::providers::huggingface::Client::from_env();
     let agent = CONTEXT_DOCS
         .iter()
         .copied()

@@ -1,12 +1,11 @@
 //! Anthropic model listing smoke test.
 
 use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::anthropic;
 
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn list_models_smoke() {
-    let client = anthropic::Client::from_env();
+    let client = rig::providers::anthropic::Client::from_env();
     let models = match client.list_models().await {
         Ok(models) => models,
         Err(error) => {

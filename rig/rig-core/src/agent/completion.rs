@@ -151,7 +151,7 @@ pub(crate) async fn build_completion_request<M: CompletionModel>(
 /// ```
 /// use rig::{completion::Prompt, providers::openai};
 ///
-/// let openai = openai::Client::from_env();
+/// let openai = rig::providers::openai::Client::from_env();
 ///
 /// let comedian_agent = openai
 ///     .agent("gpt-4o")

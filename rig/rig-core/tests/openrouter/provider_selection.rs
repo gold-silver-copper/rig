@@ -2,7 +2,7 @@
 
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
-use rig::providers::openrouter::{self, MaxPrice, ProviderPreferences, ProviderSortStrategy};
+use rig::providers::openrouter::{MaxPrice, ProviderPreferences, ProviderSortStrategy};
 
 use crate::support::assert_nonempty_response;
 
@@ -11,7 +11,7 @@ const DEEPSEEK_V3_2: &str = "deepseek/deepseek-v3.2";
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
 async fn provider_selection_scenarios() {
-    let client = openrouter::Client::from_env();
+    let client = rig::providers::openrouter::Client::from_env();
     let scenarios = [
         (
             "hello",

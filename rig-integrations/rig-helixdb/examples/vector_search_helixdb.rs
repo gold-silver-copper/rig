@@ -3,7 +3,6 @@ use rig::{
     Embed,
     client::{EmbeddingsClient, ProviderClient},
     embeddings::EmbeddingsBuilder,
-    providers::openai,
     vector_store::{InsertDocuments, VectorSearchRequest, VectorStoreIndex},
 };
 use rig_helixdb::HelixDBVectorStore;
@@ -28,8 +27,8 @@ impl std::fmt::Display for WordDefinition {
 
 #[tokio::main]
 async fn main() {
-    let openai_model =
-        rig::providers::openai::Client::from_env().embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let openai_model = rig::providers::openai::Client::from_env()
+        .embedding_model(rig::models::openai::TEXT_EMBEDDING_ADA_002);
 
     let helixdb_client = HelixDB::new(None, Some(6969), None); // Uses default port 6969
     let vector_store = HelixDBVectorStore::new(helixdb_client, openai_model.clone());

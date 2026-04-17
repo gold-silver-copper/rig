@@ -7,13 +7,12 @@ use rig::client::{CompletionClient, ProviderClient};
 use rig::message::{Message, UserContent, Video};
 use rig::providers::gemini::completion::gemini_api_types::AdditionalParameters;
 use rig::{
-    OneOrMany,
-    completion::Prompt,
-    providers::gemini::{self, completion::gemini_api_types::GenerationConfig},
+    OneOrMany, completion::Prompt,
+    providers::gemini::completion::gemini_api_types::GenerationConfig,
 };
 use serde_json::json;
 
-const MODEL: &str = gemini::completion::GEMINI_2_5_PRO_EXP_03_25;
+const MODEL: &str = rig::models::gemini::GEMINI_2_5_PRO_EXP_03_25;
 const VIDEO_URL: &str = "https://www.youtube.com/watch?v=emtHJIxLwEc";
 
 fn build_video_prompt() -> Result<Message> {
@@ -47,7 +46,7 @@ fn build_additional_params() -> Result<serde_json::Value> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let client = gemini::Client::from_env();
+    let client = rig::providers::gemini::Client::from_env();
     let additional_params = build_additional_params()?;
     let agent = client
         .agent(MODEL)

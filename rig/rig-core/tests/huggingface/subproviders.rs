@@ -2,7 +2,7 @@
 
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
-use rig::providers::huggingface::{self, SubProvider};
+use rig::providers::huggingface::SubProvider;
 
 use crate::support::{Adder, Subtract, assert_mentions_expected_number};
 
@@ -20,7 +20,7 @@ async fn tool_prompt_across_subproviders() {
     ];
 
     for (model, subprovider) in cases {
-        let client = huggingface::Client::builder()
+        let client = rig::providers::huggingface::Client::builder()
             .api_key(&api_key)
             .subprovider(subprovider)
             .build()

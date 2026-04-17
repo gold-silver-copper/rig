@@ -4,9 +4,9 @@
 //! ```
 //! use rig::providers::deepseek;
 //!
-//! let client = deepseek::Client::new("DEEPSEEK_API_KEY");
+//! let client = rig::providers::deepseek::Client::new("DEEPSEEK_API_KEY");
 //!
-//! let deepseek_chat = client.completion_model(deepseek::DEEPSEEK_CHAT);
+//! let deepseek_chat = client.completion_model(rig::models::deepseek::DEEPSEEK_CHAT);
 //! ```
 
 use crate::json_utils::empty_or_none;
@@ -459,7 +459,7 @@ pub(super) struct DeepseekCompletionRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openrouter::ToolChoice>,
+    tool_choice: Option<rig::providers::openrouter::ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -497,7 +497,7 @@ impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
         let tool_choice = req
             .tool_choice
             .clone()
-            .map(crate::providers::openrouter::ToolChoice::try_from)
+            .map(rig::providers::openrouter::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
@@ -873,8 +873,6 @@ where
 // ================================================================
 // DeepSeek Completion API
 // ================================================================
-pub const DEEPSEEK_CHAT: &str = "deepseek-chat";
-pub const DEEPSEEK_REASONER: &str = "deepseek-reasoner";
 
 // Tests
 #[cfg(test)]
@@ -1131,8 +1129,8 @@ mod tests {
     #[test]
     fn test_client_initialization() {
         let _client =
-            crate::providers::deepseek::Client::new("dummy-key").expect("Client::new() failed");
-        let _client_from_builder = crate::providers::deepseek::Client::builder()
+            rig::providers::deepseek::Client::new("dummy-key").expect("Client::new() failed");
+        let _client_from_builder = rig::providers::deepseek::Client::builder()
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");
