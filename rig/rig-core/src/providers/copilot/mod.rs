@@ -26,6 +26,10 @@ use crate::completion::{self, CompletionError, GetTokenUsage};
 use crate::embeddings::{self, EmbeddingError};
 use crate::http_client::{self, HttpClientExt};
 use crate::providers::openai;
+use crate::providers::openai::completion::{
+    CompatibleStreamingToolCall, ToolCallConflictPolicy, apply_compatible_tool_call_deltas,
+    take_finalized_tool_calls, take_tool_calls,
+};
 use crate::providers::openai::responses_api::{self, CompletionRequest as ResponsesRequest};
 use crate::streaming::{self, RawStreamingChoice, StreamingCompletionResponse};
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
@@ -480,6 +484,10 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
+        let stop_reason = choice
+            .finish_reason
+            .as_deref()
+            .map(crate::providers::openai::completion::map_finish_reason);
 
         let content = match &choice.message {
             openai::completion::Message::Assistant {
@@ -521,11 +529,7 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
             )),
         }?;
 
-        let choice = crate::OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = crate::completion::AssistantChoice::from(content);
 
         let usage = response
             .usage
@@ -548,6 +552,7 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }
@@ -707,6 +712,7 @@ where
                             usage: core.usage,
                             raw_response: CopilotCompletionResponse::Chat(response),
                             message_id: core.message_id,
+                            stop_reason: core.stop_reason,
                         })
                     }
                     ChatApiResponse::Err(err) => Err(CompletionError::ProviderError(
@@ -784,6 +790,7 @@ where
                     usage: core.usage,
                     raw_response: CopilotCompletionResponse::Responses(Box::new(response)),
                     message_id: core.message_id,
+                    stop_reason: core.stop_reason,
                 })
             } else {
                 let body = http_client::text(response).await?;
@@ -1259,6 +1266,16 @@ enum ChatFinishReason {
     Other(String),
 }
 
+fn map_chat_finish_reason(reason: &ChatFinishReason) -> completion::StopReason {
+    match reason {
+        ChatFinishReason::ToolCalls => completion::StopReason::ToolCalls,
+        ChatFinishReason::Stop => completion::StopReason::Stop,
+        ChatFinishReason::ContentFilter => completion::StopReason::ContentFilter,
+        ChatFinishReason::Length => completion::StopReason::MaxTokens,
+        ChatFinishReason::Other(other) => completion::StopReason::Other(other.clone()),
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct ChatStreamingChoice {
     delta: ChatStreamingDelta,
@@ -1310,77 +1327,17 @@ where
                     let delta = &choice.delta;
 
                     if !delta.tool_calls.is_empty() {
-                        for tool_call in &delta.tool_calls {
-                            let index = tool_call.index;
-
-                            if let Some(new_id) = &tool_call.id
-                                && !new_id.is_empty()
-                                && let Some(new_name) = &tool_call.function.name
-                                && !new_name.is_empty()
-                                && let Some(existing) = tool_calls.get(&index)
-                                && !existing.id.is_empty()
-                                && existing.id != *new_id
-                                && !existing.name.is_empty()
-                                && existing.name != *new_name
-                            {
-                                let evicted = tool_calls.remove(&index).expect("checked above");
-                                yield Ok(RawStreamingChoice::ToolCall(
-                                    finalize_completed_streaming_tool_call(evicted),
-                                ));
-                            }
-
-                            let existing_tool_call = tool_calls
-                                .entry(index)
-                                .or_insert_with(streaming::RawStreamingToolCall::empty);
-
-                            if let Some(id) = &tool_call.id
-                                && !id.is_empty()
-                            {
-                                existing_tool_call.id = id.clone();
-                            }
-
-                            if let Some(name) = &tool_call.function.name
-                                && !name.is_empty()
-                            {
-                                existing_tool_call.name = name.clone();
-                                yield Ok(RawStreamingChoice::ToolCallDelta {
-                                    id: existing_tool_call.id.clone(),
-                                    internal_call_id: existing_tool_call.internal_call_id.clone(),
-                                    content: streaming::ToolCallDeltaContent::Name(name.clone()),
-                                });
-                            }
-
-                            if let Some(chunk) = &tool_call.function.arguments
-                                && !chunk.is_empty()
-                            {
-                                let current_args = match &existing_tool_call.arguments {
-                                    serde_json::Value::Null => String::new(),
-                                    serde_json::Value::String(s) => s.clone(),
-                                    value => value.to_string(),
-                                };
-                                let combined = format!("{current_args}{chunk}");
-
-                                if combined.trim_start().starts_with('{')
-                                    && combined.trim_end().ends_with('}')
-                                {
-                                    match serde_json::from_str(&combined) {
-                                        Ok(parsed) => existing_tool_call.arguments = parsed,
-                                        Err(_) => {
-                                            existing_tool_call.arguments =
-                                                serde_json::Value::String(combined)
-                                        }
-                                    }
-                                } else {
-                                    existing_tool_call.arguments =
-                                        serde_json::Value::String(combined);
-                                }
-
-                                yield Ok(RawStreamingChoice::ToolCallDelta {
-                                    id: existing_tool_call.id.clone(),
-                                    internal_call_id: existing_tool_call.internal_call_id.clone(),
-                                    content: streaming::ToolCallDeltaContent::Delta(chunk.clone()),
-                                });
-                            }
+                        for event in apply_compatible_tool_call_deltas(
+                            &mut tool_calls,
+                            delta.tool_calls.iter().map(|tool_call| CompatibleStreamingToolCall {
+                                index: tool_call.index,
+                                id: tool_call.id.as_deref(),
+                                name: tool_call.function.name.as_deref(),
+                                arguments: tool_call.function.arguments.as_deref(),
+                            }),
+                            ToolCallConflictPolicy::EvictDistinctIdAndName,
+                        ) {
+                            yield Ok(event);
                         }
                     }
 
@@ -1402,12 +1359,15 @@ where
                     if let Some(finish_reason) = &choice.finish_reason
                         && *finish_reason == ChatFinishReason::ToolCalls
                     {
-                        for (_idx, tool_call) in tool_calls.into_iter() {
-                            yield Ok(RawStreamingChoice::ToolCall(
-                                finalize_completed_streaming_tool_call(tool_call),
-                            ));
+                        for tool_call in take_finalized_tool_calls(&mut tool_calls) {
+                            yield Ok(tool_call);
                         }
-                        tool_calls = HashMap::new();
+                    }
+
+                    if let Some(finish_reason) = &choice.finish_reason {
+                        yield Ok(RawStreamingChoice::StopReason(map_chat_finish_reason(
+                            finish_reason,
+                        )));
                     }
                 }
                 Err(crate::http_client::Error::StreamEnded) => break,
@@ -1425,8 +1385,8 @@ where
             return;
         }
 
-        for (_idx, tool_call) in tool_calls.into_iter() {
-            yield Ok(RawStreamingChoice::ToolCall(tool_call));
+        for tool_call in take_tool_calls(&mut tool_calls) {
+            yield Ok(tool_call);
         }
 
         let final_usage = final_usage.unwrap_or_default();
@@ -1457,16 +1417,6 @@ where
     Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
 }
 
-fn finalize_completed_streaming_tool_call(
-    mut tool_call: streaming::RawStreamingToolCall,
-) -> streaming::RawStreamingToolCall {
-    if tool_call.arguments.is_null() {
-        tool_call.arguments = serde_json::Value::Object(serde_json::Map::new());
-    }
-
-    tool_call
-}
-
 fn default_token_dir() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("github_copilot"))
 }
@@ -1490,7 +1440,7 @@ mod tests {
     use super::{
         ChatApiErrorResponse, ChatCompletionResponse, Client, CompletionRoute,
         TEXT_EMBEDDING_3_SMALL, env_api_key, env_base_url, env_github_access_token,
-        route_for_model,
+        route_for_model, send_copilot_chat_streaming_request,
     };
     use crate::client::CompletionClient;
     use crate::completion::CompletionModel;
@@ -2012,6 +1962,35 @@ mod tests {
         assert!(
             stream.next().await.is_none(),
             "chat stream should terminate immediately after a transport error"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_stream_captures_stop_reason() {
+        let sse_bytes = Bytes::from(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}],\"usage\":null}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\n",
+            "data: [DONE]\n\n",
+        ));
+
+        let http_client = MockStreamingClient { sse_bytes };
+        let req = http::Request::builder()
+            .method("POST")
+            .uri("http://localhost/v1/chat/completions")
+            .body(Vec::new())
+            .expect("request should build");
+
+        let mut stream = send_copilot_chat_streaming_request(http_client, req)
+            .await
+            .expect("stream should start");
+
+        while let Some(chunk) = stream.next().await {
+            chunk.expect("stream chunk should deserialize");
+        }
+
+        assert_eq!(
+            stream.stop_reason,
+            Some(crate::completion::StopReason::Stop)
         );
     }
 

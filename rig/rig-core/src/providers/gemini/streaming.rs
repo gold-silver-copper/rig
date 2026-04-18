@@ -6,7 +6,8 @@ use tracing_futures::Instrument;
 
 use super::completion::gemini_api_types::{ContentCandidate, Part, PartKind};
 use super::completion::{
-    CompletionModel, create_request_body, resolve_request_model, streaming_endpoint,
+    CompletionModel, create_request_body, map_finish_reason, resolve_request_model,
+    streaming_endpoint,
 };
 use crate::completion::message::ReasoningContent;
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
@@ -211,6 +212,11 @@ where
 
                         // Check if this is the final response
                         if choice.finish_reason.is_some() {
+                            if let Some(stop_reason) =
+                                choice.finish_reason.as_ref().map(map_finish_reason)
+                            {
+                                yield Ok(streaming::RawStreamingChoice::StopReason(stop_reason));
+                            }
                             let span = tracing::Span::current();
                             span.record_token_usage(&data.usage_metadata);
                             final_usage = data.usage_metadata;

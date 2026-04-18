@@ -39,7 +39,7 @@ use crate::{
 };
 use crate::{http_client, message};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::{Instrument, info_span};
 
 // ================================================================
@@ -319,61 +319,52 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Moonshot");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages: full_history,
+            temperature,
+            max_tokens,
+            tools,
+            tool_choice: request_tool_choice,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Moonshot")
+                .coerce_required_tool_choice_to_auto(
+                    "Please select a tool to handle the current issue.",
+                ),
+            |preamble| {
+                serde_json::json!({
+                    "role": "system",
+                    "content": preamble,
+                })
+            },
+            Some(|content| {
+                serde_json::json!({
+                    "role": "user",
+                    "content": content,
+                })
+            }),
+            |_| false,
+            |message| moonshot_history_values(vec![message]),
+        )?;
 
-        let mut full_history: Vec<Value> = match &req.preamble {
-            Some(preamble) => vec![serde_json::to_value(openai::Message::system(preamble))?],
-            None => vec![],
-        };
-
-        full_history.extend(moonshot_history_values(partial_history)?);
-
-        let mut tool_choice = None;
-        let mut tool_choice_required = false;
-        if let Some(choice) = req.tool_choice.clone() {
-            match choice {
-                message::ToolChoice::Required => {
-                    tool_choice_required = true;
-                    tool_choice = Some(crate::providers::openai::completion::ToolChoice::Auto);
-                }
-                other => {
-                    tool_choice = Some(crate::providers::openai::ToolChoice::try_from(other)?);
-                }
-            }
-        }
-
-        if tool_choice_required {
-            tracing::warn!(
-                "Moonshot does not support tool_choice=required; coercing to auto with an additional steering message"
-            );
-            full_history.push(json!({
-                "role": "user",
-                "content": "Please select a tool to handle the current issue."
-            }));
-        }
+        let tool_choice = request_tool_choice
+            .map(crate::providers::openai::ToolChoice::try_from)
+            .transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
+            model,
             messages: full_history,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
-            tools: req
-                .tools
-                .clone()
+            temperature,
+            max_tokens,
+            tools: tools
                 .into_iter()
                 .map(openai::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -655,6 +646,42 @@ mod tests {
     use crate::message::{
         AssistantContent, Message, Reasoning, ToolCall, ToolChoice, ToolFunction,
     };
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct MoonshotRequestHarness;
+
+    impl request_conformance::Harness for MoonshotRequestHarness {
+        fn family_name() -> &'static str {
+            "moonshot"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                MoonshotCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Moonshot").coerce_required_tool_choice_to_auto(
+                        "Please select a tool to handle the current issue.",
+                    ),
+                )
+                .preserves_reasoning_assistant_history(),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(MoonshotRequestHarness);
 
     #[test]
     fn test_client_initialization() {

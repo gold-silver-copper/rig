@@ -1,9 +1,8 @@
 //! Migrated from `examples/gemini_interactions_api.rs`.
 
 use futures::StreamExt;
-use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{CompletionModel, GetTokenUsage};
+use rig::completion::{AssistantChoice, CompletionModel, GetTokenUsage};
 use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
 use rig::providers::gemini;
 use rig::providers::gemini::interactions_api::{AdditionalParameters, Tool};
@@ -11,7 +10,7 @@ use rig::streaming::StreamedAssistantContent;
 
 use crate::support::assert_nonempty_response;
 
-fn extract_text(choice: &OneOrMany<AssistantContent>) -> String {
+fn extract_text(choice: &AssistantChoice) -> String {
     choice
         .iter()
         .filter_map(|content| match content {
@@ -22,7 +21,7 @@ fn extract_text(choice: &OneOrMany<AssistantContent>) -> String {
         .join("")
 }
 
-fn first_tool_call(choice: &OneOrMany<AssistantContent>) -> Option<ToolCall> {
+fn first_tool_call(choice: &AssistantChoice) -> Option<ToolCall> {
     choice.iter().find_map(|content| match content {
         AssistantContent::ToolCall(tool_call) => Some(tool_call.clone()),
         _ => None,

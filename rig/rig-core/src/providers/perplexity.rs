@@ -14,7 +14,6 @@ use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
 use crate::streaming::StreamingCompletionResponse;
 use crate::{
-    OneOrMany,
     client::{
         self, Capabilities, Capable, DebugExt, Nothing, Provider, ProviderBuilder, ProviderClient,
     },
@@ -176,26 +175,38 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = crate::providers::openai::completion::first_choice(&response.choices)?;
+        let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
+            &choice.finish_reason,
+        ));
 
         match &choice.message {
             Message {
                 role: Role::Assistant,
                 content,
-            } => Ok(completion::CompletionResponse {
-                choice: OneOrMany::one(content.clone().into()),
-                usage: completion::Usage {
+            } => {
+                let normalized_content =
+                    crate::providers::openai::completion::non_empty_text(content)
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                let usage = completion::Usage {
                     input_tokens: response.usage.prompt_tokens as u64,
                     output_tokens: response.usage.completion_tokens as u64,
                     total_tokens: response.usage.total_tokens as u64,
                     cached_input_tokens: 0,
                     cache_creation_input_tokens: 0,
-                },
-                raw_response: response,
-                message_id: None,
-            }),
+                };
+
+                Ok(
+                    crate::providers::openai::completion::build_completion_response(
+                        response,
+                        usage,
+                        None,
+                        stop_reason,
+                        normalized_content,
+                    ),
+                )
+            }
             _ => Err(CompletionError::ResponseError(
                 "Response contained no assistant message".to_owned(),
             )),
@@ -216,42 +227,94 @@ pub(super) struct PerplexityCompletionRequest {
     pub stream: bool,
 }
 
+fn perplexity_request_messages(message: message::Message) -> Result<Vec<Message>, MessageError> {
+    match message {
+        message::Message::System { content } => Ok(vec![Message {
+            role: Role::System,
+            content,
+        }]),
+        message::Message::User { content } => {
+            let collapsed_content = content
+                .into_iter()
+                .filter_map(|content| match content {
+                    message::UserContent::Text(message::Text { text }) => Some(text),
+                    message::UserContent::Document(document) => match document.data {
+                        crate::message::DocumentSourceKind::Base64(content)
+                        | crate::message::DocumentSourceKind::String(content) => Some(content),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if collapsed_content.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![Message {
+                    role: Role::User,
+                    content: collapsed_content,
+                }])
+            }
+        }
+        message::Message::Assistant { content, .. } => {
+            let collapsed_content = content
+                .into_iter()
+                .filter_map(|content| match content {
+                    message::AssistantContent::Text(message::Text { text }) => Some(text),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if collapsed_content.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![Message {
+                    role: Role::Assistant,
+                    content: collapsed_content,
+                }])
+            }
+        }
+    }
+}
+
 impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Perplexity");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
-
-        // Initialize full history with preamble (or empty if non-existent)
-        let mut full_history: Vec<Message> = req.preamble.map_or_else(Vec::new, |preamble| {
-            vec![Message {
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            tools: _,
+            tool_choice: _,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Perplexity")
+                .unsupported_tools()
+                .unsupported_tool_choice(),
+            |preamble| Message {
                 role: Role::System,
-                content: preamble,
-            }]
-        });
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Message>, _>>()?,
-        );
+                content: preamble.to_owned(),
+            },
+            None,
+            |_| false,
+            |message| {
+                perplexity_request_messages(message)
+                    .map_err(|err| CompletionError::RequestError(err.into()))
+            },
+        )?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
-            additional_params: req.additional_params,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            additional_params,
             stream: false,
         })
     }
@@ -373,13 +436,6 @@ where
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");
-        }
-
-        if !completion_request.tools.is_empty() {
-            tracing::warn!("WARNING: `tools` not supported on Perplexity");
-        }
         let request =
             PerplexityCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
@@ -459,14 +515,6 @@ where
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");
-        }
-
-        if !completion_request.tools.is_empty() {
-            tracing::warn!("WARNING: `tools` not supported on Perplexity");
-        }
-
         let mut request =
             PerplexityCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
         request.stream = true;
@@ -495,6 +543,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct PerplexityRequestHarness;
+
+    impl request_conformance::Harness for PerplexityRequestHarness {
+        fn family_name() -> &'static str {
+            "perplexity"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                PerplexityCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Perplexity")
+                        .unsupported_tools()
+                        .unsupported_tool_choice(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(PerplexityRequestHarness);
 
     #[test]
     fn test_deserialize_message() {

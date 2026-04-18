@@ -1,10 +1,10 @@
 //! Integration tests for `PromptResponse.messages` using mock models.
 //! Exercises the real agent loop code path with mocked LLM responses.
 
-use rig::OneOrMany;
 use rig::agent::AgentBuilder;
 use rig::completion::{
-    CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Message, Prompt, Usage,
+    AssistantChoice, CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
+    Message, Prompt, Usage,
 };
 use rig::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
 use rig::streaming::{StreamingCompletionResponse, StreamingResult};
@@ -34,7 +34,7 @@ impl CompletionModel for SimpleTextModel {
         _request: CompletionRequest,
     ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
         Ok(CompletionResponse {
-            choice: OneOrMany::one(AssistantContent::Text(Text {
+            choice: AssistantChoice::one(AssistantContent::Text(Text {
                 text: "hello from mock".to_string(),
             })),
             usage: Usage {
@@ -46,6 +46,7 @@ impl CompletionModel for SimpleTextModel {
             },
             raw_response: (),
             message_id: Some("msg_mock_1".to_string()),
+            stop_reason: None,
         })
     }
 
@@ -92,7 +93,7 @@ impl CompletionModel for ToolThenTextModel {
         if turn == 0 {
             // First turn: return a tool call
             Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                choice: AssistantChoice::one(AssistantContent::ToolCall(ToolCall::new(
                     "tc_1".to_string(),
                     ToolFunction::new(
                         "calculator".to_string(),
@@ -108,11 +109,12 @@ impl CompletionModel for ToolThenTextModel {
                 },
                 raw_response: (),
                 message_id: Some("msg_tool".to_string()),
+                stop_reason: None,
             })
         } else {
             // Second turn: return a text response
             Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::Text(Text {
+                choice: AssistantChoice::one(AssistantContent::Text(Text {
                     text: "The answer is 5".to_string(),
                 })),
                 usage: Usage {
@@ -124,6 +126,89 @@ impl CompletionModel for ToolThenTextModel {
                 },
                 raw_response: (),
                 message_id: Some("msg_text".to_string()),
+                stop_reason: None,
+            })
+        }
+    }
+
+    async fn stream(
+        &self,
+        _request: CompletionRequest,
+    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+        let stream: StreamingResult<()> = Box::pin(futures::stream::empty());
+        Ok(StreamingCompletionResponse::stream(stream))
+    }
+}
+
+/// A mock model that emits text and a tool call, then ends with an empty
+/// assistant turn. This exercises fallback to prior visible assistant text.
+#[derive(Clone)]
+struct ToolThenEmptyTerminalTurnModel {
+    turn: Arc<AtomicUsize>,
+}
+
+impl ToolThenEmptyTerminalTurnModel {
+    fn new() -> Self {
+        Self {
+            turn: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+#[allow(refining_impl_trait)]
+impl CompletionModel for ToolThenEmptyTerminalTurnModel {
+    type Response = ();
+    type StreamingResponse = ();
+    type Client = ();
+
+    fn make(_: &Self::Client, _: impl Into<String>) -> Self {
+        Self::new()
+    }
+
+    async fn completion(
+        &self,
+        _request: CompletionRequest,
+    ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+        let turn = self.turn.fetch_add(1, Ordering::SeqCst);
+
+        if turn == 0 {
+            Ok(CompletionResponse {
+                choice: AssistantChoice::many(vec![
+                    AssistantContent::Text(Text {
+                        text: "The answer is 5".to_string(),
+                    }),
+                    AssistantContent::ToolCall(ToolCall::new(
+                        "tc_2".to_string(),
+                        ToolFunction::new(
+                            "calculator".to_string(),
+                            serde_json::json!({"op": "add", "a": 2, "b": 3}),
+                        ),
+                    )),
+                ]),
+                usage: Usage {
+                    input_tokens: 12,
+                    output_tokens: 7,
+                    total_tokens: 19,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                },
+                raw_response: (),
+                message_id: Some("msg_text_tool".to_string()),
+                stop_reason: None,
+            })
+        } else {
+            Ok(CompletionResponse {
+                choice: AssistantChoice::new(),
+                usage: Usage {
+                    input_tokens: 8,
+                    output_tokens: 1,
+                    total_tokens: 9,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                },
+                raw_response: (),
+                message_id: Some("msg_empty".to_string()),
+                stop_reason: None,
             })
         }
     }
@@ -157,13 +242,14 @@ impl CompletionModel for AlwaysToolCallModel {
         _request: CompletionRequest,
     ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
         Ok(CompletionResponse {
-            choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+            choice: AssistantChoice::one(AssistantContent::ToolCall(ToolCall::new(
                 "tc_loop".to_string(),
                 ToolFunction::new("infinite_tool".to_string(), serde_json::json!({"x": 1})),
             ))),
             usage: Usage::new(),
             raw_response: (),
             message_id: None,
+            stop_reason: None,
         })
     }
 
@@ -346,6 +432,21 @@ async fn multi_turn_messages_include_tool_calls() {
     // Usage should be aggregated across both turns
     assert_eq!(resp.usage.input_tokens, 35); // 15 + 20
     assert_eq!(resp.usage.output_tokens, 12); // 8 + 4
+}
+
+/// Test 6: If the terminal assistant turn is empty after a prior visible text
+/// turn, the agent should fall back to the earlier assistant text.
+#[tokio::test]
+async fn multi_turn_prompt_falls_back_to_prior_assistant_text_when_terminal_turn_is_empty() {
+    let agent = AgentBuilder::new(ToolThenEmptyTerminalTurnModel::new()).build();
+
+    let result = agent
+        .prompt("What is 2 + 3?")
+        .max_turns(5)
+        .await
+        .expect("prompt should succeed");
+
+    assert_eq!(result, "The answer is 5");
 }
 
 /// Test 6: `PromptResponse::new()` backward compatibility — 2-argument constructor

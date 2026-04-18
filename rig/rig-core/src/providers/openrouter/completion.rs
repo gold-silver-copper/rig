@@ -592,9 +592,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = crate::providers::openai::completion::first_choice(&response.choices)?;
+        let stop_reason = choice
+            .finish_reason
+            .as_deref()
+            .map(crate::providers::openai::completion::map_finish_reason);
 
         let content = match &choice.message {
             Message::Assistant {
@@ -704,12 +706,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
         let usage = response
             .usage
             .as_ref()
@@ -722,12 +718,15 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        Ok(
+            crate::providers::openai::completion::build_completion_response(
+                response,
+                usage,
+                None,
+                stop_reason,
+                content,
+            ),
+        )
     }
 }
 
@@ -1515,42 +1514,10 @@ impl TryFrom<message::Message> for Vec<Message> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged, rename_all = "snake_case")]
-pub enum ToolChoice {
-    None,
-    Auto,
-    Required,
-    Function(Vec<ToolChoiceFunctionKind>),
-}
-
-impl TryFrom<crate::message::ToolChoice> for ToolChoice {
-    type Error = CompletionError;
-
-    fn try_from(value: crate::message::ToolChoice) -> Result<Self, Self::Error> {
-        let res = match value {
-            crate::message::ToolChoice::None => Self::None,
-            crate::message::ToolChoice::Auto => Self::Auto,
-            crate::message::ToolChoice::Required => Self::Required,
-            crate::message::ToolChoice::Specific { function_names } => {
-                let vec: Vec<ToolChoiceFunctionKind> = function_names
-                    .into_iter()
-                    .map(|name| ToolChoiceFunctionKind::Function { name })
-                    .collect();
-
-                Self::Function(vec)
-            }
-        };
-
-        Ok(res)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "function")]
-pub enum ToolChoiceFunctionKind {
-    Function { name: String },
-}
+pub type ToolChoice = crate::providers::openai::completion::CompatibleToolChoice;
+pub type ToolChoiceFunctionKind =
+    crate::providers::openai::completion::CompatibleToolChoiceFunctionKind;
+pub type ToolChoiceKeyword = crate::providers::openai::completion::CompatibleToolChoiceKeyword;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct OpenrouterCompletionRequest {
@@ -1561,7 +1528,7 @@ pub(super) struct OpenrouterCompletionRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<crate::providers::openai::completion::ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openai::completion::ToolChoice>,
+    tool_choice: Option<ToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -1582,42 +1549,27 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
             request: req,
             strict_tools,
         } = params;
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("OpenRouter"),
+            Message::system,
+            None,
+            |_| false,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for OpenRouter");
-        }
+        let tool_choice = tool_choice.map(ToolChoice::from);
 
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
-            .map(crate::providers::openai::completion::ToolChoice::try_from)
-            .transpose()?;
-
-        let tools: Vec<crate::providers::openai::completion::ToolDefinition> = req
-            .tools
-            .clone()
+        let tools: Vec<crate::providers::openai::completion::ToolDefinition> = tools
             .into_iter()
             .map(|tool| {
                 let def = crate::providers::openai::completion::ToolDefinition::from(tool);
@@ -1627,11 +1579,11 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
 
         Ok(Self {
             model,
-            messages: full_history,
-            temperature: req.temperature,
+            messages,
+            temperature,
             tools,
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -1795,6 +1747,47 @@ where
 mod tests {
     use super::*;
     use serde_json::json;
+
+    struct OpenRouterRequestHarness;
+
+    impl crate::providers::openai::completion::request_conformance::Harness
+        for OpenRouterRequestHarness
+    {
+        fn family_name() -> &'static str {
+            "openrouter"
+        }
+
+        fn run(
+            case: crate::providers::openai::completion::request_conformance::Fixture,
+        ) -> crate::providers::openai::completion::request_conformance::Outcome<serde_json::Value>
+        {
+            crate::providers::openai::completion::request_conformance::serialize_case(
+                case,
+                |request| OpenrouterCompletionRequest::try_from(("default-model", request)),
+            )
+        }
+
+        fn assert(
+            case: crate::providers::openai::completion::request_conformance::Fixture,
+            actual: crate::providers::openai::completion::request_conformance::Outcome<
+                serde_json::Value,
+            >,
+        ) {
+            crate::providers::openai::completion::request_conformance::assert_compatible_chat_case(
+                crate::providers::openai::completion::request_conformance::CompatibleChatExpectation::new(
+                    crate::providers::openai::completion::CompatibleChatProfile::new("OpenRouter"),
+                )
+                .preserves_reasoning_assistant_history(),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    crate::providers::openai::completion::request_conformance::provider_request_conformance_tests!(
+        OpenRouterRequestHarness
+    );
 
     #[test]
     fn test_openrouter_request_uses_request_model_override() {

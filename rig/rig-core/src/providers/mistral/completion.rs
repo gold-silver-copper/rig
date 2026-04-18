@@ -8,7 +8,6 @@ use crate::completion::GetTokenUsage;
 use crate::http_client::{self, HttpClientExt};
 use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils, message,
     providers::mistral::client::ApiResponse,
@@ -347,59 +346,40 @@ impl TryFrom<(&str, CompletionRequest)> for MistralCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Mistral");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble.clone())],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Mistral")
+                .require_messages(),
+            |preamble| Message::system(preamble.to_owned()),
+            None,
+            |_| false,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        if full_history.is_empty() {
-            return Err(CompletionError::RequestError(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Mistral request has no provider-compatible messages after conversion",
-                )
-                .into(),
-            ));
-        }
-
-        let tool_choice = req
-            .tool_choice
+        let tool_choice = tool_choice
             .clone()
             .map(crate::providers::openai::completion::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -489,20 +469,19 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = crate::providers::openai::completion::first_choice(&response.choices)?;
+        let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
+            &choice.finish_reason,
+        ));
         let content = match &choice.message {
             Message::Assistant {
                 content,
                 tool_calls,
                 ..
             } => {
-                let mut content = if content.is_empty() {
-                    vec![]
-                } else {
-                    vec![completion::AssistantContent::text(content.clone())]
-                };
+                let mut content = crate::providers::openai::completion::non_empty_text(content)
+                    .into_iter()
+                    .collect::<Vec<_>>();
 
                 content.extend(
                     tool_calls
@@ -523,12 +502,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
         let usage = response
             .usage
             .as_ref()
@@ -541,12 +514,15 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        Ok(
+            crate::providers::openai::completion::build_completion_response(
+                response,
+                usage,
+                None,
+                stop_reason,
+                content,
+            ),
+        )
     }
 }
 
@@ -666,6 +642,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::openai::completion::request_conformance;
+
+    struct MistralRequestHarness;
+
+    impl request_conformance::Harness for MistralRequestHarness {
+        fn family_name() -> &'static str {
+            "mistral"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                MistralCompletionRequest::try_from((MISTRAL_SMALL, request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    crate::providers::openai::completion::CompatibleChatProfile::new("Mistral")
+                        .require_messages(),
+                )
+                .omits_document_messages(),
+                MISTRAL_SMALL,
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(MistralRequestHarness);
 
     #[test]
     fn test_response_deserialization() {
@@ -737,7 +748,7 @@ mod tests {
     fn test_assistant_reasoning_is_skipped_in_message_conversion() {
         let assistant = message::Message::Assistant {
             id: None,
-            content: OneOrMany::one(message::AssistantContent::reasoning("hidden")),
+            content: crate::OneOrMany::one(message::AssistantContent::reasoning("hidden")),
         };
 
         let converted: Vec<Message> = assistant.try_into().expect("conversion should work");
@@ -748,7 +759,7 @@ mod tests {
     fn test_assistant_text_and_tool_call_are_preserved_when_reasoning_present() {
         let assistant = message::Message::Assistant {
             id: None,
-            content: OneOrMany::many(vec![
+            content: crate::OneOrMany::many(vec![
                 message::AssistantContent::reasoning("hidden"),
                 message::AssistantContent::text("visible"),
                 message::AssistantContent::tool_call(
@@ -818,9 +829,9 @@ mod tests {
     fn test_request_conversion_errors_when_all_messages_are_filtered() {
         let request = CompletionRequest {
             preamble: None,
-            chat_history: OneOrMany::one(message::Message::Assistant {
+            chat_history: crate::OneOrMany::one(message::Message::Assistant {
                 id: None,
-                content: OneOrMany::one(message::AssistantContent::reasoning("hidden")),
+                content: crate::OneOrMany::one(message::AssistantContent::reasoning("hidden")),
             }),
             documents: vec![],
             tools: vec![],
@@ -834,5 +845,26 @@ mod tests {
 
         let result = MistralCompletionRequest::try_from((MISTRAL_SMALL, request));
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
+    }
+
+    #[test]
+    fn test_mistral_request_uses_request_model_override() {
+        let request = CompletionRequest {
+            model: Some("mistral-custom".to_string()),
+            preamble: Some("System".to_string()),
+            chat_history: crate::OneOrMany::one(message::Message::user("Hello")),
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let request =
+            MistralCompletionRequest::try_from((MISTRAL_SMALL, request)).expect("request");
+
+        assert_eq!(request.model, "mistral-custom");
     }
 }

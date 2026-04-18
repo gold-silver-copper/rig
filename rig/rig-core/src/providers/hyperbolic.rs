@@ -17,7 +17,6 @@ use crate::streaming::StreamingCompletionResponse;
 
 use crate::providers::openai;
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils,
     providers::openai::Message,
@@ -179,9 +178,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = openai::completion::first_choice(&response.choices)?;
+        let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
+            &choice.finish_reason,
+        ));
 
         let content = match &choice.message {
             Message::Assistant {
@@ -191,10 +191,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             } => {
                 let mut content = content
                     .iter()
-                    .map(|c| match c {
-                        AssistantContent::Text { text } => completion::AssistantContent::text(text),
+                    .filter_map(|c| match c {
+                        AssistantContent::Text { text } => openai::completion::non_empty_text(text),
                         AssistantContent::Refusal { refusal } => {
-                            completion::AssistantContent::text(refusal)
+                            openai::completion::non_empty_text(refusal)
                         }
                     })
                     .collect::<Vec<_>>();
@@ -218,12 +218,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
         let usage = response
             .usage
             .as_ref()
@@ -236,12 +230,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
+        Ok(openai::completion::build_completion_response(
+            response,
             usage,
-            raw_response: response,
-            message_id: None,
-        })
+            None,
+            stop_reason,
+            content,
+        ))
     }
 }
 
@@ -266,46 +261,31 @@ impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Hyperbolic");
-        }
-
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        if req.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Hyperbolic");
-        }
-
-        if !req.tools.is_empty() {
-            tracing::warn!("WARNING: `tools` not supported on Hyperbolic");
-        }
-
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools: _,
+            tool_choice: _,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Hyperbolic")
+                .unsupported_tools()
+                .unsupported_tool_choice(),
+            Message::system,
+            None,
+            |_| false,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            additional_params: req.additional_params,
+            model,
+            messages,
+            temperature,
+            additional_params,
         })
     }
 }
@@ -708,6 +688,43 @@ mod audio_generation {
 
 #[cfg(test)]
 mod tests {
+    use super::HyperbolicCompletionRequest;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct HyperbolicRequestHarness;
+
+    impl request_conformance::Harness for HyperbolicRequestHarness {
+        fn family_name() -> &'static str {
+            "hyperbolic"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                HyperbolicCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Hyperbolic")
+                        .unsupported_tools()
+                        .unsupported_tool_choice(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(HyperbolicRequestHarness);
+
     #[test]
     fn test_client_initialization() {
         let _client =

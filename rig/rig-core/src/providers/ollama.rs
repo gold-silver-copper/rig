@@ -351,6 +351,10 @@ pub struct CompletionResponse {
 impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
     type Error = CompletionError;
     fn try_from(resp: CompletionResponse) -> Result<Self, Self::Error> {
+        let stop_reason = resp
+            .done_reason
+            .as_deref()
+            .map(crate::providers::openai::completion::map_finish_reason);
         match resp.message {
             // Process only if an assistant message is present.
             Message::Assistant {
@@ -373,9 +377,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         tc.function.arguments.clone(),
                     ));
                 }
-                let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-                    CompletionError::ResponseError("No content provided".to_owned())
-                })?;
+                let choice = completion::AssistantChoice::from(assistant_contents);
                 let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
                 let completion_tokens = resp.eval_count.unwrap_or(0);
 
@@ -410,6 +412,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     },
                     raw_response,
                     message_id: None,
+                    stop_reason,
                 })
             }
             _ => Err(CompletionError::ResponseError(

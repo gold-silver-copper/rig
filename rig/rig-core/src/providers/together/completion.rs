@@ -147,58 +147,38 @@ impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for TogetherAI");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("TogetherAI")
+                .require_messages()
+                .reject_required_tool_choice(),
+            openai::Message::system,
+            None,
+            |_| false,
+            |message| Vec::<openai::Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        let chat_history: Vec<openai::Message> = req
-            .chat_history
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        if full_history.is_empty() {
-            return Err(CompletionError::RequestError(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Together request has no provider-compatible messages after conversion",
-                )
-                .into(),
-            ));
-        }
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
-            .map(ToolChoice::try_from)
-            .transpose()?;
+        let tool_choice = tool_choice.map(ToolChoice::from);
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(crate::providers::openai::completion::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -324,50 +304,50 @@ where
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged, rename_all = "snake_case")]
-pub enum ToolChoice {
-    None,
-    Auto,
-    Function(Vec<ToolChoiceFunctionKind>),
-}
-
-impl TryFrom<crate::message::ToolChoice> for ToolChoice {
-    type Error = CompletionError;
-
-    fn try_from(value: crate::message::ToolChoice) -> Result<Self, Self::Error> {
-        let res = match value {
-            crate::message::ToolChoice::None => Self::None,
-            crate::message::ToolChoice::Auto => Self::Auto,
-            crate::message::ToolChoice::Specific { function_names } => {
-                let vec: Vec<ToolChoiceFunctionKind> = function_names
-                    .into_iter()
-                    .map(|name| ToolChoiceFunctionKind::Function { name })
-                    .collect();
-
-                Self::Function(vec)
-            }
-            choice => {
-                return Err(CompletionError::ProviderError(format!(
-                    "Unsupported tool choice type: {choice:?}"
-                )));
-            }
-        };
-
-        Ok(res)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "function")]
-pub enum ToolChoiceFunctionKind {
-    Function { name: String },
-}
+pub type ToolChoice = crate::providers::openai::completion::CompatibleToolChoice;
+pub type ToolChoiceFunctionKind =
+    crate::providers::openai::completion::CompatibleToolChoiceFunctionKind;
+pub type ToolChoiceKeyword = crate::providers::openai::completion::CompatibleToolChoiceKeyword;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::openai::completion::request_conformance;
     use crate::{OneOrMany, message};
+
+    struct TogetherRequestHarness;
+
+    impl request_conformance::Harness for TogetherRequestHarness {
+        fn family_name() -> &'static str {
+            "together-ai"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                TogetherAICompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    crate::providers::openai::completion::CompatibleChatProfile::new("TogetherAI")
+                        .require_messages()
+                        .reject_required_tool_choice(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(TogetherRequestHarness);
 
     #[test]
     fn together_request_conversion_errors_when_all_messages_are_filtered() {
@@ -389,5 +369,26 @@ mod tests {
 
         let result = TogetherAICompletionRequest::try_from(("meta-llama/test-model", request));
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
+    }
+
+    #[test]
+    fn together_request_uses_request_model_override() {
+        let request = CompletionRequest {
+            model: Some("together-override".to_string()),
+            preamble: Some("system".to_string()),
+            chat_history: OneOrMany::one(message::Message::user("hello")),
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let converted = TogetherAICompletionRequest::try_from(("together-default", request))
+            .expect("request should convert");
+
+        assert_eq!(converted.model, "together-override");
     }
 }

@@ -206,7 +206,10 @@ where
 
     let turn1_assistant = Message::Assistant {
         id: response.message_id,
-        content: response.choice,
+        content: response
+            .choice
+            .into_one_or_many()
+            .expect("reasoning roundtrip response should not be empty"),
     };
 
     let turn2_prompt = Message::User {

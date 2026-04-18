@@ -221,82 +221,90 @@ pub(super) struct MiraCompletionRequest {
     pub stream: bool,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Mira");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut messages = Vec::new();
-
-        if let Some(content) = &req.preamble {
-            messages.push(RawMessage {
-                role: "user".to_string(),
-                content: content.to_string(),
-            });
-        }
-
-        if let Some(Message::User { content }) = req.normalized_documents() {
+fn mira_request_messages(message: Message) -> Result<Vec<RawMessage>, CompletionError> {
+    match message {
+        Message::System { content } => Ok(vec![RawMessage {
+            role: "system".to_string(),
+            content,
+        }]),
+        Message::User { content } => {
             let text = content
                 .into_iter()
-                .filter_map(|doc| match doc {
+                .filter_map(|item| match item {
+                    UserContent::Text(text) => Some(text.text),
                     UserContent::Document(Document {
                         data: DocumentSourceKind::Base64(data) | DocumentSourceKind::String(data),
                         ..
                     }) => Some(data),
-                    UserContent::Text(text) => Some(text.text),
-
-                    // This should always be `Document`
                     _ => None,
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            messages.push(RawMessage {
-                role: "user".to_string(),
-                content: text,
-            });
+            if text.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![RawMessage {
+                    role: "user".to_string(),
+                    content: text,
+                }])
+            }
         }
+        Message::Assistant { content, .. } => {
+            let text = content
+                .into_iter()
+                .filter_map(|item| match item {
+                    AssistantContent::Text(text) => Some(text.text),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-        for msg in req.chat_history {
-            let (role, content) = match msg {
-                Message::System { content } => ("system", content),
-                Message::User { content } => {
-                    let text = content
-                        .iter()
-                        .map(|c| match c {
-                            UserContent::Text(text) => &text.text,
-                            _ => "",
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    ("user", text)
-                }
-                Message::Assistant { content, .. } => {
-                    let text = content
-                        .iter()
-                        .map(|c| match c {
-                            AssistantContent::Text(text) => &text.text,
-                            _ => "",
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    ("assistant", text)
-                }
-            };
-            messages.push(RawMessage {
-                role: role.to_string(),
-                content,
-            });
+            if text.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![RawMessage {
+                    role: "assistant".to_string(),
+                    content: text,
+                }])
+            }
         }
+    }
+}
+
+impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
+    type Error = CompletionError;
+
+    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            tools: _,
+            tool_choice: _,
+            additional_params: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Mira AI")
+                .unsupported_tools()
+                .unsupported_tool_choice()
+                .unsupported_additional_params(),
+            |content| RawMessage {
+                role: "user".to_string(),
+                content: content.to_string(),
+            },
+            None,
+            |_| false,
+            mira_request_messages,
+        )?;
 
         Ok(Self {
-            model: model.to_string(),
+            model,
             messages,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
+            temperature,
+            max_tokens,
             stream: false,
         })
     }
@@ -354,21 +362,6 @@ where
         };
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        if !completion_request.tools.is_empty() {
-            tracing::warn!(target: "rig::completions",
-                "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
-                len = completion_request.tools.len()
-            );
-        }
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
-        }
-
-        if completion_request.additional_params.is_some() {
-            tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
-        }
 
         let request = MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
@@ -460,20 +453,6 @@ where
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if !completion_request.tools.is_empty() {
-            tracing::warn!(target: "rig::completions",
-                "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
-                len = completion_request.tools.len()
-            );
-        }
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
-        }
-
-        if completion_request.additional_params.is_some() {
-            tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
-        }
         let mut request =
             MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
         request.stream = true;
@@ -577,17 +556,21 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             ),
         };
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
+        let stop_reason = match &response {
+            CompletionResponse::Structured { choices, .. } => choices
+                .first()
+                .and_then(|choice| choice.finish_reason.as_deref())
+                .map(crate::providers::openai::completion::map_finish_reason),
+            CompletionResponse::Simple(_) => None,
+        };
 
         Ok(completion::CompletionResponse {
             choice,
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }
@@ -701,7 +684,44 @@ impl TryFrom<serde_json::Value> for Message {
 mod tests {
     use super::*;
     use crate::message::UserContent;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
     use serde_json::json;
+
+    struct MiraRequestHarness;
+
+    impl request_conformance::Harness for MiraRequestHarness {
+        fn family_name() -> &'static str {
+            "mira"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                MiraCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Mira AI")
+                        .unsupported_tools()
+                        .unsupported_tool_choice()
+                        .unsupported_additional_params(),
+                )
+                .preamble_as_user(),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(MiraRequestHarness);
 
     #[test]
     fn test_deserialize_message() {
@@ -810,7 +830,7 @@ mod tests {
 
         assert_eq!(
             completion_response.choice.first(),
-            completion::AssistantContent::text("Test response")
+            Some(completion::AssistantContent::text("Test response"))
         );
     }
     #[test]

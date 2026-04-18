@@ -1427,12 +1427,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        if response.output.is_empty() {
-            return Err(CompletionError::ResponseError(
-                "Response contained no parts".to_owned(),
-            ));
-        }
-
         // Extract the msg_ ID from the first Output::Message item
         let message_id = response.output.iter().find_map(|item| match item {
             Output::Message(msg) => Some(msg.id.clone()),
@@ -1446,11 +1440,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .flat_map(<Vec<completion::AssistantContent>>::from)
             .collect();
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = response
             .usage
@@ -1473,6 +1463,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             usage,
             raw_response: response,
             message_id,
+            stop_reason: None,
         })
     }
 }

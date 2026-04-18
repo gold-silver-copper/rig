@@ -2,13 +2,13 @@
 
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
+use rig::completion::{AssistantChoice, CompletionModel};
 use rig::message::{AssistantContent, Message, Reasoning};
 use rig::providers::moonshot;
 
 use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_response};
 
-fn response_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
+fn response_text(choice: &AssistantChoice) -> String {
     choice
         .iter()
         .filter_map(|content| match content {

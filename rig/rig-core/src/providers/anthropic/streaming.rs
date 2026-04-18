@@ -7,7 +7,7 @@ use tracing_futures::Instrument;
 
 use super::completion::{
     AnthropicCompatibleProvider, CacheControl, Content, GenericCompletionModel, Message,
-    SystemContent, ToolChoice, ToolDefinition, Usage, apply_cache_control,
+    SystemContent, ToolChoice, ToolDefinition, Usage, apply_cache_control, map_stop_reason,
     split_system_messages_from_history,
 };
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
@@ -319,6 +319,12 @@ where
                                     },
                                     StreamingEvent::MessageDelta { delta, usage } => {
                                         if delta.stop_reason.is_some() {
+                                            if let Some(stop_reason) = delta.stop_reason.as_deref() {
+                                                yield Ok(RawStreamingChoice::StopReason(
+                                                    map_stop_reason(stop_reason),
+                                                ));
+                                            }
+
                                             // cache_creation_input_tokens and cache_read_input_tokens
                                             // are cumulative totals on message_delta.usage per the
                                             // Anthropic streaming API spec — use them directly.

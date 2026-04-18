@@ -1,7 +1,6 @@
 use aws_sdk_bedrockruntime::types as aws_bedrock;
 
 use rig::{
-    OneOrMany,
     completion::CompletionError,
     message::{AssistantContent, Text, ToolCall, ToolFunction},
 };
@@ -114,21 +113,25 @@ impl TryFrom<AwsConverseOutput> for completion::CompletionResponse<AwsConverseOu
             _ => None,
         }) {
             return Ok(completion::CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                    tool_use.id,
-                    ToolFunction::new(tool_use.function.name, tool_use.function.arguments),
-                ))),
+                choice: completion::AssistantChoice::one(AssistantContent::ToolCall(
+                    ToolCall::new(
+                        tool_use.id,
+                        ToolFunction::new(tool_use.function.name, tool_use.function.arguments),
+                    ),
+                )),
                 usage,
                 raw_response: value,
                 message_id: None,
+                stop_reason: None,
             });
         }
 
         Ok(completion::CompletionResponse {
-            choice,
+            choice: choice.into(),
             usage,
             raw_response: value,
             message_id: None,
+            stop_reason: None,
         })
     }
 }

@@ -235,15 +235,21 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let Choice { message, .. } = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let Choice {
+            message,
+            finish_reason,
+            ..
+        } = openai::completion::first_choice(&response.choices)?;
+        let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
+            finish_reason,
+        ));
 
         let mut content = message
             .content
             .as_ref()
-            .map(|c| vec![completion::AssistantContent::text(c)])
-            .unwrap_or_default();
+            .and_then(openai::completion::non_empty_text)
+            .into_iter()
+            .collect::<Vec<_>>();
 
         content.extend(message.tool_calls.iter().map(|call| {
             completion::AssistantContent::tool_call(
@@ -253,11 +259,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )
         }));
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
         let usage = response
             .usage
             .as_ref()
@@ -270,12 +271,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
+        Ok(openai::completion::build_completion_response(
+            response,
             usage,
-            raw_response: response,
-            message_id: None,
-        })
+            None,
+            stop_reason,
+            content,
+        ))
     }
 }
 
@@ -447,53 +449,120 @@ pub(super) struct GaladrielCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
+fn galadriel_request_messages(message: message::Message) -> Result<Vec<Message>, CompletionError> {
+    match message {
+        message::Message::System { content } => Ok(vec![Message {
+            role: "system".to_string(),
+            content: Some(content),
+            tool_calls: vec![],
+        }]),
+        message::Message::User { content } => {
+            let text = content
+                .into_iter()
+                .filter_map(|item| match item {
+                    message::UserContent::Text(text) => Some(text.text),
+                    message::UserContent::Document(document) => match document.data {
+                        crate::message::DocumentSourceKind::Base64(content)
+                        | crate::message::DocumentSourceKind::String(content) => Some(content),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if text.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![Message {
+                    role: "user".to_string(),
+                    content: Some(text),
+                    tool_calls: vec![],
+                }])
+            }
+        }
+        message::Message::Assistant { content, .. } => {
+            let mut text_content: Option<String> = None;
+            let mut tool_calls = vec![];
+
+            for item in content {
+                match item {
+                    message::AssistantContent::Text(text) => {
+                        let text = text.text;
+                        text_content = Some(
+                            text_content
+                                .map(|mut existing| {
+                                    existing.push('\n');
+                                    existing.push_str(&text);
+                                    existing
+                                })
+                                .unwrap_or(text),
+                        );
+                    }
+                    message::AssistantContent::ToolCall(tool_call) => {
+                        tool_calls.push(tool_call.into());
+                    }
+                    message::AssistantContent::Reasoning(_) => {}
+                    message::AssistantContent::Image(_) => {
+                        return Err(CompletionError::RequestError(
+                            MessageError::ConversionError(
+                                "Galadriel currently doesn't support images.".into(),
+                            )
+                            .into(),
+                        ));
+                    }
+                }
+            }
+
+            if text_content.is_none() && tool_calls.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![Message {
+                    role: "assistant".to_string(),
+                    content: text_content,
+                    tool_calls,
+                }])
+            }
+        }
+    }
+}
+
 impl TryFrom<(&str, CompletionRequest)> for GaladrielCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Galadriel");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Galadriel"),
+            Message::system,
+            None,
+            |_| false,
+            galadriel_request_messages,
+        )?;
 
-        // Add preamble to chat history (if available)
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Message>, _>>()?,
-        );
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
+        let tool_choice = tool_choice
             .map(crate::providers::openai::completion::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -668,6 +737,41 @@ where
 }
 #[cfg(test)]
 mod tests {
+    use super::GaladrielCompletionRequest;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct GaladrielRequestHarness;
+
+    impl request_conformance::Harness for GaladrielRequestHarness {
+        fn family_name() -> &'static str {
+            "galadriel"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                GaladrielCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(CompatibleChatProfile::new(
+                    "Galadriel",
+                )),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(GaladrielRequestHarness);
+
     #[test]
     fn test_client_initialization() {
         let _client =

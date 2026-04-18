@@ -91,6 +91,15 @@ pub enum FinishReason {
     ToolCall,
 }
 
+fn map_finish_reason(reason: &FinishReason) -> completion::StopReason {
+    match reason {
+        FinishReason::MaxTokens => completion::StopReason::MaxTokens,
+        FinishReason::StopSequence | FinishReason::Complete => completion::StopReason::Stop,
+        FinishReason::ToolCall => completion::StopReason::ToolCalls,
+        FinishReason::Error => completion::StopReason::Other("ERROR".to_string()),
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct Usage {
     #[serde(default)]
@@ -137,10 +146,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+        let stop_reason = Some(map_finish_reason(&response.finish_reason));
         let (content, _, tool_calls) = response.message();
 
         let model_response = if !tool_calls.is_empty() {
-            OneOrMany::many(
+            completion::AssistantChoice::many(
                 tool_calls
                     .into_iter()
                     .filter_map(|tool_call| {
@@ -151,19 +161,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     })
                     .collect::<Vec<_>>(),
             )
-            .expect("We have atleast 1 tool call in this if block")
         } else {
-            OneOrMany::many(content.into_iter().map(|content| match content {
+            completion::AssistantChoice::many(content.into_iter().map(|content| match content {
                 AssistantContent::Text { text } => completion::AssistantContent::text(text),
                 AssistantContent::Thinking { thinking } => {
                     completion::AssistantContent::Reasoning(Reasoning::new(&thinking))
                 }
             }))
-            .map_err(|_| {
-                CompletionError::ResponseError(
-                    "Response contained no message or tool call (empty)".to_owned(),
-                )
-            })?
         };
 
         let usage = response
@@ -185,10 +189,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .unwrap_or_default();
 
         Ok(completion::CompletionResponse {
-            choice: OneOrMany::many(model_response).expect("There is atleast one content"),
+            choice: model_response,
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }

@@ -1,6 +1,5 @@
 use google_cloud_aiplatform_v1 as vertexai;
-use rig::OneOrMany;
-use rig::completion::{CompletionError, CompletionResponse, Usage};
+use rig::completion::{AssistantChoice, CompletionError, CompletionResponse, Usage};
 use rig::message::{AssistantContent, Text, ToolCall, ToolFunction};
 use serde::{Deserialize, Serialize};
 
@@ -43,15 +42,7 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
             }
         }
 
-        if assistant_contents.is_empty() {
-            return Err(CompletionError::ProviderError(
-                "No text or tool call content found in response".to_string(),
-            ));
-        }
-
-        let choice = OneOrMany::many(assistant_contents).map_err(|e| {
-            CompletionError::ProviderError(format!("Failed to create OneOrMany: {e}"))
-        })?;
+        let choice = AssistantChoice::from(assistant_contents);
 
         let usage = response
             .usage_metadata
@@ -70,6 +61,7 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
             usage,
             raw_response: value,
             message_id: None,
+            stop_reason: None,
         })
     }
 }
@@ -145,7 +137,7 @@ mod tests {
         let response = completion_response.unwrap();
 
         match response.choice.first() {
-            AssistantContent::ToolCall(ToolCall { id, function, .. }) => {
+            Some(AssistantContent::ToolCall(ToolCall { id, function, .. })) => {
                 assert_eq!(id, "add");
                 assert_eq!(function.name, "add");
                 assert_eq!(function.arguments, args);

@@ -27,15 +27,12 @@ use self::gemini_api_types::Schema;
 use crate::http_client::HttpClientExt;
 use crate::message::{self, MimeType, Reasoning};
 
+use crate::completion::{self, CompletionError, CompletionRequest};
 use crate::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, FunctionCallingMode, ToolConfig,
 };
 use crate::providers::gemini::streaming::StreamingCompletionResponse;
 use crate::telemetry::SpanCombinator;
-use crate::{
-    OneOrMany,
-    completion::{self, CompletionError, CompletionRequest},
-};
 use gemini_api_types::{
     Content, FunctionDeclaration, GenerateContentRequest, GenerateContentResponse,
     GenerationConfig, Part, PartKind, Role, Tool,
@@ -50,6 +47,15 @@ use super::Client;
 // =================================================================
 // Rig Implementation Types
 // =================================================================
+
+pub(crate) fn map_finish_reason(reason: &gemini_api_types::FinishReason) -> completion::StopReason {
+    match reason {
+        gemini_api_types::FinishReason::Stop => completion::StopReason::Stop,
+        gemini_api_types::FinishReason::MaxTokens => completion::StopReason::MaxTokens,
+        gemini_api_types::FinishReason::Safety => completion::StopReason::Safety,
+        other => completion::StopReason::Other(format!("{other:?}")),
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CompletionModel<T = reqwest::Client> {
@@ -493,11 +499,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             )
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = response
             .usage_metadata
@@ -514,6 +516,11 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
         Ok(completion::CompletionResponse {
             choice,
             usage,
+            stop_reason: response
+                .candidates
+                .first()
+                .and_then(|candidate| candidate.finish_reason.as_ref())
+                .map(map_finish_reason),
             raw_response: response,
             message_id: None,
         })
@@ -2023,6 +2030,10 @@ pub mod gemini_api_types {
 }
 
 #[cfg(test)]
+#[path = "conformance_tests.rs"]
+mod conformance_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         message,
@@ -2286,7 +2297,7 @@ mod tests {
         let first = converted.choice.first();
         assert!(matches!(
             first,
-            message::AssistantContent::Reasoning(message::Reasoning { content, .. })
+            Some(message::AssistantContent::Reasoning(message::Reasoning { content, .. }))
                 if matches!(
                     content.first(),
                     Some(message::ReasoningContent::Text {
@@ -2301,7 +2312,7 @@ mod tests {
     fn test_reasoning_signature_is_emitted_in_gemini_part() {
         let msg = message::Message::Assistant {
             id: None,
-            content: OneOrMany::one(message::AssistantContent::Reasoning(
+            content: crate::OneOrMany::one(message::AssistantContent::Reasoning(
                 message::Reasoning::new_with_signature(
                     "structured thought",
                     Some("reuse_sig_456".to_string()),
@@ -2334,7 +2345,7 @@ mod tests {
 
         let msg = message::Message::Assistant {
             id: None,
-            content: OneOrMany::one(message::AssistantContent::ToolCall(tool_call)),
+            content: crate::OneOrMany::one(message::AssistantContent::ToolCall(tool_call)),
         };
 
         let content: Content = msg.try_into().unwrap();

@@ -9,7 +9,6 @@ use tracing::{Instrument, Level, enabled, info_span};
 
 use super::api::{ApiResponse, Message, ToolDefinition};
 use super::client::Client;
-use crate::OneOrMany;
 use crate::completion::{self, CompletionError, CompletionRequest};
 use crate::http_client::HttpClientExt;
 use crate::providers::openai::completion::ToolChoice;
@@ -132,6 +131,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+        let stop_reason = response
+            .status
+            .as_deref()
+            .map(|status| completion::StopReason::Other(status.to_string()));
         let content: Vec<completion::AssistantContent> = response
             .output
             .iter()
@@ -139,9 +142,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .flat_map(<Vec<completion::AssistantContent>>::from)
             .collect();
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError("Response contained no output".to_owned())
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = response
             .usage
@@ -164,6 +165,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }

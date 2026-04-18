@@ -60,6 +60,15 @@ pub struct CompletionResponse {
     pub usage: Usage,
 }
 
+pub(crate) fn map_stop_reason(reason: &str) -> completion::StopReason {
+    match reason {
+        "end_turn" => completion::StopReason::EndTurn,
+        "tool_use" => completion::StopReason::ToolCalls,
+        "max_tokens" => completion::StopReason::MaxTokens,
+        other => completion::StopReason::Other(other.to_string()),
+    }
+}
+
 impl ProviderResponseExt for CompletionResponse {
     type OutputMessage = Content;
     type Usage = Usage;
@@ -214,11 +223,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .map(|content| content.clone().try_into())
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = completion::Usage {
             input_tokens: response.usage.input_tokens,
@@ -234,6 +239,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         Ok(completion::CompletionResponse {
             choice,
             usage,
+            stop_reason: response.stop_reason.as_deref().map(map_stop_reason),
             raw_response: response,
             message_id: None,
         })
@@ -1489,6 +1495,10 @@ enum ApiResponse<T> {
     Message(T),
     Error(ApiErrorResponse),
 }
+
+#[cfg(test)]
+#[path = "conformance_tests.rs"]
+mod conformance_tests;
 
 #[cfg(test)]
 mod tests {

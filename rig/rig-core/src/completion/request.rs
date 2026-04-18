@@ -63,12 +63,13 @@
 //! For more information on how to use the completion functionality, refer to the documentation of
 //! the individual traits, structs, and enums defined in this module.
 
+use super::StopReason;
 use super::message::{AssistantContent, DocumentMediaType};
 use crate::message::ToolChoice;
 use crate::streaming::StreamingCompletionResponse;
 use crate::tool::server::ToolServerError;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
-use crate::{OneOrMany, http_client};
+use crate::{EmptyListError, OneOrMany, http_client};
 use crate::{
     json_utils,
     message::{Message, UserContent},
@@ -359,12 +360,13 @@ pub trait Completion<M: CompletionModel> {
 }
 
 /// General completion response struct that contains the high-level completion choice
-/// and the raw response. The completion choice contains one or more assistant content.
+/// and the raw response. Providers may validly return an empty assistant choice
+/// when a turn ends without emitting text, tool calls, reasoning, or images.
 #[derive(Debug)]
 pub struct CompletionResponse<T> {
-    /// The completion choice (represented by one or more assistant message content)
+    /// The completion choice (represented by zero or more assistant message content)
     /// returned by the completion model provider
-    pub choice: OneOrMany<AssistantContent>,
+    pub choice: AssistantChoice,
     /// Tokens used during prompting and responding
     pub usage: Usage,
     /// The raw response returned by the completion model provider
@@ -372,6 +374,200 @@ pub struct CompletionResponse<T> {
     /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
     /// Used to pair reasoning input items with their output items in multi-turn.
     pub message_id: Option<String>,
+    /// Provider-agnostic reason why the model stopped generating this turn.
+    pub stop_reason: Option<StopReason>,
+}
+
+/// Zero or more assistant content items returned by a provider.
+///
+/// Unlike [`OneOrMany`], this type preserves legitimate empty assistant turns
+/// without synthesizing placeholder text.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct AssistantChoice {
+    items: Vec<AssistantContent>,
+}
+
+impl AssistantChoice {
+    /// Create an empty assistant choice.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create an assistant choice containing a single item.
+    pub fn one(item: AssistantContent) -> Self {
+        Self { items: vec![item] }
+    }
+
+    /// Create an assistant choice from zero or more items.
+    pub fn many<I>(items: I) -> Self
+    where
+        I: IntoIterator<Item = AssistantContent>,
+    {
+        Self {
+            items: items.into_iter().collect(),
+        }
+    }
+
+    /// Returns the first assistant item, if present.
+    pub fn first(&self) -> Option<AssistantContent> {
+        self.items.first().cloned()
+    }
+
+    /// Returns a reference to the first assistant item, if present.
+    pub fn first_ref(&self) -> Option<&AssistantContent> {
+        self.items.first()
+    }
+
+    /// Returns the first assistant item mutably, if present.
+    pub fn first_mut(&mut self) -> Option<&mut AssistantContent> {
+        self.items.first_mut()
+    }
+
+    /// Returns the last assistant item, if present.
+    pub fn last(&self) -> Option<AssistantContent> {
+        self.items.last().cloned()
+    }
+
+    /// Returns a reference to the last assistant item, if present.
+    pub fn last_ref(&self) -> Option<&AssistantContent> {
+        self.items.last()
+    }
+
+    /// Returns the last assistant item mutably, if present.
+    pub fn last_mut(&mut self) -> Option<&mut AssistantContent> {
+        self.items.last_mut()
+    }
+
+    /// Returns the number of assistant items.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Returns `true` when the provider emitted no assistant items.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Append an assistant item.
+    pub fn push(&mut self, item: AssistantContent) {
+        self.items.push(item);
+    }
+
+    /// Insert an assistant item at a given index.
+    pub fn insert(&mut self, index: usize, item: AssistantContent) {
+        self.items.insert(index, item);
+    }
+
+    /// Iterate over assistant items.
+    pub fn iter(&self) -> std::slice::Iter<'_, AssistantContent> {
+        self.items.iter()
+    }
+
+    /// Iterate over assistant items mutably.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, AssistantContent> {
+        self.items.iter_mut()
+    }
+
+    /// Convert into a plain vector.
+    pub fn into_vec(self) -> Vec<AssistantContent> {
+        self.items
+    }
+
+    /// Convert into [`OneOrMany`] when the choice is non-empty.
+    pub fn into_one_or_many(self) -> Result<OneOrMany<AssistantContent>, EmptyListError> {
+        OneOrMany::many(self.items)
+    }
+
+    /// Clone into [`OneOrMany`] when the choice is non-empty.
+    pub fn to_one_or_many(&self) -> Result<OneOrMany<AssistantContent>, EmptyListError> {
+        OneOrMany::many(self.items.clone())
+    }
+}
+
+impl From<AssistantContent> for AssistantChoice {
+    fn from(item: AssistantContent) -> Self {
+        Self::one(item)
+    }
+}
+
+impl From<Vec<AssistantContent>> for AssistantChoice {
+    fn from(items: Vec<AssistantContent>) -> Self {
+        Self { items }
+    }
+}
+
+impl From<OneOrMany<AssistantContent>> for AssistantChoice {
+    fn from(items: OneOrMany<AssistantContent>) -> Self {
+        Self::many(items)
+    }
+}
+
+impl From<AssistantChoice> for Vec<AssistantContent> {
+    fn from(choice: AssistantChoice) -> Self {
+        choice.items
+    }
+}
+
+impl std::iter::FromIterator<AssistantContent> for AssistantChoice {
+    fn from_iter<T: IntoIterator<Item = AssistantContent>>(iter: T) -> Self {
+        Self::many(iter)
+    }
+}
+
+impl IntoIterator for AssistantChoice {
+    type Item = AssistantContent;
+    type IntoIter = std::vec::IntoIter<AssistantContent>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a AssistantChoice {
+    type Item = &'a AssistantContent;
+    type IntoIter = std::slice::Iter<'a, AssistantContent>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut AssistantChoice {
+    type Item = &'a mut AssistantContent;
+    type IntoIter = std::slice::IterMut<'a, AssistantContent>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter_mut()
+    }
+}
+
+impl TryFrom<AssistantChoice> for OneOrMany<AssistantContent> {
+    type Error = EmptyListError;
+
+    fn try_from(choice: AssistantChoice) -> Result<Self, Self::Error> {
+        choice.into_one_or_many()
+    }
+}
+
+impl TryFrom<&AssistantChoice> for OneOrMany<AssistantContent> {
+    type Error = EmptyListError;
+
+    fn try_from(choice: &AssistantChoice) -> Result<Self, Self::Error> {
+        choice.to_one_or_many()
+    }
+}
+
+impl PartialEq<OneOrMany<AssistantContent>> for AssistantChoice {
+    fn eq(&self, other: &OneOrMany<AssistantContent>) -> bool {
+        self.iter().eq(other.iter())
+    }
+}
+
+impl PartialEq<AssistantChoice> for OneOrMany<AssistantContent> {
+    fn eq(&self, other: &AssistantChoice) -> bool {
+        self.iter().eq(other.iter())
+    }
 }
 
 /// A trait for grabbing the token usage of a completion response.
@@ -986,6 +1182,30 @@ mod tests {
             "</file>\n"
         );
         assert_eq!(format!("{doc}"), expected);
+    }
+
+    #[test]
+    fn assistant_choice_can_be_empty_without_placeholder_text() {
+        let choice = AssistantChoice::new();
+
+        assert!(choice.is_empty());
+        assert!(choice.first().is_none());
+        assert!(choice.to_one_or_many().is_err());
+    }
+
+    #[test]
+    fn assistant_choice_roundtrips_non_empty_content() {
+        let choice = AssistantChoice::many(vec![
+            AssistantContent::text("hello"),
+            AssistantContent::tool_call("call_1", "echo", serde_json::json!({"value": 1})),
+        ]);
+
+        let normalized = choice
+            .clone()
+            .into_one_or_many()
+            .expect("non-empty assistant choice should convert");
+
+        assert_eq!(choice, normalized);
     }
 
     #[test]

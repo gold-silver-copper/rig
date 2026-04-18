@@ -579,76 +579,34 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        //FIXME: Must fix!
-        if req.tool_choice.is_some() {
-            tracing::warn!(
-                "Tool choice is currently not supported in Azure OpenAI. This should be fixed by Rig 0.25."
-            );
-        }
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Azure OpenAI")
+                .native_response_format(),
+            openai::Message::system,
+            None,
+            |message| matches!(message, openai::Message::ToolResult { .. }),
+            |message| Vec::<openai::Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<openai::Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
+        let tool_choice = tool_choice
             .map(crate::providers::openai::ToolChoice::try_from)
             .transpose()?;
 
-        let additional_params = if let Some(schema) = req.output_schema {
-            let name = schema
-                .as_object()
-                .and_then(|o| o.get("title"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("response_schema")
-                .to_string();
-            let mut schema_value = schema.to_value();
-            openai::sanitize_schema(&mut schema_value);
-            let response_format = serde_json::json!({
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": name,
-                        "strict": true,
-                        "schema": schema_value
-                    }
-                }
-            });
-            Some(match req.additional_params {
-                Some(existing) => json_utils::merge(existing, response_format),
-                None => response_format,
-            })
-        } else {
-            req.additional_params
-        };
-
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(openai::ToolDefinition::from)
                 .collect::<Vec<_>>(),
@@ -1072,6 +1030,97 @@ mod azure_tests {
     use crate::embeddings::EmbeddingModel;
     use crate::prelude::TypedPrompt;
     use crate::providers::openai::GPT_5_MINI;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct AzureRequestHarness;
+
+    impl request_conformance::Harness for AzureRequestHarness {
+        fn family_name() -> &'static str {
+            "azure-openai"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                AzureOpenAICompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Azure OpenAI").native_response_format(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(AzureRequestHarness);
+
+    #[test]
+    fn azure_request_uses_request_model_override() {
+        let request = CompletionRequest {
+            model: Some("azure-override".to_string()),
+            preamble: Some("system".to_string()),
+            chat_history: OneOrMany::one("hello".into()),
+            documents: vec![],
+            max_tokens: None,
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let converted = AzureOpenAICompletionRequest::try_from(("azure-default", request))
+            .expect("request should convert");
+
+        assert_eq!(converted.model, "azure-override");
+    }
+
+    #[test]
+    fn azure_request_merges_structured_output_into_additional_params() {
+        let request = CompletionRequest {
+            model: None,
+            preamble: Some("system".to_string()),
+            chat_history: OneOrMany::one("hello".into()),
+            documents: vec![],
+            max_tokens: None,
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            additional_params: Some(serde_json::json!({"foo":"bar"})),
+            output_schema: Some(
+                serde_json::from_value(serde_json::json!({
+                    "title": "WeatherResponse",
+                    "type": "object",
+                    "properties": {
+                        "city": { "type": "string" }
+                    }
+                }))
+                .expect("schema should deserialize"),
+            ),
+        };
+
+        let converted = AzureOpenAICompletionRequest::try_from(("azure-default", request))
+            .expect("request should convert");
+        let params = converted
+            .additional_params
+            .expect("additional params should be present");
+
+        assert_eq!(params["foo"], serde_json::json!("bar"));
+        assert_eq!(
+            params["response_format"]["json_schema"]["name"],
+            serde_json::json!("WeatherResponse")
+        );
+    }
 
     #[tokio::test]
     #[ignore]
