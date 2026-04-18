@@ -346,59 +346,39 @@ impl TryFrom<(&str, CompletionRequest)> for MistralCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Mistral");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble.clone())],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Mistral")
+                .require_messages(),
+            |preamble| Message::system(preamble.to_owned()),
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        if full_history.is_empty() {
-            return Err(CompletionError::RequestError(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Mistral request has no provider-compatible messages after conversion",
-                )
-                .into(),
-            ));
-        }
-
-        let tool_choice = req
-            .tool_choice
+        let tool_choice = tool_choice
             .clone()
             .map(crate::providers::openai::completion::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -829,5 +809,26 @@ mod tests {
 
         let result = MistralCompletionRequest::try_from((MISTRAL_SMALL, request));
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
+    }
+
+    #[test]
+    fn test_mistral_request_uses_request_model_override() {
+        let request = CompletionRequest {
+            model: Some("mistral-custom".to_string()),
+            preamble: Some("System".to_string()),
+            chat_history: crate::OneOrMany::one(message::Message::user("Hello")),
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let request =
+            MistralCompletionRequest::try_from((MISTRAL_SMALL, request)).expect("request");
+
+        assert_eq!(request.model, "mistral-custom");
     }
 }

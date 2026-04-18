@@ -266,8 +266,8 @@ impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
             messages,
             temperature,
             max_tokens: _,
-            tools,
-            tool_choice,
+            tools: _,
+            tool_choice: _,
             additional_params,
             output_schema: _,
         } = crate::providers::openai::completion::build_compatible_request_core(
@@ -279,14 +279,6 @@ impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
             Message::system,
             |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
         )?;
-
-        if tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Hyperbolic");
-        }
-
-        if !tools.is_empty() {
-            tracing::warn!("WARNING: `tools` not supported on Hyperbolic");
-        }
 
         Ok(Self {
             model,

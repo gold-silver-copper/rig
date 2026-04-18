@@ -164,45 +164,34 @@ impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs may not be supported by llamafile");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-
-        // Build message history: preamble -> documents -> chat history
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<openai::Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|msg| msg.try_into())
-            .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            tools,
+            tool_choice: _,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("llamafile")
+                .without_tool_choice(),
+            openai::Message::system,
+            |message| Vec::<openai::Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
         Ok(Self {
             model,
-            messages: full_history,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
-            tools: req
-                .tools
+            messages,
+            temperature,
+            max_tokens,
+            tools: tools
                 .into_iter()
                 .map(openai::ToolDefinition::from)
                 .collect(),
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -697,5 +686,26 @@ mod tests {
         assert_eq!(request.messages.len(), 2); // system + user
         assert_eq!(request.temperature, Some(0.7));
         assert_eq!(request.max_tokens, Some(256));
+    }
+
+    #[test]
+    fn test_llamafile_request_uses_request_model_override() {
+        let completion_request = CompletionRequest {
+            model: Some("custom-llamafile".to_string()),
+            preamble: None,
+            chat_history: crate::OneOrMany::one(crate::completion::Message::user("Hello")),
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let request = LlamafileCompletionRequest::try_from((LLAMA_CPP, completion_request))
+            .expect("Failed to create request");
+
+        assert_eq!(request.model, "custom-llamafile");
     }
 }
