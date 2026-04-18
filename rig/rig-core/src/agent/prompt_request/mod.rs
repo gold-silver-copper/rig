@@ -1,5 +1,6 @@
 pub mod hooks;
 pub mod streaming;
+mod turns;
 
 use super::{
     Agent,
@@ -26,6 +27,7 @@ use std::{
 };
 use tracing::info_span;
 use tracing::{Instrument, span::Id};
+use turns::{AssistantTextAccumulator, AssistantTurnSummary};
 
 pub trait PromptType {}
 pub struct Standard;
@@ -339,6 +341,7 @@ where
 
         let mut current_max_turns = 0;
         let mut usage = Usage::new();
+        let mut assistant_text_accumulator = AssistantTextAccumulator::default();
         let current_span_id: AtomicU64 = AtomicU64::new(0);
 
         // We need to do at least 2 loops for 1 roundtrip (user expects normal message)
@@ -447,7 +450,11 @@ where
                 ));
             }
 
-            let (tool_calls, texts): (Vec<_>, Vec<_>) = resp
+            let turn_summary = AssistantTurnSummary::from_choice(&resp.choice);
+            let turn_text = turn_summary.visible_text("\n");
+            assistant_text_accumulator.observe(&turn_text);
+
+            let (tool_calls, _texts): (Vec<_>, Vec<_>) = resp
                 .choice
                 .iter()
                 .partition(|choice| matches!(choice, AssistantContent::ToolCall(_)));
@@ -458,23 +465,13 @@ where
             });
 
             if tool_calls.is_empty() {
-                let merged_texts = texts
-                    .into_iter()
-                    .filter_map(|content| {
-                        if let AssistantContent::Text(text) = content {
-                            Some(text.text.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let final_output = assistant_text_accumulator.final_output(&turn_text);
 
                 if self.max_turns > 1 {
                     tracing::info!("Depth reached: {}/{}", current_max_turns, self.max_turns);
                 }
 
-                agent_span.record("gen_ai.completion", &merged_texts);
+                agent_span.record("gen_ai.completion", &final_output);
                 agent_span.record("gen_ai.usage.input_tokens", usage.input_tokens);
                 agent_span.record("gen_ai.usage.output_tokens", usage.output_tokens);
                 agent_span.record(
@@ -486,7 +483,7 @@ where
                     usage.cache_creation_input_tokens,
                 );
 
-                return Ok(PromptResponse::new(merged_texts, usage).with_messages(new_messages));
+                return Ok(PromptResponse::new(final_output, usage).with_messages(new_messages));
             }
 
             let hook = self.hook.clone();

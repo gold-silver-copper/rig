@@ -16,6 +16,7 @@ use tracing::info_span;
 use tracing_futures::Instrument;
 
 use super::ToolCallHookAction;
+use super::turns::{AssistantTextAccumulator, AssistantTurnSummary};
 use crate::{
     agent::Agent,
     completion::{CompletionError, CompletionModel, PromptError},
@@ -168,16 +169,6 @@ fn tool_result_to_user_message(
     Message::User {
         content: OneOrMany::one(user_content),
     }
-}
-
-fn assistant_text_from_choice(choice: &OneOrMany<AssistantContent>) -> String {
-    choice
-        .iter()
-        .filter_map(|content| match content {
-            AssistantContent::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .collect()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -398,6 +389,7 @@ where
         let output_schema = self.output_schema;
 
         let mut aggregated_usage = crate::completion::Usage::new();
+        let mut assistant_text_accumulator = AssistantTextAccumulator::default();
 
         // NOTE: We use .instrument(agent_span) instead of span.enter() to avoid
         // span context leaking to other concurrent tasks. Using span.enter() inside
@@ -659,7 +651,9 @@ where
                     accumulated_reasoning.push(assembled);
                 }
 
-                let turn_text_response = assistant_text_from_choice(&stream.choice);
+                let turn_summary = AssistantTurnSummary::from_choice(&stream.choice);
+                let turn_text_response = turn_summary.visible_text("");
+                assistant_text_accumulator.observe(&turn_text_response);
                 tracing::Span::current().record("gen_ai.completion", &turn_text_response);
 
                 // Add text, reasoning, and tool calls to chat history.
@@ -692,9 +686,18 @@ where
                 }
 
                 if !saw_tool_call_this_turn {
+                    let final_response_text =
+                        assistant_text_accumulator.final_output(&turn_text_response);
+
                     // Add user message and assistant response to history before finishing
                     if !turn_text_response.is_empty() {
                         new_messages.push(Message::assistant(&turn_text_response));
+                    } else if !final_response_text.is_empty() {
+                        tracing::info!(
+                            agent_name = agent_name.as_deref().unwrap_or(UNKNOWN_AGENT_NAME),
+                            message_id = ?stream.message_id,
+                            "Streaming turn completed without assistant text; using prior turn text for final response"
+                        );
                     } else {
                         tracing::warn!(
                             agent_name = agent_name.as_deref().unwrap_or(UNKNOWN_AGENT_NAME),
@@ -715,7 +718,7 @@ where
                         None
                     };
                     yield Ok(MultiTurnStreamItem::final_response_with_history(
-                        &turn_text_response,
+                        &final_response_text,
                         aggregated_usage,
                         final_messages,
                     ));
@@ -1222,6 +1225,86 @@ mod tests {
 
         assert!(streamed_text.is_empty());
         assert_eq!(final_response_text.as_deref(), Some(""));
+    }
+
+    #[derive(Clone, Default)]
+    struct StreamingEmptyTerminalTurnFallbackModel {
+        turn_counter: Arc<AtomicUsize>,
+    }
+
+    #[allow(refining_impl_trait)]
+    impl CompletionModel for StreamingEmptyTerminalTurnFallbackModel {
+        type Response = ();
+        type StreamingResponse = MockStreamingResponse;
+        type Client = ();
+
+        fn make(_: &Self::Client, _: impl Into<String>) -> Self {
+            Self::default()
+        }
+
+        async fn completion(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+            Err(CompletionError::ProviderError(
+                "completion is unused in this streaming test".to_string(),
+            ))
+        }
+
+        async fn stream(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+            let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
+            let stream = async_stream::stream! {
+                if turn == 0 {
+                    yield Ok(RawStreamingChoice::Message("The answer is 5".to_string()));
+                    yield Ok(RawStreamingChoice::ToolCall(
+                        RawStreamingToolCall::new(
+                            "tool_call_2".to_string(),
+                            "calculator".to_string(),
+                            serde_json::json!({"op": "add", "a": 2, "b": 3}),
+                        ),
+                    ));
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(2)));
+                } else {
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(1)));
+                }
+            };
+
+            let pinned_stream: crate::streaming::StreamingResult<Self::StreamingResponse> =
+                Box::pin(stream);
+            Ok(StreamingCompletionResponse::stream(pinned_stream))
+        }
+    }
+
+    #[tokio::test]
+    async fn final_response_falls_back_to_prior_assistant_text_when_terminal_turn_is_empty() {
+        let model = StreamingEmptyTerminalTurnFallbackModel::default();
+        let turn_counter = model.turn_counter.clone();
+        let agent = AgentBuilder::new(model).build();
+
+        let mut stream = agent.stream_prompt("What is 2 + 3?").multi_turn(3).await;
+        let mut streamed_text = String::new();
+        let mut final_response_text = None;
+
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
+                    text,
+                ))) => streamed_text.push_str(&text.text),
+                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                    final_response_text = Some(res.response().to_owned());
+                    break;
+                }
+                Ok(_) => {}
+                Err(err) => panic!("unexpected streaming error: {err:?}"),
+            }
+        }
+
+        assert_eq!(streamed_text, "The answer is 5");
+        assert_eq!(final_response_text.as_deref(), Some("The answer is 5"));
+        assert_eq!(turn_counter.load(Ordering::SeqCst), 2);
     }
 
     /// Background task that logs periodically to detect span leakage.
