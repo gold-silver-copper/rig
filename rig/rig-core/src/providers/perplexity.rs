@@ -175,9 +175,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = crate::providers::openai::completion::first_choice(&response.choices)?;
         let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
             &choice.finish_reason,
         ));
@@ -186,19 +184,29 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             Message {
                 role: Role::Assistant,
                 content,
-            } => Ok(completion::CompletionResponse {
-                choice: completion::AssistantChoice::one(content.clone().into()),
-                usage: completion::Usage {
+            } => {
+                let normalized_content =
+                    crate::providers::openai::completion::non_empty_text(content)
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                let usage = completion::Usage {
                     input_tokens: response.usage.prompt_tokens as u64,
                     output_tokens: response.usage.completion_tokens as u64,
                     total_tokens: response.usage.total_tokens as u64,
                     cached_input_tokens: 0,
                     cache_creation_input_tokens: 0,
-                },
-                raw_response: response,
-                message_id: None,
-                stop_reason,
-            }),
+                };
+
+                Ok(
+                    crate::providers::openai::completion::build_completion_response(
+                        response,
+                        usage,
+                        None,
+                        stop_reason,
+                        normalized_content,
+                    ),
+                )
+            }
             _ => Err(CompletionError::ResponseError(
                 "Response contained no assistant message".to_owned(),
             )),

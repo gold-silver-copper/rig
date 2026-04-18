@@ -12,7 +12,11 @@ use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::json_utils::{self, merge};
-use crate::providers::openai::completion::{GenericCompletionModel, OpenAIRequestParams, Usage};
+use crate::providers::openai::completion::{
+    CompatibleStreamingToolCall, GenericCompletionModel, OpenAIRequestParams,
+    ToolCallConflictPolicy, Usage, apply_compatible_tool_call_deltas, take_finalized_tool_calls,
+    take_tool_calls,
+};
 use crate::streaming::{self, RawStreamingChoice};
 
 // ================================================================
@@ -212,75 +216,17 @@ where
                     let delta = &choice.delta;
 
                     if !delta.tool_calls.is_empty() {
-                        for tool_call in &delta.tool_calls {
-                            let index = tool_call.index;
-
-                            // Some API gateways (e.g. LiteLLM, OneAPI) emit multiple
-                            // distinct tool calls all sharing index 0.  Detect this by
-                            // comparing both the `id` and `name`: only evict when a new
-                            // chunk carries a different non-empty id AND a different
-                            // non-empty name.  Checking the name prevents false evictions
-                            // from providers (e.g. GLM-4) that send a unique id on every
-                            // SSE chunk for the same logical tool call.
-                            if let Some(new_id) = &tool_call.id
-                                && !new_id.is_empty()
-                                && let Some(new_name) = &tool_call.function.name
-                                && !new_name.is_empty()
-                                && let Some(existing) = tool_calls.get(&index)
-                                && !existing.id.is_empty()
-                                && existing.id != *new_id
-                                && !existing.name.is_empty()
-                                && existing.name != *new_name
-                            {
-                                let evicted = tool_calls.remove(&index).expect("checked above");
-                                yield Ok(streaming::RawStreamingChoice::ToolCall(
-                                    finalize_completed_streaming_tool_call(evicted),
-                                ));
-                            }
-
-                            let existing_tool_call = tool_calls.entry(index).or_insert_with(streaming::RawStreamingToolCall::empty);
-
-                            if let Some(id) = &tool_call.id && !id.is_empty() {
-                                existing_tool_call.id = id.clone();
-                            }
-
-                            if let Some(name) = &tool_call.function.name && !name.is_empty() {
-                                existing_tool_call.name = name.clone();
-                                yield Ok(streaming::RawStreamingChoice::ToolCallDelta {
-                                    id: existing_tool_call.id.clone(),
-                                    internal_call_id: existing_tool_call.internal_call_id.clone(),
-                                    content: streaming::ToolCallDeltaContent::Name(name.clone()),
-                                });
-                            }
-
-                            // Convert current arguments to string if needed
-                            if let Some(chunk) = &tool_call.function.arguments && !chunk.is_empty() {
-                                let current_args = match &existing_tool_call.arguments {
-                                    serde_json::Value::Null => String::new(),
-                                    serde_json::Value::String(s) => s.clone(),
-                                    v => v.to_string(),
-                                };
-
-                                // Concatenate the new chunk
-                                let combined = format!("{current_args}{chunk}");
-
-                                // Try to parse as JSON if it looks complete
-                                if combined.trim_start().starts_with('{') && combined.trim_end().ends_with('}') {
-                                    match serde_json::from_str(&combined) {
-                                        Ok(parsed) => existing_tool_call.arguments = parsed,
-                                        Err(_) => existing_tool_call.arguments = serde_json::Value::String(combined),
-                                    }
-                                } else {
-                                    existing_tool_call.arguments = serde_json::Value::String(combined);
-                                }
-
-                                // Emit the delta so UI can show progress
-                                yield Ok(streaming::RawStreamingChoice::ToolCallDelta {
-                                    id: existing_tool_call.id.clone(),
-                                    internal_call_id: existing_tool_call.internal_call_id.clone(),
-                                    content: streaming::ToolCallDeltaContent::Delta(chunk.clone()),
-                                });
-                            }
+                        for event in apply_compatible_tool_call_deltas(
+                            &mut tool_calls,
+                            delta.tool_calls.iter().map(|tool_call| CompatibleStreamingToolCall {
+                                index: tool_call.index,
+                                id: tool_call.id.as_deref(),
+                                name: tool_call.function.name.as_deref(),
+                                arguments: tool_call.function.arguments.as_deref(),
+                            }),
+                            ToolCallConflictPolicy::EvictDistinctIdAndName,
+                        ) {
+                            yield Ok(event);
                         }
                     }
 
@@ -301,12 +247,9 @@ where
                     // Finish reason
                     if let Some(finish_reason) = &choice.finish_reason {
                         if *finish_reason == FinishReason::ToolCalls {
-                            for (_idx, tool_call) in tool_calls.into_iter() {
-                                yield Ok(streaming::RawStreamingChoice::ToolCall(
-                                    finalize_completed_streaming_tool_call(tool_call),
-                                ));
+                            for tool_call in take_finalized_tool_calls(&mut tool_calls) {
+                                yield Ok(tool_call);
                             }
-                            tool_calls = HashMap::new();
                         }
 
                         yield Ok(streaming::RawStreamingChoice::StopReason(map_finish_reason(
@@ -330,8 +273,8 @@ where
         event_source.close();
 
         // Flush any accumulated tool calls (that weren't emitted as ToolCall earlier)
-        for (_idx, tool_call) in tool_calls.into_iter() {
-            yield Ok(streaming::RawStreamingChoice::ToolCall(tool_call));
+        for tool_call in take_tool_calls(&mut tool_calls) {
+            yield Ok(tool_call);
         }
 
         let final_usage = final_usage.unwrap_or_default();
@@ -356,16 +299,6 @@ where
     Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
         stream,
     )))
-}
-
-fn finalize_completed_streaming_tool_call(
-    mut tool_call: streaming::RawStreamingToolCall,
-) -> streaming::RawStreamingToolCall {
-    if tool_call.arguments.is_null() {
-        tool_call.arguments = serde_json::Value::Object(serde_json::Map::new());
-    }
-
-    tool_call
 }
 
 #[cfg(test)]

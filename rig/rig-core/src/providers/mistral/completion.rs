@@ -488,9 +488,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = crate::providers::openai::completion::first_choice(&response.choices)?;
         let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
             &choice.finish_reason,
         ));
@@ -500,11 +498,9 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 tool_calls,
                 ..
             } => {
-                let mut content = if content.is_empty() {
-                    vec![]
-                } else {
-                    vec![completion::AssistantContent::text(content.clone())]
-                };
+                let mut content = crate::providers::openai::completion::non_empty_text(content)
+                    .into_iter()
+                    .collect::<Vec<_>>();
 
                 content.extend(
                     tool_calls
@@ -525,8 +521,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = completion::AssistantChoice::from(content);
-
         let usage = response
             .usage
             .as_ref()
@@ -539,13 +533,15 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-            stop_reason,
-        })
+        Ok(
+            crate::providers::openai::completion::build_completion_response(
+                response,
+                usage,
+                None,
+                stop_reason,
+                content,
+            ),
+        )
     }
 }
 

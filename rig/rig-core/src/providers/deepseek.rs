@@ -9,7 +9,6 @@
 //! let deepseek_chat = client.completion_model(deepseek::DEEPSEEK_CHAT);
 //! ```
 
-use crate::json_utils::empty_or_none;
 use async_stream::stream;
 use bytes::Bytes;
 use futures::StreamExt;
@@ -25,6 +24,10 @@ use crate::completion::GetTokenUsage;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::message::{Document, DocumentSourceKind};
+use crate::providers::openai::completion::{
+    CompatibleStreamingToolCall, ToolCallConflictPolicy, apply_compatible_tool_call_deltas,
+    map_finish_reason, take_finalized_tool_calls, take_tool_calls,
+};
 use crate::{
     completion::{self, CompletionError, CompletionRequest},
     json_utils, message,
@@ -380,9 +383,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = crate::providers::openai::completion::first_choice(&response.choices)?;
         let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
             &choice.finish_reason,
         ));
@@ -423,8 +424,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = completion::AssistantChoice::from(content);
-
         let usage = completion::Usage {
             input_tokens: response.usage.prompt_tokens as u64,
             output_tokens: response.usage.completion_tokens as u64,
@@ -439,13 +438,15 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             cache_creation_input_tokens: 0,
         };
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-            stop_reason,
-        })
+        Ok(
+            crate::providers::openai::completion::build_completion_response(
+                response,
+                usage,
+                None,
+                stop_reason,
+                content,
+            ),
+        )
     }
 }
 
@@ -696,6 +697,7 @@ pub struct StreamingDelta {
 #[derive(Deserialize, Debug)]
 struct StreamingChoice {
     delta: StreamingDelta,
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -741,8 +743,7 @@ where
 
     let stream = stream! {
         let mut final_usage = Usage::new();
-        let mut text_response = String::new();
-        let mut calls: HashMap<usize, (String, String, String)> = HashMap::new();
+        let mut tool_calls: HashMap<usize, crate::streaming::RawStreamingToolCall> = HashMap::new();
 
         while let Some(event_result) = event_source.next().await {
             match event_result {
@@ -766,58 +767,46 @@ where
                         let delta = &choice.delta;
 
                         if !delta.tool_calls.is_empty() {
-                            for tool_call in &delta.tool_calls {
-                                let function = &tool_call.function;
-
-                                // Start of tool call
-                                if function.name.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
-                                    && empty_or_none(&function.arguments)
-                                {
-                                    let id = tool_call.id.clone().unwrap_or_default();
-                                    let name = function.name.clone().unwrap();
-                                    calls.insert(tool_call.index, (id, name, String::new()));
-                                }
-                                // Continuation of tool call
-                                else if function.name.as_ref().map(|s| s.is_empty()).unwrap_or(true)
-                                    && let Some(arguments) = &function.arguments
-                                    && !arguments.is_empty()
-                                {
-                                    if let Some((id, name, existing_args)) = calls.get(&tool_call.index) {
-                                        let combined = format!("{}{}", existing_args, arguments);
-                                        calls.insert(tool_call.index, (id.clone(), name.clone(), combined));
-                                    } else {
-                                        tracing::debug!("Partial tool call received but tool call was never started.");
-                                    }
-                                }
-                                // Complete tool call
-                                else {
-                                    let id = tool_call.id.clone().unwrap_or_default();
-                                    let name = function.name.clone().unwrap_or_default();
-                                    let arguments_str = function.arguments.clone().unwrap_or_default();
-
-                                    let Ok(arguments_json) = json_utils::parse_tool_arguments(&arguments_str) else {
-                                        tracing::debug!("Couldn't parse tool call args '{}'", arguments_str);
-                                        continue;
-                                    };
-
-                                    yield Ok(crate::streaming::RawStreamingChoice::ToolCall(
-                                        crate::streaming::RawStreamingToolCall::new(id, name, arguments_json)
-                                    ));
-                                }
+                            for event in apply_compatible_tool_call_deltas(
+                                &mut tool_calls,
+                                delta.tool_calls.iter().map(|tool_call| CompatibleStreamingToolCall {
+                                    index: tool_call.index,
+                                    id: tool_call.id.as_deref(),
+                                    name: tool_call.function.name.as_deref(),
+                                    arguments: tool_call.function.arguments.as_deref(),
+                                }),
+                                ToolCallConflictPolicy::KeepIndex,
+                            ) {
+                                yield Ok(event);
                             }
                         }
 
                         // DeepSeek-specific reasoning stream
-                        if let Some(content) = &delta.reasoning_content {
+                        if let Some(content) = &delta.reasoning_content
+                            && !content.is_empty()
+                        {
                             yield Ok(crate::streaming::RawStreamingChoice::ReasoningDelta {
                                 id: None,
                                 reasoning: content.to_string()
                             });
                         }
 
-                        if let Some(content) = &delta.content {
-                            text_response += content;
+                        if let Some(content) = &delta.content
+                            && !content.is_empty()
+                        {
                             yield Ok(crate::streaming::RawStreamingChoice::Message(content.clone()));
+                        }
+
+                        if let Some(finish_reason) = &choice.finish_reason {
+                            if finish_reason == "tool_calls" {
+                                for tool_call in take_finalized_tool_calls(&mut tool_calls) {
+                                    yield Ok(tool_call);
+                                }
+                            }
+
+                            yield Ok(crate::streaming::RawStreamingChoice::StopReason(
+                                map_finish_reason(finish_reason),
+                            ));
                         }
                     }
 
@@ -838,25 +827,8 @@ where
 
         event_source.close();
 
-        let mut tool_calls = Vec::new();
-        // Flush accumulated tool calls
-        for (index, (id, name, arguments)) in calls {
-            let Ok(arguments_json) = json_utils::parse_tool_arguments(&arguments) else {
-                continue;
-            };
-
-            tool_calls.push(ToolCall {
-                id: id.clone(),
-                index,
-                r#type: ToolType::Function,
-                function: Function {
-                    name: name.clone(),
-                    arguments: arguments_json.clone()
-                }
-            });
-            yield Ok(crate::streaming::RawStreamingChoice::ToolCall(
-                crate::streaming::RawStreamingToolCall::new(id, name, arguments_json)
-            ));
+        for tool_call in take_tool_calls(&mut tool_calls) {
+            yield Ok(tool_call);
         }
 
         yield Ok(crate::streaming::RawStreamingChoice::FinalResponse(
@@ -879,6 +851,10 @@ pub const DEEPSEEK_REASONER: &str = "deepseek-reasoner";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http_client::mock::MockStreamingClient;
+    use crate::streaming::StreamedAssistantContent;
+    use bytes::Bytes;
+    use futures::StreamExt;
 
     #[test]
     fn test_deserialize_vec_choice() {
@@ -1135,5 +1111,76 @@ mod tests {
             .api_key("dummy-key")
             .build()
             .expect("Client::builder() failed");
+    }
+
+    #[tokio::test]
+    async fn test_stream_captures_stop_reason() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}],\"usage\":null}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let client = MockStreamingClient {
+            sse_bytes: Bytes::from(sse),
+        };
+        let req = http::Request::builder()
+            .method("POST")
+            .uri("http://localhost/v1/chat/completions")
+            .body(Vec::new())
+            .expect("request should build");
+
+        let mut stream = send_compatible_streaming_request(client, req)
+            .await
+            .expect("stream should start");
+
+        while let Some(chunk) = stream.next().await {
+            chunk.expect("stream chunk should deserialize");
+        }
+
+        assert_eq!(
+            stream.stop_reason,
+            Some(crate::completion::StopReason::Stop)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stream_accumulates_tool_call_arguments_until_finish_reason() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_123\",\"function\":{\"name\":\"subtract\",\"arguments\":\"\"}}]},\"finish_reason\":null}],\"usage\":null}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"x\\\":2,\"}}]},\"finish_reason\":null}],\"usage\":null}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"y\\\":5}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":null}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let client = MockStreamingClient {
+            sse_bytes: Bytes::from(sse),
+        };
+        let req = http::Request::builder()
+            .method("POST")
+            .uri("http://localhost/v1/chat/completions")
+            .body(Vec::new())
+            .expect("request should build");
+
+        let mut stream = send_compatible_streaming_request(client, req)
+            .await
+            .expect("stream should start");
+        let mut collected_tool_calls = Vec::new();
+
+        while let Some(chunk) = stream.next().await {
+            if let StreamedAssistantContent::ToolCall {
+                tool_call,
+                internal_call_id: _,
+            } = chunk.expect("stream chunk should deserialize")
+            {
+                collected_tool_calls.push(tool_call);
+            }
+        }
+
+        assert_eq!(collected_tool_calls.len(), 1);
+        assert_eq!(collected_tool_calls[0].id, "call_123");
+        assert_eq!(collected_tool_calls[0].function.name, "subtract");
+        assert_eq!(
+            collected_tool_calls[0].function.arguments,
+            serde_json::json!({"x": 2, "y": 5})
+        );
     }
 }

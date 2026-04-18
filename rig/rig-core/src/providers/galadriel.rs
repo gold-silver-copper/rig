@@ -239,9 +239,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             message,
             finish_reason,
             ..
-        } = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        } = openai::completion::first_choice(&response.choices)?;
         let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
             finish_reason,
         ));
@@ -249,8 +247,9 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         let mut content = message
             .content
             .as_ref()
-            .map(|c| vec![completion::AssistantContent::text(c)])
-            .unwrap_or_default();
+            .and_then(openai::completion::non_empty_text)
+            .into_iter()
+            .collect::<Vec<_>>();
 
         content.extend(message.tool_calls.iter().map(|call| {
             completion::AssistantContent::tool_call(
@@ -260,7 +259,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )
         }));
 
-        let choice = completion::AssistantChoice::from(content);
         let usage = response
             .usage
             .as_ref()
@@ -273,13 +271,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
+        Ok(openai::completion::build_completion_response(
+            response,
             usage,
-            raw_response: response,
-            message_id: None,
+            None,
             stop_reason,
-        })
+            content,
+        ))
     }
 }
 

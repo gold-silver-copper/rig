@@ -549,9 +549,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = crate::providers::openai::completion::first_choice(&response.choices)?;
         let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
             &choice.finish_reason,
         ));
@@ -565,8 +563,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 let mut content = content
                     .iter()
                     .map(|c| match c {
-                        AssistantContent::Text { text } => message::AssistantContent::text(text),
+                        AssistantContent::Text { text } => {
+                            crate::providers::openai::completion::non_empty_text(text)
+                        }
                     })
+                    .flatten()
                     .collect::<Vec<_>>();
 
                 content.extend(
@@ -588,8 +589,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = completion::AssistantChoice::from(content);
-
         let usage = completion::Usage {
             input_tokens: response.usage.prompt_tokens as u64,
             output_tokens: response.usage.completion_tokens as u64,
@@ -598,13 +597,15 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             cache_creation_input_tokens: 0,
         };
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-            stop_reason,
-        })
+        Ok(
+            crate::providers::openai::completion::build_completion_response(
+                response,
+                usage,
+                None,
+                stop_reason,
+                content,
+            ),
+        )
     }
 }
 

@@ -22,17 +22,17 @@ use tracing::{Instrument, Level, enabled, info_span};
 
 use std::str::FromStr;
 
+mod compat;
+mod stream_compat;
 pub mod streaming;
 
-pub(crate) fn map_finish_reason(reason: &str) -> completion::StopReason {
-    match reason {
-        "stop" => completion::StopReason::Stop,
-        "tool_calls" => completion::StopReason::ToolCalls,
-        "content_filter" => completion::StopReason::ContentFilter,
-        "length" => completion::StopReason::MaxTokens,
-        other => completion::StopReason::Other(other.to_string()),
-    }
-}
+pub(crate) use compat::{
+    build_completion_response, first_choice, map_finish_reason, non_empty_text,
+};
+pub(crate) use stream_compat::{
+    CompatibleStreamingToolCall, ToolCallConflictPolicy, apply_compatible_tool_call_deltas,
+    take_finalized_tool_calls, take_tool_calls,
+};
 
 /// Serializes user content as a plain string when there's a single text item,
 /// otherwise as an array of content parts.
@@ -802,9 +802,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = first_choice(&response.choices)?;
         let stop_reason = Some(map_finish_reason(&choice.finish_reason));
 
         let content = match &choice.message {
@@ -820,11 +818,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                             AssistantContent::Text { text } => text,
                             AssistantContent::Refusal { refusal } => refusal,
                         };
-                        if s.is_empty() {
-                            None
-                        } else {
-                            Some(completion::AssistantContent::text(s))
-                        }
+                        non_empty_text(s)
                     })
                     .collect::<Vec<_>>();
 
@@ -847,8 +841,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = completion::AssistantChoice::from(content);
-
         let usage = response
             .usage
             .as_ref()
@@ -865,13 +857,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
+        Ok(build_completion_response(
+            response,
             usage,
-            raw_response: response,
-            message_id: None,
+            None,
             stop_reason,
-        })
+            content,
+        ))
     }
 }
 

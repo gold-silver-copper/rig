@@ -178,9 +178,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = openai::completion::first_choice(&response.choices)?;
         let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
             &choice.finish_reason,
         ));
@@ -194,11 +192,12 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 let mut content = content
                     .iter()
                     .map(|c| match c {
-                        AssistantContent::Text { text } => completion::AssistantContent::text(text),
+                        AssistantContent::Text { text } => openai::completion::non_empty_text(text),
                         AssistantContent::Refusal { refusal } => {
-                            completion::AssistantContent::text(refusal)
+                            openai::completion::non_empty_text(refusal)
                         }
                     })
+                    .flatten()
                     .collect::<Vec<_>>();
 
                 content.extend(
@@ -220,8 +219,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = completion::AssistantChoice::from(content);
-
         let usage = response
             .usage
             .as_ref()
@@ -234,13 +231,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
+        Ok(openai::completion::build_completion_response(
+            response,
             usage,
-            raw_response: response,
-            message_id: None,
+            None,
             stop_reason,
-        })
+            content,
+        ))
     }
 }
 
