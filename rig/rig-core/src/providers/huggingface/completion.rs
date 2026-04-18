@@ -562,12 +562,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             } => {
                 let mut content = content
                     .iter()
-                    .map(|c| match c {
+                    .filter_map(|c| match c {
                         AssistantContent::Text { text } => {
                             crate::providers::openai::completion::non_empty_text(text)
                         }
                     })
-                    .flatten()
                     .collect::<Vec<_>>();
 
                 content.extend(
@@ -627,59 +626,38 @@ impl TryFrom<(&str, CompletionRequest)> for HuggingfaceCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Huggingface");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("HuggingFace")
+                .require_messages(),
+            Message::system,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        if full_history.is_empty() {
-            return Err(CompletionError::RequestError(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "HuggingFace request has no provider-compatible messages after conversion",
-                )
-                .into(),
-            ));
-        }
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
+        let tool_choice = tool_choice
             .map(crate::providers::openai::completion::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }

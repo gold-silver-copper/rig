@@ -453,49 +453,37 @@ impl TryFrom<(&str, CompletionRequest)> for GaladrielCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Galadriel");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Galadriel"),
+            Message::system,
+            |message| Ok(vec![message.try_into()?]),
+        )?;
 
-        // Add preamble to chat history (if available)
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Message>, _>>()?,
-        );
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
+        let tool_choice = tool_choice
             .map(crate::providers::openai::completion::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }

@@ -34,7 +34,6 @@ use futures::StreamExt;
 use crate::{
     completion::{self, CompletionError, CompletionRequest},
     json_utils,
-    message::{self},
     providers::openai::ToolDefinition,
     transcription::{self, TranscriptionError},
 };
@@ -184,42 +183,29 @@ pub(super) struct StreamOptions {
 impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
     type Error = CompletionError;
 
-    fn try_from((model, mut req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Groq");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
+    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Groq"),
+            OpenAIMessage::system,
+            |message| Vec::<OpenAIMessage>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        // Add preamble to chat history (if available)
-        let mut full_history: Vec<OpenAIMessage> = match &req.preamble {
-            Some(preamble) => vec![OpenAIMessage::system(preamble)],
-            None => vec![],
-        };
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Vec<OpenAIMessage>>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
+        let tool_choice = tool_choice
             .map(crate::providers::openai::ToolChoice::try_from)
             .transpose()?;
 
-        let mut additional_params_payload = req.additional_params.take().unwrap_or(Value::Null);
+        let mut additional_params_payload = additional_params.unwrap_or(Value::Null);
         let native_tools =
             extract_native_tools_from_additional_params(&mut additional_params_payload)?;
 
@@ -232,12 +218,10 @@ impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
         apply_native_tools_to_additional_params(&mut additional_params, native_tools);
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
@@ -822,6 +806,7 @@ where
 mod tests {
     use crate::{
         OneOrMany,
+        completion::CompletionRequest,
         providers::{
             groq::{GroqAdditionalParameters, GroqCompletionRequest},
             openai::{Message, UserContent},
@@ -870,6 +855,28 @@ mod tests {
             })
         )
     }
+
+    #[test]
+    fn groq_request_uses_request_model_override() {
+        let request = CompletionRequest {
+            model: Some("groq-override".to_string()),
+            preamble: Some("system".to_string()),
+            chat_history: OneOrMany::one("hello".into()),
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let converted = GroqCompletionRequest::try_from(("groq-default", request))
+            .expect("request should convert");
+
+        assert_eq!(converted.model, "groq-override");
+    }
+
     #[test]
     fn test_client_initialization() {
         let _client =

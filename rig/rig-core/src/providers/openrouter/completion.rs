@@ -1581,42 +1581,28 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
             request: req,
             strict_tools,
         } = params;
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("OpenRouter"),
+            Message::system,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for OpenRouter");
-        }
-
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
+        let tool_choice = tool_choice
             .map(crate::providers::openai::completion::ToolChoice::try_from)
             .transpose()?;
 
-        let tools: Vec<crate::providers::openai::completion::ToolDefinition> = req
-            .tools
-            .clone()
+        let tools: Vec<crate::providers::openai::completion::ToolDefinition> = tools
             .into_iter()
             .map(|tool| {
                 let def = crate::providers::openai::completion::ToolDefinition::from(tool);
@@ -1626,11 +1612,11 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
 
         Ok(Self {
             model,
-            messages: full_history,
-            temperature: req.temperature,
+            messages,
+            temperature,
             tools,
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }

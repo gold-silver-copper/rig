@@ -319,27 +319,31 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Moonshot");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages: mut full_history,
+            temperature,
+            max_tokens,
+            tools,
+            tool_choice: request_tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Moonshot"),
+            |preamble| {
+                serde_json::json!({
+                    "role": "system",
+                    "content": preamble,
+                })
+            },
+            |message| moonshot_history_values(vec![message]),
+        )?;
 
-        let mut full_history: Vec<Value> = match &req.preamble {
-            Some(preamble) => vec![serde_json::to_value(openai::Message::system(preamble))?],
-            None => vec![],
-        };
-
-        full_history.extend(moonshot_history_values(partial_history)?);
-
-        let mut tool_choice = None;
+        let mut tool_choice: Option<crate::providers::openai::completion::ToolChoice> = None;
         let mut tool_choice_required = false;
-        if let Some(choice) = req.tool_choice.clone() {
+        if let Some(choice) = request_tool_choice {
             match choice {
                 message::ToolChoice::Required => {
                     tool_choice_required = true;
@@ -362,18 +366,16 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
         }
 
         Ok(Self {
-            model: model.to_string(),
+            model,
             messages: full_history,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
-            tools: req
-                .tools
-                .clone()
+            temperature,
+            max_tokens,
+            tools: tools
                 .into_iter()
                 .map(openai::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }

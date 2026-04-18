@@ -25,8 +25,9 @@ use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::message::{Document, DocumentSourceKind};
 use crate::providers::openai::completion::{
-    CompatibleStreamingToolCall, ToolCallConflictPolicy, apply_compatible_tool_call_deltas,
-    map_finish_reason, take_finalized_tool_calls, take_tool_calls,
+    CompatibleChatProfile, CompatibleStreamingToolCall, ToolCallConflictPolicy,
+    apply_compatible_tool_call_deltas, build_compatible_request_core, map_finish_reason,
+    take_finalized_tool_calls, take_tool_calls,
 };
 use crate::{
     completion::{self, CompletionError, CompletionRequest},
@@ -468,50 +469,37 @@ impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for DeepSeek");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = build_compatible_request_core(
+            model,
+            req,
+            CompatibleChatProfile::new("DeepSeek"),
+            Message::system,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
+        let tool_choice = tool_choice
             .map(crate::providers::openrouter::ToolChoice::try_from)
             .transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }

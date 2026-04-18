@@ -224,10 +224,13 @@ pub(super) struct MiraCompletionRequest {
 impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
     type Error = CompletionError;
 
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Mira");
-        }
+    fn try_from((model, mut req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+        crate::providers::openai::completion::CompatibleFeaturePolicy::default()
+            .without_tools()
+            .without_tool_choice()
+            .without_additional_params()
+            .apply("Mira AI", &mut req);
+
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         let mut messages = Vec::new();
 
@@ -355,21 +358,6 @@ where
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if !completion_request.tools.is_empty() {
-            tracing::warn!(target: "rig::completions",
-                "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
-                len = completion_request.tools.len()
-            );
-        }
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
-        }
-
-        if completion_request.additional_params.is_some() {
-            tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
-        }
-
         let request = MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -460,20 +448,6 @@ where
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if !completion_request.tools.is_empty() {
-            tracing::warn!(target: "rig::completions",
-                "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
-                len = completion_request.tools.len()
-            );
-        }
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
-        }
-
-        if completion_request.additional_params.is_some() {
-            tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
-        }
         let mut request =
             MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
         request.stream = true;

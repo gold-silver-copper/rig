@@ -23,11 +23,16 @@ use tracing::{Instrument, Level, enabled, info_span};
 use std::str::FromStr;
 
 mod compat;
+mod request_compat;
 mod stream_compat;
 pub mod streaming;
 
 pub(crate) use compat::{
     build_completion_response, first_choice, map_finish_reason, non_empty_text,
+};
+pub(crate) use request_compat::{
+    CompatibleChatProfile, CompatibleFeaturePolicy, CompatibleRequestCore,
+    build_compatible_request_core,
 };
 pub(crate) use stream_compat::{
     CompatibleStreamingToolCall, ToolCallConflictPolicy, apply_compatible_tool_call_deltas,
@@ -1060,48 +1065,24 @@ impl TryFrom<OpenAIRequestParams> for CompletionRequest {
             strict_tools,
             tool_result_array_content,
         } = params;
-
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        let CoreCompletionRequest {
-            model: request_model,
-            preamble,
-            chat_history,
-            tools,
+        let CompatibleRequestCore {
+            model,
+            messages: mut full_history,
             temperature,
             max_tokens,
-            additional_params,
+            tools,
             tool_choice,
+            additional_params,
             output_schema,
-            ..
-        } = req;
-
-        partial_history.extend(chat_history);
-
-        let mut full_history: Vec<Message> =
-            preamble.map_or_else(Vec::new, |preamble| vec![Message::system(&preamble)]);
-
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Vec<Message>>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
-
-        if full_history.is_empty() {
-            return Err(CompletionError::RequestError(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "OpenAI Chat Completions request has no provider-compatible messages after conversion",
-                )
-                .into(),
-            ));
-        }
+        } = build_compatible_request_core(
+            &model,
+            req,
+            CompatibleChatProfile::new("OpenAI Chat Completions")
+                .require_messages()
+                .supports_output_schema(),
+            Message::system,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
         if tool_result_array_content {
             for msg in &mut full_history {
@@ -1160,7 +1141,7 @@ impl TryFrom<OpenAIRequestParams> for CompletionRequest {
         };
 
         let res = Self {
-            model: request_model.unwrap_or(model),
+            model,
             messages: full_history,
             tools,
             tool_choice,

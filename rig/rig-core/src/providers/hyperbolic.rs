@@ -191,13 +191,12 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             } => {
                 let mut content = content
                     .iter()
-                    .map(|c| match c {
+                    .filter_map(|c| match c {
                         AssistantContent::Text { text } => openai::completion::non_empty_text(text),
                         AssistantContent::Refusal { refusal } => {
                             openai::completion::non_empty_text(refusal)
                         }
                     })
-                    .flatten()
                     .collect::<Vec<_>>();
 
                 content.extend(
@@ -262,46 +261,38 @@ impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Hyperbolic");
-        }
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Hyperbolic")
+                .without_tools()
+                .without_tool_choice(),
+            Message::system,
+            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        if req.tool_choice.is_some() {
+        if tool_choice.is_some() {
             tracing::warn!("WARNING: `tool_choice` not supported on Hyperbolic");
         }
 
-        if !req.tools.is_empty() {
+        if !tools.is_empty() {
             tracing::warn!("WARNING: `tools` not supported on Hyperbolic");
         }
 
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            additional_params: req.additional_params,
+            model,
+            messages,
+            temperature,
+            additional_params,
         })
     }
 }

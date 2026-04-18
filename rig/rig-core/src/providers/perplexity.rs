@@ -231,38 +231,34 @@ impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for Perplexity");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
-
-        // Initialize full history with preamble (or empty if non-existent)
-        let mut full_history: Vec<Message> = req.preamble.map_or_else(Vec::new, |preamble| {
-            vec![Message {
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            tools: _,
+            tool_choice: _,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("Perplexity")
+                .without_tools()
+                .without_tool_choice(),
+            |preamble| Message {
                 role: Role::System,
-                content: preamble,
-            }]
-        });
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Message>, _>>()?,
-        );
+                content: preamble.to_owned(),
+            },
+            |message| Ok(vec![message.try_into()?]),
+        )?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
-            additional_params: req.additional_params,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            additional_params,
             stream: false,
         })
     }
@@ -384,13 +380,6 @@ where
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");
-        }
-
-        if !completion_request.tools.is_empty() {
-            tracing::warn!("WARNING: `tools` not supported on Perplexity");
-        }
         let request =
             PerplexityCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
@@ -469,14 +458,6 @@ where
         };
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");
-        }
-
-        if !completion_request.tools.is_empty() {
-            tracing::warn!("WARNING: `tools` not supported on Perplexity");
-        }
 
         let mut request =
             PerplexityCompletionRequest::try_from((self.model.as_ref(), completion_request))?;

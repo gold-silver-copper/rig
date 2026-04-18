@@ -147,58 +147,36 @@ impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
     type Error = CompletionError;
 
     fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        if req.output_schema.is_some() {
-            tracing::warn!("Structured outputs currently not supported for TogetherAI");
-        }
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
+        let crate::providers::openai::completion::CompatibleRequestCore {
+            model,
+            messages,
+            temperature,
+            max_tokens: _,
+            tools,
+            tool_choice,
+            additional_params,
+            output_schema: _,
+        } = crate::providers::openai::completion::build_compatible_request_core(
+            model,
+            req,
+            crate::providers::openai::completion::CompatibleChatProfile::new("TogetherAI")
+                .require_messages(),
+            openai::Message::system,
+            |message| Vec::<openai::Message>::try_from(message).map_err(CompletionError::from),
+        )?;
 
-        let chat_history: Vec<openai::Message> = req
-            .chat_history
-            .into_iter()
-            .map(|message| message.try_into())
-            .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        full_history.extend(chat_history);
-
-        if full_history.is_empty() {
-            return Err(CompletionError::RequestError(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Together request has no provider-compatible messages after conversion",
-                )
-                .into(),
-            ));
-        }
-
-        let tool_choice = req
-            .tool_choice
-            .clone()
-            .map(ToolChoice::try_from)
-            .transpose()?;
+        let tool_choice = tool_choice.map(ToolChoice::try_from).transpose()?;
 
         Ok(Self {
-            model: model.to_string(),
-            messages: full_history,
-            temperature: req.temperature,
-            tools: req
-                .tools
-                .clone()
+            model,
+            messages,
+            temperature,
+            tools: tools
                 .into_iter()
                 .map(crate::providers::openai::completion::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,
-            additional_params: req.additional_params,
+            additional_params,
         })
     }
 }
@@ -389,5 +367,26 @@ mod tests {
 
         let result = TogetherAICompletionRequest::try_from(("meta-llama/test-model", request));
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
+    }
+
+    #[test]
+    fn together_request_uses_request_model_override() {
+        let request = CompletionRequest {
+            model: Some("together-override".to_string()),
+            preamble: Some("system".to_string()),
+            chat_history: OneOrMany::one(message::Message::user("hello")),
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let converted = TogetherAICompletionRequest::try_from(("together-default", request))
+            .expect("request should convert");
+
+        assert_eq!(converted.model, "together-override");
     }
 }

@@ -214,30 +214,12 @@ fn stream_request() -> completion::CompletionRequest {
 
 fn streaming_sse(case: Fixture) -> String {
     match case {
-        Fixture::EmptyAssistantTurnAfterToolResult => concat!(
-            "data: {\"candidates\":[{\"content\":{\"parts\":[],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":0,\"totalTokenCount\":10}}\n\n",
-        )
-        .to_string(),
-        Fixture::ToolOnlyTurn => concat!(
-            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"lookup_weather\",\"args\":{\"city\":\"Paris\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"totalTokenCount\":15}}\n\n",
-        )
-        .to_string(),
-        Fixture::TextAndToolCallTurn => concat!(
-            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need weather data first.\"},{\"functionCall\":{\"name\":\"lookup_weather\",\"args\":{\"city\":\"Paris\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":7,\"totalTokenCount\":17}}\n\n",
-        )
-        .to_string(),
-        Fixture::EmptyTextBlocks => concat!(
-            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":0,\"totalTokenCount\":10}}\n\n",
-        )
-        .to_string(),
-        Fixture::ReasoningOnlyTurn => concat!(
-            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need to reason about the tool result.\",\"thought\":true,\"thoughtSignature\":\"sig_1\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":3,\"totalTokenCount\":18}}\n\n",
-        )
-        .to_string(),
-        Fixture::StopReasonMapping => concat!(
-            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Truncated response\"}],\"role\":\"model\"},\"finishReason\":\"MAX_TOKENS\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":2,\"totalTokenCount\":12}}\n\n",
-        )
-        .to_string(),
+        Fixture::EmptyAssistantTurnAfterToolResult => "data: {\"candidates\":[{\"content\":{\"parts\":[],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":0,\"totalTokenCount\":10}}\n\n".to_string(),
+        Fixture::ToolOnlyTurn => "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"lookup_weather\",\"args\":{\"city\":\"Paris\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"totalTokenCount\":15}}\n\n".to_string(),
+        Fixture::TextAndToolCallTurn => "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need weather data first.\"},{\"functionCall\":{\"name\":\"lookup_weather\",\"args\":{\"city\":\"Paris\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":7,\"totalTokenCount\":17}}\n\n".to_string(),
+        Fixture::EmptyTextBlocks => "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":0,\"totalTokenCount\":10}}\n\n".to_string(),
+        Fixture::ReasoningOnlyTurn => "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Need to reason about the tool result.\",\"thought\":true,\"thoughtSignature\":\"sig_1\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":3,\"totalTokenCount\":18}}\n\n".to_string(),
+        Fixture::StopReasonMapping => "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Truncated response\"}],\"role\":\"model\"},\"finishReason\":\"MAX_TOKENS\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":2,\"totalTokenCount\":12}}\n\n".to_string(),
         Fixture::MessageIdPreservation => unreachable!(),
     }
 }
