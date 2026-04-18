@@ -227,6 +227,58 @@ pub(super) struct PerplexityCompletionRequest {
     pub stream: bool,
 }
 
+fn perplexity_request_messages(message: message::Message) -> Result<Vec<Message>, MessageError> {
+    match message {
+        message::Message::System { content } => Ok(vec![Message {
+            role: Role::System,
+            content,
+        }]),
+        message::Message::User { content } => {
+            let collapsed_content = content
+                .into_iter()
+                .filter_map(|content| match content {
+                    message::UserContent::Text(message::Text { text }) => Some(text),
+                    message::UserContent::Document(document) => match document.data {
+                        crate::message::DocumentSourceKind::Base64(content)
+                        | crate::message::DocumentSourceKind::String(content) => Some(content),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if collapsed_content.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![Message {
+                    role: Role::User,
+                    content: collapsed_content,
+                }])
+            }
+        }
+        message::Message::Assistant { content, .. } => {
+            let collapsed_content = content
+                .into_iter()
+                .filter_map(|content| match content {
+                    message::AssistantContent::Text(message::Text { text }) => Some(text),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if collapsed_content.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![Message {
+                    role: Role::Assistant,
+                    content: collapsed_content,
+                }])
+            }
+        }
+    }
+}
+
 impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
     type Error = CompletionError;
 
@@ -251,7 +303,10 @@ impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
             },
             None,
             |_| false,
-            |message| Ok(vec![message.try_into()?]),
+            |message| {
+                perplexity_request_messages(message)
+                    .map_err(|err| CompletionError::RequestError(err.into()))
+            },
         )?;
 
         Ok(Self {
@@ -488,6 +543,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct PerplexityRequestHarness;
+
+    impl request_conformance::Harness for PerplexityRequestHarness {
+        fn family_name() -> &'static str {
+            "perplexity"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                PerplexityCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Perplexity")
+                        .unsupported_tools()
+                        .unsupported_tool_choice(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(PerplexityRequestHarness);
 
     #[test]
     fn test_deserialize_message() {

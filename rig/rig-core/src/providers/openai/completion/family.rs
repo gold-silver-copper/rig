@@ -4,6 +4,7 @@ use crate::completion::{self, CompletionError, CompletionRequest as CoreCompleti
 use crate::json_utils;
 use crate::message;
 use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, ToolCallDeltaContent};
+use serde::{Deserialize, Serialize};
 
 pub(crate) fn first_choice<T>(choices: &[T]) -> Result<&T, CompletionError> {
     choices
@@ -46,6 +47,45 @@ where
         raw_response,
         message_id,
         stop_reason,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompatibleToolChoiceKeyword {
+    None,
+    Auto,
+    Required,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "function")]
+pub enum CompatibleToolChoiceFunctionKind {
+    Function { name: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum CompatibleToolChoice {
+    Keyword(CompatibleToolChoiceKeyword),
+    Function(Vec<CompatibleToolChoiceFunctionKind>),
+}
+
+impl From<crate::message::ToolChoice> for CompatibleToolChoice {
+    fn from(value: crate::message::ToolChoice) -> Self {
+        match value {
+            crate::message::ToolChoice::None => Self::Keyword(CompatibleToolChoiceKeyword::None),
+            crate::message::ToolChoice::Auto => Self::Keyword(CompatibleToolChoiceKeyword::Auto),
+            crate::message::ToolChoice::Required => {
+                Self::Keyword(CompatibleToolChoiceKeyword::Required)
+            }
+            crate::message::ToolChoice::Specific { function_names } => Self::Function(
+                function_names
+                    .into_iter()
+                    .map(|name| CompatibleToolChoiceFunctionKind::Function { name })
+                    .collect(),
+            ),
+        }
     }
 }
 
@@ -261,6 +301,13 @@ impl CompatibleChatProfile {
         self.feature_policy = self
             .feature_policy
             .with_tool_choice_policy(ToolChoicePolicy::CoerceRequiredToAuto { steering_message });
+        self
+    }
+
+    pub(crate) const fn unsupported_additional_params(mut self) -> Self {
+        self.feature_policy = self
+            .feature_policy
+            .with_additional_params_policy(AdditionalParamsPolicy::Unsupported);
         self
     }
 }
@@ -911,28 +958,46 @@ pub(crate) mod request_conformance {
     }
 
     #[derive(Debug, Clone, Copy)]
+    enum EmptyMessageBehavior {
+        DropEmpty,
+        PreserveReasoningAssistantHistory,
+        RequestError,
+    }
+
+    #[derive(Debug, Clone, Copy)]
     pub(crate) struct CompatibleChatExpectation {
         profile: CompatibleChatProfile,
-        preserves_reasoning_assistant_history: bool,
-        includes_document_messages: bool,
+        empty_message_behavior: EmptyMessageBehavior,
+        preamble_role: &'static str,
+        document_role: Option<&'static str>,
     }
 
     impl CompatibleChatExpectation {
         pub(crate) const fn new(profile: CompatibleChatProfile) -> Self {
             Self {
                 profile,
-                preserves_reasoning_assistant_history: false,
-                includes_document_messages: true,
+                empty_message_behavior: if profile.require_messages {
+                    EmptyMessageBehavior::RequestError
+                } else {
+                    EmptyMessageBehavior::DropEmpty
+                },
+                preamble_role: "system",
+                document_role: Some("user"),
             }
         }
 
         pub(crate) const fn preserves_reasoning_assistant_history(mut self) -> Self {
-            self.preserves_reasoning_assistant_history = true;
+            self.empty_message_behavior = EmptyMessageBehavior::PreserveReasoningAssistantHistory;
+            self
+        }
+
+        pub(crate) const fn preamble_as_user(mut self) -> Self {
+            self.preamble_role = "user";
             self
         }
 
         pub(crate) const fn omits_document_messages(mut self) -> Self {
-            self.includes_document_messages = false;
+            self.document_role = None;
             self
         }
     }
@@ -951,32 +1016,33 @@ pub(crate) mod request_conformance {
             }
             Fixture::PreambleDocumentHistoryOrdering => {
                 let request = expect_supported(case, actual);
-                let mut expected = vec!["system:system".to_owned()];
-                if expectation.includes_document_messages {
-                    expected.push(format!("user:{}", expected_document_text()));
+                let mut expected = vec![format!("{}:system", expectation.preamble_role)];
+                if let Some(document_role) = expectation.document_role {
+                    expected.push(format!("{document_role}:{}", expected_document_text()));
                 }
                 expected.push("user:hello".to_owned());
-                assert_eq!(message_summaries(&request), expected,);
+                assert_eq!(message_summaries(&request), expected);
             }
-            Fixture::EmptyMessageRejection => {
-                if profile.require_messages {
+            Fixture::EmptyMessageRejection => match expectation.empty_message_behavior {
+                EmptyMessageBehavior::RequestError => {
                     assert!(
                         matches!(actual, Outcome::RequestError),
                         "expected request rejection for {case:?}, got {actual:?}"
                     );
-                } else {
+                }
+                EmptyMessageBehavior::PreserveReasoningAssistantHistory => {
                     let request = expect_supported(case, actual);
                     let summaries = message_summaries(&request);
-                    if expectation.preserves_reasoning_assistant_history {
-                        assert_eq!(summaries, vec!["assistant:hidden".to_owned()]);
-                    } else {
-                        assert!(
-                            summaries.is_empty(),
-                            "expected no provider-compatible messages: {request:?}"
-                        );
-                    }
+                    assert_eq!(summaries, vec!["assistant:hidden".to_owned()]);
                 }
-            }
+                EmptyMessageBehavior::DropEmpty => {
+                    let request = expect_supported(case, actual);
+                    assert!(
+                        message_summaries(&request).is_empty(),
+                        "expected no provider-compatible messages: {request:?}"
+                    );
+                }
+            },
             Fixture::UnsupportedFieldStripping => {
                 let request = expect_supported(case, actual);
                 assert_eq!(model(&request), Some(default_model));

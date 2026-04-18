@@ -460,7 +460,7 @@ pub(super) struct DeepseekCompletionRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ToolDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<crate::providers::openrouter::ToolChoice>,
+    tool_choice: Option<crate::providers::openai::completion::CompatibleToolChoice>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub additional_params: Option<serde_json::Value>,
 }
@@ -487,9 +487,8 @@ impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
             |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
-        let tool_choice = tool_choice
-            .map(crate::providers::openrouter::ToolChoice::try_from)
-            .transpose()?;
+        let tool_choice =
+            tool_choice.map(crate::providers::openai::completion::CompatibleToolChoice::from);
 
         Ok(Self {
             model,

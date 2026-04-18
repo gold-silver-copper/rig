@@ -28,11 +28,13 @@ pub mod streaming;
 #[cfg(test)]
 pub(crate) use family::request_conformance;
 pub(crate) use family::{
-    AdditionalParamsPolicy, CompatibleChatProfile, CompatibleFeaturePolicy, CompatibleRequestCore,
-    CompatibleStreamingToolCall, OpenAiChatProviderProfile, ToolCallConflictPolicy,
-    ToolChoicePolicy, ToolsPolicy, apply_compatible_tool_call_deltas,
+    CompatibleChatProfile, CompatibleRequestCore, CompatibleStreamingToolCall,
+    OpenAiChatProviderProfile, ToolCallConflictPolicy, apply_compatible_tool_call_deltas,
     build_compatible_request_core, build_completion_response, first_choice, map_finish_reason,
     non_empty_text, take_finalized_tool_calls, take_tool_calls,
+};
+pub use family::{
+    CompatibleToolChoice, CompatibleToolChoiceFunctionKind, CompatibleToolChoiceKeyword,
 };
 
 /// Serializes user content as a plain string when there's a single text item,

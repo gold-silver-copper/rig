@@ -167,7 +167,7 @@ impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
             |message| Vec::<openai::Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
-        let tool_choice = tool_choice.map(ToolChoice::try_from).transpose()?;
+        let tool_choice = tool_choice.map(ToolChoice::from);
 
         Ok(Self {
             model,
@@ -304,51 +304,10 @@ where
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolChoiceKeyword {
-    None,
-    Auto,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ToolChoice {
-    Keyword(ToolChoiceKeyword),
-    Function(Vec<ToolChoiceFunctionKind>),
-}
-
-impl TryFrom<crate::message::ToolChoice> for ToolChoice {
-    type Error = CompletionError;
-
-    fn try_from(value: crate::message::ToolChoice) -> Result<Self, Self::Error> {
-        let res = match value {
-            crate::message::ToolChoice::None => Self::Keyword(ToolChoiceKeyword::None),
-            crate::message::ToolChoice::Auto => Self::Keyword(ToolChoiceKeyword::Auto),
-            crate::message::ToolChoice::Specific { function_names } => {
-                let vec: Vec<ToolChoiceFunctionKind> = function_names
-                    .into_iter()
-                    .map(|name| ToolChoiceFunctionKind::Function { name })
-                    .collect();
-
-                Self::Function(vec)
-            }
-            choice => {
-                return Err(CompletionError::ProviderError(format!(
-                    "Unsupported tool choice type: {choice:?}"
-                )));
-            }
-        };
-
-        Ok(res)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "function")]
-pub enum ToolChoiceFunctionKind {
-    Function { name: String },
-}
+pub type ToolChoice = crate::providers::openai::completion::CompatibleToolChoice;
+pub type ToolChoiceFunctionKind =
+    crate::providers::openai::completion::CompatibleToolChoiceFunctionKind;
+pub type ToolChoiceKeyword = crate::providers::openai::completion::CompatibleToolChoiceKeyword;
 
 #[cfg(test)]
 mod tests {
