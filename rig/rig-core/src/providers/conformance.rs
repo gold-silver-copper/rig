@@ -4,8 +4,7 @@ use futures::StreamExt;
 use serde_json::Value;
 
 use crate::{
-    OneOrMany,
-    completion::{self, CompletionError, GetTokenUsage},
+    completion::{self, AssistantChoice, CompletionError, GetTokenUsage},
     message::AssistantContent,
 };
 
@@ -68,7 +67,7 @@ pub(crate) trait Harness {
 }
 
 pub(crate) fn normalize_turn(
-    choice: &OneOrMany<AssistantContent>,
+    choice: &AssistantChoice,
     message_id: Option<String>,
     stop_reason: Option<StopReason>,
 ) -> Turn {

@@ -17,7 +17,6 @@ use crate::streaming::StreamingCompletionResponse;
 
 use crate::providers::openai;
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils,
     providers::openai::Message,
@@ -218,11 +217,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = response
             .usage

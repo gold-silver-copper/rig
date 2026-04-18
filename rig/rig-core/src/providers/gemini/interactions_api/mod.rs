@@ -1,7 +1,6 @@
 //! Google Gemini Interactions API integration.
 //! From <https://ai.google.dev/api/interactions-api>
 
-use crate::OneOrMany;
 use crate::completion::{self, CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::message::{self, MimeType, Reasoning};
@@ -490,11 +489,7 @@ impl TryFrom<Interaction> for completion::CompletionResponse<Interaction> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = response
             .usage
@@ -2502,7 +2497,7 @@ mod tests {
 
         let choice = response.choice.first();
         match choice {
-            completion::AssistantContent::ToolCall(tool_call) => {
+            Some(completion::AssistantContent::ToolCall(tool_call)) => {
                 assert_eq!(tool_call.function.name, "get_weather");
                 assert_eq!(tool_call.call_id.as_deref(), Some("call-123"));
             }

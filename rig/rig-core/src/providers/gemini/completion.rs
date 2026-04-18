@@ -490,7 +490,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             )
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = completion::assistant_choice_from_vec(content)?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = response
             .usage_metadata
@@ -2283,7 +2283,7 @@ mod tests {
         let first = converted.choice.first();
         assert!(matches!(
             first,
-            message::AssistantContent::Reasoning(message::Reasoning { content, .. })
+            Some(message::AssistantContent::Reasoning(message::Reasoning { content, .. }))
                 if matches!(
                     content.first(),
                     Some(message::ReasoningContent::Text {

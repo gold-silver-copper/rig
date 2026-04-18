@@ -8,13 +8,12 @@
 //! - [StreamingCompletion]: Defines a low-level streaming LLM completion interface
 //!
 
-use crate::OneOrMany;
 use crate::agent::Agent;
 use crate::agent::prompt_request::hooks::PromptHook;
 use crate::agent::prompt_request::streaming::StreamingPromptRequest;
 use crate::completion::{
-    CompletionError, CompletionModel, CompletionRequestBuilder, CompletionResponse, GetTokenUsage,
-    Message, Usage,
+    AssistantChoice, CompletionError, CompletionModel, CompletionRequestBuilder,
+    CompletionResponse, GetTokenUsage, Message, Usage,
 };
 use crate::message::{
     AssistantContent, Reasoning, ReasoningContent, Text, ToolCall, ToolFunction, ToolResult,
@@ -207,7 +206,7 @@ where
     reasoning_item_index: Option<usize>,
     /// The final aggregated message from the stream
     /// contains all text and tool calls generated
-    pub choice: OneOrMany<AssistantContent>,
+    pub choice: AssistantChoice,
     /// The final response from the stream, may be `None`
     /// if the provider didn't yield it during the stream
     pub response: Option<R>,
@@ -231,7 +230,7 @@ where
             assistant_items: vec![],
             text_item_index: None,
             reasoning_item_index: None,
-            choice: OneOrMany::one(AssistantContent::text("")),
+            choice: AssistantChoice::new(),
             response: None,
             final_response_yielded: AtomicBool::new(false),
             message_id: None,
@@ -327,12 +326,7 @@ where
             Poll::Ready(None) => {
                 // This is run at the end of the inner stream to collect all tokens into
                 // a single unified `Message`.
-                if stream.assistant_items.is_empty() {
-                    stream.assistant_items.push(AssistantContent::text(""));
-                }
-
-                stream.choice = OneOrMany::many(std::mem::take(&mut stream.assistant_items))
-                    .expect("There should be at least one assistant message");
+                stream.choice = AssistantChoice::from(std::mem::take(&mut stream.assistant_items));
 
                 Poll::Ready(None)
             }
@@ -685,6 +679,14 @@ mod tests {
         StreamingCompletionResponse::stream(to_stream_result(stream))
     }
 
+    fn create_empty_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream = stream! {
+            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 0 }));
+        };
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
     fn create_interleaved_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
             yield Ok(RawStreamingChoice::Reasoning {
@@ -835,6 +837,14 @@ mod tests {
             choice_items.first(),
             Some(AssistantContent::Reasoning(Reasoning { id: Some(id), .. })) if id == "rs_only"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_empty_stream_keeps_empty_choice() {
+        let mut stream = create_empty_stream();
+        while stream.next().await.is_some() {}
+
+        assert!(stream.choice.is_empty());
     }
 
     #[tokio::test]

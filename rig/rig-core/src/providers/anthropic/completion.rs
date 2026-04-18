@@ -214,7 +214,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .map(|content| content.clone().try_into())
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = completion::assistant_choice_from_vec(content)?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = completion::Usage {
             input_tokens: response.usage.input_tokens,

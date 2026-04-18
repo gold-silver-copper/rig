@@ -10,9 +10,8 @@
 //! 5. repeats until the model returns a final text answer.
 
 use anyhow::{Result, bail};
-use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{Completion, ToolDefinition};
+use rig::completion::{AssistantChoice, Completion, ToolDefinition};
 use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
 use rig::providers::openai;
 use rig::tool::{Tool, ToolSet};
@@ -87,7 +86,7 @@ impl Tool for Subtract {
     }
 }
 
-fn collect_tool_calls(choice: &OneOrMany<AssistantContent>) -> Vec<ToolCall> {
+fn collect_tool_calls(choice: &AssistantChoice) -> Vec<ToolCall> {
     choice
         .iter()
         .filter_map(|content| match content {
@@ -97,7 +96,7 @@ fn collect_tool_calls(choice: &OneOrMany<AssistantContent>) -> Vec<ToolCall> {
         .collect()
 }
 
-fn extract_text(choice: &OneOrMany<AssistantContent>) -> String {
+fn extract_text(choice: &AssistantChoice) -> String {
     choice
         .iter()
         .filter_map(|content| match content {
@@ -151,10 +150,12 @@ async fn main() -> Result<()> {
         let tool_calls = collect_tool_calls(&response.choice);
 
         history.push(current_prompt.clone());
-        history.push(Message::Assistant {
-            id: response.message_id.clone(),
-            content: response.choice.clone(),
-        });
+        if let Ok(content) = response.choice.to_one_or_many() {
+            history.push(Message::Assistant {
+                id: response.message_id.clone(),
+                content,
+            });
+        }
 
         if tool_calls.is_empty() {
             let final_text = extract_text(&response.choice);

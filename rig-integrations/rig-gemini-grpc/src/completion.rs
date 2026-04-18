@@ -450,11 +450,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             assistant_contents.push(assistant_content);
         }
 
-        let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(assistant_contents);
 
         let usage = response
             .usage_metadata

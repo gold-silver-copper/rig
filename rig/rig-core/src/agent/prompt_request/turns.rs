@@ -1,6 +1,6 @@
 //! Shared helpers for deriving user-visible assistant text across agent turns.
 
-use crate::{OneOrMany, message::AssistantContent};
+use crate::{completion::AssistantChoice, message::AssistantContent};
 
 /// Summary of the visible assistant text in a normalized turn.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -10,7 +10,7 @@ pub(crate) struct AssistantTurnSummary {
 
 impl AssistantTurnSummary {
     /// Extract non-empty text blocks from a normalized assistant choice.
-    pub(crate) fn from_choice(choice: &OneOrMany<AssistantContent>) -> Self {
+    pub(crate) fn from_choice(choice: &AssistantChoice) -> Self {
         let visible_text_blocks = choice
             .iter()
             .filter_map(|content| match content {
@@ -59,15 +59,14 @@ impl AssistantTextAccumulator {
 #[cfg(test)]
 mod tests {
     use super::{AssistantTextAccumulator, AssistantTurnSummary};
-    use crate::{OneOrMany, message::AssistantContent};
+    use crate::{completion::AssistantChoice, message::AssistantContent};
 
     #[test]
     fn summary_ignores_empty_text_blocks() {
-        let choice = OneOrMany::many(vec![
+        let choice = AssistantChoice::many(vec![
             AssistantContent::text("visible"),
             AssistantContent::text(""),
-        ])
-        .expect("non-empty assistant choice");
+        ]);
 
         let summary = AssistantTurnSummary::from_choice(&choice);
 

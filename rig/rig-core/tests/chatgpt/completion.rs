@@ -2,7 +2,7 @@
 
 use futures::StreamExt;
 use rig::client::CompletionClient;
-use rig::completion::CompletionModel;
+use rig::completion::{AssistantChoice, CompletionModel};
 use rig::message::AssistantContent;
 use rig::message::Message;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
@@ -12,7 +12,7 @@ use crate::support::{
     assert_contains_any_case_insensitive, assert_nonempty_response, collect_stream_final_response,
 };
 
-fn aggregated_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
+fn aggregated_text(choice: &AssistantChoice) -> String {
     choice
         .iter()
         .filter_map(|content| match content {

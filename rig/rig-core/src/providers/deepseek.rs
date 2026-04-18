@@ -26,7 +26,6 @@ use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::message::{Document, DocumentSourceKind};
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils, message,
 };
@@ -421,11 +420,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = completion::Usage {
             input_tokens: response.usage.prompt_tokens as u64,
@@ -1032,7 +1027,7 @@ mod tests {
         use crate::completion::message::{Message as RigMessage, UserContent};
 
         let rig_msg = RigMessage::User {
-            content: OneOrMany::many(vec![
+            content: crate::OneOrMany::many(vec![
                 UserContent::text("first part"),
                 UserContent::text("second part"),
             ])
@@ -1065,7 +1060,7 @@ mod tests {
 
         let rig_msg = RigMessage::Assistant {
             id: None,
-            content: OneOrMany::many(vec![
+            content: crate::OneOrMany::many(vec![
                 AssistantContent::reasoning("thinking about the problem"),
                 AssistantContent::text("I'll call the tool"),
                 AssistantContent::tool_call(
@@ -1105,7 +1100,7 @@ mod tests {
 
         let rig_msg = RigMessage::Assistant {
             id: None,
-            content: OneOrMany::many(vec![
+            content: crate::OneOrMany::many(vec![
                 AssistantContent::text("calling tool"),
                 AssistantContent::tool_call("call_1", "add", serde_json::json!({"a": 1, "b": 2})),
             ])

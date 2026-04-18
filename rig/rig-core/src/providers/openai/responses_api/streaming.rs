@@ -521,12 +521,6 @@ pub(crate) async fn completion_response_from_sse_body(
         item?;
     }
 
-    if choice_is_empty(&stream.choice) {
-        return Err(CompletionError::ResponseError(
-            "Response contained no parts".to_owned(),
-        ));
-    }
-
     Ok(completion::CompletionResponse {
         usage: stream
             .response
@@ -539,15 +533,6 @@ pub(crate) async fn completion_response_from_sse_body(
             .or_else(|| message_id_from_response(&raw_response)),
         choice: stream.choice,
         raw_response,
-    })
-}
-
-fn choice_is_empty(choice: &crate::OneOrMany<completion::AssistantContent>) -> bool {
-    choice.iter().all(|content| match content {
-        completion::AssistantContent::Text(text) => text.text.trim().is_empty(),
-        completion::AssistantContent::Reasoning(reasoning) => reasoning.content.is_empty(),
-        completion::AssistantContent::Image(_) => false,
-        completion::AssistantContent::ToolCall(_) => false,
     })
 }
 

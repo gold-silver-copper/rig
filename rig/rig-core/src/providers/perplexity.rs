@@ -14,7 +14,6 @@ use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
 use crate::streaming::StreamingCompletionResponse;
 use crate::{
-    OneOrMany,
     client::{
         self, Capabilities, Capable, DebugExt, Nothing, Provider, ProviderBuilder, ProviderClient,
     },
@@ -185,7 +184,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 role: Role::Assistant,
                 content,
             } => Ok(completion::CompletionResponse {
-                choice: OneOrMany::one(content.clone().into()),
+                choice: completion::AssistantChoice::one(content.clone().into()),
                 usage: completion::Usage {
                     input_tokens: response.usage.prompt_tokens as u64,
                     output_tokens: response.usage.completion_tokens as u64,

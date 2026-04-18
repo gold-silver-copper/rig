@@ -521,11 +521,7 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
             )),
         }?;
 
-        let choice = crate::OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = crate::completion::AssistantChoice::from(content);
 
         let usage = response
             .usage

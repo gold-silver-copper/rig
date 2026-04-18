@@ -8,7 +8,6 @@ use crate::completion::GetTokenUsage;
 use crate::http_client::{self, HttpClientExt};
 use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils, message,
     providers::mistral::client::ApiResponse,
@@ -523,11 +522,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         let usage = response
             .usage
@@ -737,7 +732,7 @@ mod tests {
     fn test_assistant_reasoning_is_skipped_in_message_conversion() {
         let assistant = message::Message::Assistant {
             id: None,
-            content: OneOrMany::one(message::AssistantContent::reasoning("hidden")),
+            content: crate::OneOrMany::one(message::AssistantContent::reasoning("hidden")),
         };
 
         let converted: Vec<Message> = assistant.try_into().expect("conversion should work");
@@ -748,7 +743,7 @@ mod tests {
     fn test_assistant_text_and_tool_call_are_preserved_when_reasoning_present() {
         let assistant = message::Message::Assistant {
             id: None,
-            content: OneOrMany::many(vec![
+            content: crate::OneOrMany::many(vec![
                 message::AssistantContent::reasoning("hidden"),
                 message::AssistantContent::text("visible"),
                 message::AssistantContent::tool_call(
@@ -818,9 +813,9 @@ mod tests {
     fn test_request_conversion_errors_when_all_messages_are_filtered() {
         let request = CompletionRequest {
             preamble: None,
-            chat_history: OneOrMany::one(message::Message::Assistant {
+            chat_history: crate::OneOrMany::one(message::Message::Assistant {
                 id: None,
-                content: OneOrMany::one(message::AssistantContent::reasoning("hidden")),
+                content: crate::OneOrMany::one(message::AssistantContent::reasoning("hidden")),
             }),
             documents: vec![],
             tools: vec![],

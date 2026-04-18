@@ -1,10 +1,10 @@
 //! Integration tests for `PromptResponse.messages` using mock models.
 //! Exercises the real agent loop code path with mocked LLM responses.
 
-use rig::OneOrMany;
 use rig::agent::AgentBuilder;
 use rig::completion::{
-    CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Message, Prompt, Usage,
+    AssistantChoice, CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
+    Message, Prompt, Usage,
 };
 use rig::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
 use rig::streaming::{StreamingCompletionResponse, StreamingResult};
@@ -34,7 +34,7 @@ impl CompletionModel for SimpleTextModel {
         _request: CompletionRequest,
     ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
         Ok(CompletionResponse {
-            choice: OneOrMany::one(AssistantContent::Text(Text {
+            choice: AssistantChoice::one(AssistantContent::Text(Text {
                 text: "hello from mock".to_string(),
             })),
             usage: Usage {
@@ -92,7 +92,7 @@ impl CompletionModel for ToolThenTextModel {
         if turn == 0 {
             // First turn: return a tool call
             Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                choice: AssistantChoice::one(AssistantContent::ToolCall(ToolCall::new(
                     "tc_1".to_string(),
                     ToolFunction::new(
                         "calculator".to_string(),
@@ -112,7 +112,7 @@ impl CompletionModel for ToolThenTextModel {
         } else {
             // Second turn: return a text response
             Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::Text(Text {
+                choice: AssistantChoice::one(AssistantContent::Text(Text {
                     text: "The answer is 5".to_string(),
                 })),
                 usage: Usage {
@@ -170,7 +170,7 @@ impl CompletionModel for ToolThenEmptyTerminalTurnModel {
 
         if turn == 0 {
             Ok(CompletionResponse {
-                choice: OneOrMany::many(vec![
+                choice: AssistantChoice::many(vec![
                     AssistantContent::Text(Text {
                         text: "The answer is 5".to_string(),
                     }),
@@ -181,8 +181,7 @@ impl CompletionModel for ToolThenEmptyTerminalTurnModel {
                             serde_json::json!({"op": "add", "a": 2, "b": 3}),
                         ),
                     )),
-                ])
-                .expect("assistant turn has text and a tool call"),
+                ]),
                 usage: Usage {
                     input_tokens: 12,
                     output_tokens: 7,
@@ -195,7 +194,7 @@ impl CompletionModel for ToolThenEmptyTerminalTurnModel {
             })
         } else {
             Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::text("")),
+                choice: AssistantChoice::new(),
                 usage: Usage {
                     input_tokens: 8,
                     output_tokens: 1,
@@ -238,7 +237,7 @@ impl CompletionModel for AlwaysToolCallModel {
         _request: CompletionRequest,
     ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
         Ok(CompletionResponse {
-            choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+            choice: AssistantChoice::one(AssistantContent::ToolCall(ToolCall::new(
                 "tc_loop".to_string(),
                 ToolFunction::new("infinite_tool".to_string(), serde_json::json!({"x": 1})),
             ))),

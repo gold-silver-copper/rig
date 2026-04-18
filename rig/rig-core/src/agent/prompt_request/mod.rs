@@ -459,10 +459,12 @@ where
                 .iter()
                 .partition(|choice| matches!(choice, AssistantContent::ToolCall(_)));
 
-            new_messages.push(Message::Assistant {
-                id: resp.message_id.clone(),
-                content: resp.choice.clone(),
-            });
+            if let Ok(content) = resp.choice.to_one_or_many() {
+                new_messages.push(Message::Assistant {
+                    id: resp.message_id.clone(),
+                    content,
+                });
+            }
 
             if tool_calls.is_empty() {
                 let final_output = assistant_text_accumulator.final_output(&turn_text);

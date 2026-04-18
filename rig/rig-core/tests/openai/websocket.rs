@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
+use rig::completion::{AssistantChoice, CompletionModel};
 use rig::message::AssistantContent;
 use rig::providers::openai;
 use rig::providers::openai::responses_api::streaming::{ItemChunkKind, ResponseChunkKind};
@@ -10,7 +10,7 @@ use rig::providers::openai::responses_api::websocket::ResponsesWebSocketEvent;
 
 use crate::support::assert_nonempty_response;
 
-fn extract_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
+fn extract_text(choice: &AssistantChoice) -> String {
     choice
         .iter()
         .filter_map(|content| match content {

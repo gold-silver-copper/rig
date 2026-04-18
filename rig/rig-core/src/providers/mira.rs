@@ -577,11 +577,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             ),
         };
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+        let choice = completion::AssistantChoice::from(content);
 
         Ok(completion::CompletionResponse {
             choice,
@@ -810,7 +806,7 @@ mod tests {
 
         assert_eq!(
             completion_response.choice.first(),
-            completion::AssistantContent::text("Test response")
+            Some(completion::AssistantContent::text("Test response"))
         );
     }
     #[test]

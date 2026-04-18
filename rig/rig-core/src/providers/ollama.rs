@@ -373,9 +373,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         tc.function.arguments.clone(),
                     ));
                 }
-                let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-                    CompletionError::ResponseError("No content provided".to_owned())
-                })?;
+                let choice = completion::AssistantChoice::from(assistant_contents);
                 let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
                 let completion_tokens = resp.eval_count.unwrap_or(0);
 
