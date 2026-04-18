@@ -91,6 +91,15 @@ pub enum FinishReason {
     ToolCall,
 }
 
+fn map_finish_reason(reason: &FinishReason) -> completion::StopReason {
+    match reason {
+        FinishReason::MaxTokens => completion::StopReason::MaxTokens,
+        FinishReason::StopSequence | FinishReason::Complete => completion::StopReason::Stop,
+        FinishReason::ToolCall => completion::StopReason::ToolCalls,
+        FinishReason::Error => completion::StopReason::Other("ERROR".to_string()),
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct Usage {
     #[serde(default)]
@@ -137,6 +146,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+        let stop_reason = Some(map_finish_reason(&response.finish_reason));
         let (content, _, tool_calls) = response.message();
 
         let model_response = if !tool_calls.is_empty() {
@@ -183,6 +193,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }

@@ -71,16 +71,9 @@ impl Harness for OpenAiChatHarness {
             Fixture::MessageIdPreservation => Ok(Self::expected(case)),
             _ => {
                 let raw = non_stream_response(case);
-                let stop_reason = raw
-                    .choices
-                    .first()
-                    .map(|choice| map_finish_reason(&choice.finish_reason));
                 let response: completion::CompletionResponse<CompletionResponse> =
                     raw.try_into()?;
-                Ok(Outcome::Supported(normalize_completion_response(
-                    &response,
-                    stop_reason,
-                )))
+                Ok(Outcome::Supported(normalize_completion_response(&response)))
             }
         }
     }
@@ -102,9 +95,7 @@ impl Harness for OpenAiChatHarness {
                     let stream =
                         streaming::send_compatible_streaming_request(client, request).await?;
                     let response = drain_stream(stream).await?;
-                    Ok(Outcome::Supported(normalize_completion_response(
-                        &response, None,
-                    )))
+                    Ok(Outcome::Supported(normalize_completion_response(&response)))
                 }
             }
         })
@@ -212,16 +203,6 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
             name: name.to_string(),
             arguments,
         },
-    }
-}
-
-fn map_finish_reason(reason: &str) -> StopReason {
-    match reason {
-        "stop" => StopReason::Stop,
-        "tool_calls" => StopReason::ToolCalls,
-        "content_filter" => StopReason::ContentFilter,
-        "length" => StopReason::MaxTokens,
-        other => StopReason::Other(other.to_string()),
     }
 }
 

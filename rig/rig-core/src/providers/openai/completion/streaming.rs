@@ -84,6 +84,16 @@ impl GetTokenUsage for StreamingCompletionResponse {
     }
 }
 
+fn map_finish_reason(reason: &FinishReason) -> crate::completion::StopReason {
+    match reason {
+        FinishReason::ToolCalls => crate::completion::StopReason::ToolCalls,
+        FinishReason::Stop => crate::completion::StopReason::Stop,
+        FinishReason::ContentFilter => crate::completion::StopReason::ContentFilter,
+        FinishReason::Length => crate::completion::StopReason::MaxTokens,
+        FinishReason::Other(other) => crate::completion::StopReason::Other(other.clone()),
+    }
+}
+
 impl<Ext, H> GenericCompletionModel<Ext, H>
 where
     crate::client::Client<Ext, H>: HttpClientExt + Clone + 'static,
@@ -289,13 +299,19 @@ where
                     }
 
                     // Finish reason
-                    if let Some(finish_reason) = &choice.finish_reason && *finish_reason == FinishReason::ToolCalls {
-                        for (_idx, tool_call) in tool_calls.into_iter() {
-                            yield Ok(streaming::RawStreamingChoice::ToolCall(
-                                finalize_completed_streaming_tool_call(tool_call),
-                            ));
+                    if let Some(finish_reason) = &choice.finish_reason {
+                        if *finish_reason == FinishReason::ToolCalls {
+                            for (_idx, tool_call) in tool_calls.into_iter() {
+                                yield Ok(streaming::RawStreamingChoice::ToolCall(
+                                    finalize_completed_streaming_tool_call(tool_call),
+                                ));
+                            }
+                            tool_calls = HashMap::new();
                         }
-                        tool_calls = HashMap::new();
+
+                        yield Ok(streaming::RawStreamingChoice::StopReason(map_finish_reason(
+                            finish_reason,
+                        )));
                     }
                 }
                 Err(crate::http_client::Error::StreamEnded) => {

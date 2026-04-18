@@ -46,6 +46,7 @@ impl CompletionModel for SimpleTextModel {
             },
             raw_response: (),
             message_id: Some("msg_mock_1".to_string()),
+            stop_reason: None,
         })
     }
 
@@ -108,6 +109,7 @@ impl CompletionModel for ToolThenTextModel {
                 },
                 raw_response: (),
                 message_id: Some("msg_tool".to_string()),
+                stop_reason: None,
             })
         } else {
             // Second turn: return a text response
@@ -124,6 +126,7 @@ impl CompletionModel for ToolThenTextModel {
                 },
                 raw_response: (),
                 message_id: Some("msg_text".to_string()),
+                stop_reason: None,
             })
         }
     }
@@ -191,6 +194,7 @@ impl CompletionModel for ToolThenEmptyTerminalTurnModel {
                 },
                 raw_response: (),
                 message_id: Some("msg_text_tool".to_string()),
+                stop_reason: None,
             })
         } else {
             Ok(CompletionResponse {
@@ -204,6 +208,7 @@ impl CompletionModel for ToolThenEmptyTerminalTurnModel {
                 },
                 raw_response: (),
                 message_id: Some("msg_empty".to_string()),
+                stop_reason: None,
             })
         }
     }
@@ -244,6 +249,7 @@ impl CompletionModel for AlwaysToolCallModel {
             usage: Usage::new(),
             raw_response: (),
             message_id: None,
+            stop_reason: None,
         })
     }
 

@@ -521,18 +521,24 @@ pub(crate) async fn completion_response_from_sse_body(
         item?;
     }
 
+    let usage = stream
+        .response
+        .as_ref()
+        .and_then(GetTokenUsage::token_usage)
+        .unwrap_or_else(|| usage_from_raw_response(&raw_response));
+    let message_id = stream
+        .message_id
+        .clone()
+        .or_else(|| message_id_from_response(&raw_response));
+    let stop_reason = stream.stop_reason.clone();
+    let choice = stream.choice;
+
     Ok(completion::CompletionResponse {
-        usage: stream
-            .response
-            .as_ref()
-            .and_then(GetTokenUsage::token_usage)
-            .unwrap_or_else(|| usage_from_raw_response(&raw_response)),
-        message_id: stream
-            .message_id
-            .clone()
-            .or_else(|| message_id_from_response(&raw_response)),
-        choice: stream.choice,
+        usage,
+        message_id,
+        choice,
         raw_response,
+        stop_reason,
     })
 }
 

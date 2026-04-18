@@ -48,6 +48,15 @@ use super::Client;
 // Rig Implementation Types
 // =================================================================
 
+pub(crate) fn map_finish_reason(reason: &gemini_api_types::FinishReason) -> completion::StopReason {
+    match reason {
+        gemini_api_types::FinishReason::Stop => completion::StopReason::Stop,
+        gemini_api_types::FinishReason::MaxTokens => completion::StopReason::MaxTokens,
+        gemini_api_types::FinishReason::Safety => completion::StopReason::Safety,
+        other => completion::StopReason::Other(format!("{other:?}")),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CompletionModel<T = reqwest::Client> {
     pub(crate) client: Client<T>,
@@ -507,6 +516,11 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
         Ok(completion::CompletionResponse {
             choice,
             usage,
+            stop_reason: response
+                .candidates
+                .first()
+                .and_then(|candidate| candidate.finish_reason.as_ref())
+                .map(map_finish_reason),
             raw_response: response,
             message_id: None,
         })

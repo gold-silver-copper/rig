@@ -351,6 +351,10 @@ pub struct CompletionResponse {
 impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
     type Error = CompletionError;
     fn try_from(resp: CompletionResponse) -> Result<Self, Self::Error> {
+        let stop_reason = resp
+            .done_reason
+            .as_deref()
+            .map(crate::providers::openai::completion::map_finish_reason);
         match resp.message {
             // Process only if an assistant message is present.
             Message::Assistant {
@@ -408,6 +412,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     },
                     raw_response,
                     message_id: None,
+                    stop_reason,
                 })
             }
             _ => Err(CompletionError::ResponseError(

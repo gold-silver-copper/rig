@@ -131,6 +131,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+        let stop_reason = response
+            .status
+            .as_deref()
+            .map(|status| completion::StopReason::Other(status.to_string()));
         let content: Vec<completion::AssistantContent> = response
             .output
             .iter()
@@ -161,6 +165,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }

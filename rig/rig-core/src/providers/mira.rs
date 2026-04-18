@@ -578,12 +578,20 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         };
 
         let choice = completion::AssistantChoice::from(content);
+        let stop_reason = match &response {
+            CompletionResponse::Structured { choices, .. } => choices
+                .first()
+                .and_then(|choice| choice.finish_reason.as_deref())
+                .map(crate::providers::openai::completion::map_finish_reason),
+            CompletionResponse::Simple(_) => None,
+        };
 
         Ok(completion::CompletionResponse {
             choice,
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }

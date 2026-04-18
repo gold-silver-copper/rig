@@ -122,6 +122,7 @@ impl TryFrom<AwsConverseOutput> for completion::CompletionResponse<AwsConverseOu
                 usage,
                 raw_response: value,
                 message_id: None,
+                stop_reason: None,
             });
         }
 
@@ -130,6 +131,7 @@ impl TryFrom<AwsConverseOutput> for completion::CompletionResponse<AwsConverseOu
             usage,
             raw_response: value,
             message_id: None,
+            stop_reason: None,
         })
     }
 }

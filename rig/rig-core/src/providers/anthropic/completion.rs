@@ -60,6 +60,15 @@ pub struct CompletionResponse {
     pub usage: Usage,
 }
 
+pub(crate) fn map_stop_reason(reason: &str) -> completion::StopReason {
+    match reason {
+        "end_turn" => completion::StopReason::EndTurn,
+        "tool_use" => completion::StopReason::ToolCalls,
+        "max_tokens" => completion::StopReason::MaxTokens,
+        other => completion::StopReason::Other(other.to_string()),
+    }
+}
+
 impl ProviderResponseExt for CompletionResponse {
     type OutputMessage = Content;
     type Usage = Usage;
@@ -230,6 +239,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         Ok(completion::CompletionResponse {
             choice,
             usage,
+            stop_reason: response.stop_reason.as_deref().map(map_stop_reason),
             raw_response: response,
             message_id: None,
         })

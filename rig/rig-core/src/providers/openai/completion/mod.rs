@@ -24,6 +24,16 @@ use std::str::FromStr;
 
 pub mod streaming;
 
+pub(crate) fn map_finish_reason(reason: &str) -> completion::StopReason {
+    match reason {
+        "stop" => completion::StopReason::Stop,
+        "tool_calls" => completion::StopReason::ToolCalls,
+        "content_filter" => completion::StopReason::ContentFilter,
+        "length" => completion::StopReason::MaxTokens,
+        other => completion::StopReason::Other(other.to_string()),
+    }
+}
+
 /// Serializes user content as a plain string when there's a single text item,
 /// otherwise as an array of content parts.
 fn serialize_user_content<S>(
@@ -795,6 +805,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
+        let stop_reason = Some(map_finish_reason(&choice.finish_reason));
 
         let content = match &choice.message {
             Message::Assistant {
@@ -859,6 +870,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }

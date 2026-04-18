@@ -235,9 +235,16 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let Choice { message, .. } = response.choices.first().ok_or_else(|| {
+        let Choice {
+            message,
+            finish_reason,
+            ..
+        } = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
+        let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
+            finish_reason,
+        ));
 
         let mut content = message
             .content
@@ -271,6 +278,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }

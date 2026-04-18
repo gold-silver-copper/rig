@@ -1,11 +1,9 @@
-use std::{future::Future, pin::Pin};
-
 use futures::StreamExt;
-use serde_json::Value;
 
-use crate::{
-    completion::{self, AssistantChoice, CompletionError, GetTokenUsage},
-    message::AssistantContent,
+use crate::completion::{self, CompletionError, GetTokenUsage};
+
+pub(crate) use crate::completion::normalized::{
+    NormalizedItem, NormalizedTurn as Turn, StopReason,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -20,41 +18,12 @@ pub(crate) enum Fixture {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum NormalizedItem {
-    Text(String),
-    ToolCall {
-        id: String,
-        name: String,
-        arguments: Value,
-    },
-    Reasoning(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum StopReason {
-    Stop,
-    ToolCalls,
-    EndTurn,
-    MaxTokens,
-    ContentFilter,
-    Safety,
-    Other(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Turn {
-    pub(crate) items: Vec<NormalizedItem>,
-    pub(crate) message_id: Option<String>,
-    pub(crate) stop_reason: Option<StopReason>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Outcome<T> {
     Supported(T),
     Unsupported(&'static str),
 }
 
-pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+pub(crate) type BoxFuture<T> = crate::wasm_compat::WasmBoxedFuture<'static, T>;
 
 pub(crate) trait Harness {
     fn family_name() -> &'static str;
@@ -66,59 +35,10 @@ pub(crate) trait Harness {
     fn stream(case: Fixture) -> BoxFuture<Result<Outcome<Turn>, CompletionError>>;
 }
 
-pub(crate) fn normalize_turn(
-    choice: &AssistantChoice,
-    message_id: Option<String>,
-    stop_reason: Option<StopReason>,
-) -> Turn {
-    let mut items = Vec::new();
-
-    for item in choice.iter() {
-        let normalized = match item {
-            AssistantContent::Text(text) if !text.text.is_empty() => {
-                Some(NormalizedItem::Text(text.text.clone()))
-            }
-            AssistantContent::ToolCall(tool_call) => Some(NormalizedItem::ToolCall {
-                id: tool_call.id.clone(),
-                name: tool_call.function.name.clone(),
-                arguments: tool_call.function.arguments.clone(),
-            }),
-            AssistantContent::Reasoning(reasoning) => {
-                let text = reasoning.display_text();
-                if text.is_empty() {
-                    None
-                } else {
-                    Some(NormalizedItem::Reasoning(text))
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(normalized) = normalized {
-            let duplicate_reasoning = matches!(
-                (&normalized, items.last()),
-                (NormalizedItem::Reasoning(current), Some(NormalizedItem::Reasoning(previous)))
-                    if current == previous
-            );
-
-            if !duplicate_reasoning {
-                items.push(normalized);
-            }
-        }
-    }
-
-    Turn {
-        items,
-        message_id,
-        stop_reason,
-    }
-}
-
 pub(crate) fn normalize_completion_response<T>(
     response: &completion::CompletionResponse<T>,
-    stop_reason: Option<StopReason>,
 ) -> Turn {
-    normalize_turn(&response.choice, response.message_id.clone(), stop_reason)
+    Turn::from_completion_response(response)
 }
 
 pub(crate) async fn drain_stream<R>(
@@ -168,6 +88,13 @@ pub(crate) async fn assert_stream_matches_non_stream<H: Harness>(case: Fixture) 
                 actual.message_id,
                 expected.message_id,
                 "{} stream {:?} message_id diverged",
+                H::family_name(),
+                case
+            );
+            assert_eq!(
+                actual.stop_reason,
+                expected.stop_reason,
+                "{} stream {:?} stop_reason diverged",
                 H::family_name(),
                 case
             );

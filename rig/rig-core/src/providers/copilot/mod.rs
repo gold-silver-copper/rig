@@ -480,6 +480,10 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
+        let stop_reason = choice
+            .finish_reason
+            .as_deref()
+            .map(crate::providers::openai::completion::map_finish_reason);
 
         let content = match &choice.message {
             openai::completion::Message::Assistant {
@@ -544,6 +548,7 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }
@@ -703,6 +708,7 @@ where
                             usage: core.usage,
                             raw_response: CopilotCompletionResponse::Chat(response),
                             message_id: core.message_id,
+                            stop_reason: core.stop_reason,
                         })
                     }
                     ChatApiResponse::Err(err) => Err(CompletionError::ProviderError(
@@ -780,6 +786,7 @@ where
                     usage: core.usage,
                     raw_response: CopilotCompletionResponse::Responses(Box::new(response)),
                     message_id: core.message_id,
+                    stop_reason: core.stop_reason,
                 })
             } else {
                 let body = http_client::text(response).await?;

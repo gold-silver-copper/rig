@@ -651,7 +651,7 @@ where
                     accumulated_reasoning.push(assembled);
                 }
 
-                let turn_summary = AssistantTurnSummary::from_choice(&stream.choice);
+                let turn_summary = AssistantTurnSummary::from_stream_response(&stream);
                 let turn_text_response = turn_summary.visible_text("");
                 assistant_text_accumulator.observe(&turn_text_response);
                 tracing::Span::current().record("gen_ai.completion", &turn_text_response);

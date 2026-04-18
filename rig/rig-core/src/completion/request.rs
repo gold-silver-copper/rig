@@ -63,6 +63,7 @@
 //! For more information on how to use the completion functionality, refer to the documentation of
 //! the individual traits, structs, and enums defined in this module.
 
+use super::StopReason;
 use super::message::{AssistantContent, DocumentMediaType};
 use crate::message::ToolChoice;
 use crate::streaming::StreamingCompletionResponse;
@@ -373,6 +374,8 @@ pub struct CompletionResponse<T> {
     /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
     /// Used to pair reasoning input items with their output items in multi-turn.
     pub message_id: Option<String>,
+    /// Provider-agnostic reason why the model stopped generating this turn.
+    pub stop_reason: Option<StopReason>,
 }
 
 /// Zero or more assistant content items returned by a provider.

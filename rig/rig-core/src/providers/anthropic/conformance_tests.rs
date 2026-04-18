@@ -75,13 +75,9 @@ impl Harness for AnthropicHarness {
             Fixture::MessageIdPreservation => Ok(Self::expected(case)),
             _ => {
                 let raw = non_stream_response(case);
-                let stop_reason = raw.stop_reason.as_deref().map(map_stop_reason);
                 let response: completion::CompletionResponse<CompletionResponse> =
                     raw.try_into()?;
-                Ok(Outcome::Supported(normalize_completion_response(
-                    &response,
-                    stop_reason,
-                )))
+                Ok(Outcome::Supported(normalize_completion_response(&response)))
             }
         }
     }
@@ -101,9 +97,7 @@ impl Harness for AnthropicHarness {
                     let model = CompletionModel::new(client, "claude-test");
                     let stream = model.stream(stream_request()).await?;
                     let response = drain_stream(stream).await?;
-                    Ok(Outcome::Supported(normalize_completion_response(
-                        &response, None,
-                    )))
+                    Ok(Outcome::Supported(normalize_completion_response(&response)))
                 }
             }
         })
@@ -174,15 +168,6 @@ fn response_with_content(content: Vec<Content>, stop_reason: &str) -> Completion
             cache_creation_input_tokens: None,
             output_tokens: 5,
         },
-    }
-}
-
-fn map_stop_reason(reason: &str) -> StopReason {
-    match reason {
-        "end_turn" => StopReason::EndTurn,
-        "tool_use" => StopReason::ToolCalls,
-        "max_tokens" => StopReason::MaxTokens,
-        other => StopReason::Other(other.to_string()),
     }
 }
 

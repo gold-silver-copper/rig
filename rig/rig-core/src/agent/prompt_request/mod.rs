@@ -450,7 +450,7 @@ where
                 ));
             }
 
-            let turn_summary = AssistantTurnSummary::from_choice(&resp.choice);
+            let turn_summary = AssistantTurnSummary::from_response(&resp);
             let turn_text = turn_summary.visible_text("\n");
             assistant_text_accumulator.observe(&turn_text);
 

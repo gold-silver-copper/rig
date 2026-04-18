@@ -77,17 +77,9 @@ impl Harness for GeminiHarness {
             Fixture::MessageIdPreservation => Ok(Self::expected(case)),
             _ => {
                 let raw = non_stream_response(case);
-                let stop_reason = raw
-                    .candidates
-                    .first()
-                    .and_then(|candidate| candidate.finish_reason.clone())
-                    .map(map_finish_reason);
                 let response: completion::CompletionResponse<GenerateContentResponse> =
                     raw.try_into()?;
-                Ok(Outcome::Supported(normalize_completion_response(
-                    &response,
-                    stop_reason,
-                )))
+                Ok(Outcome::Supported(normalize_completion_response(&response)))
             }
         }
     }
@@ -107,9 +99,7 @@ impl Harness for GeminiHarness {
                     let model = CompletionModel::new(client, "gemini-test");
                     let stream = model.stream(stream_request()).await?;
                     let response = drain_stream(stream).await?;
-                    Ok(Outcome::Supported(normalize_completion_response(
-                        &response, None,
-                    )))
+                    Ok(Outcome::Supported(normalize_completion_response(&response)))
                 }
             }
         })
@@ -204,15 +194,6 @@ fn candidate(parts: Vec<Part>, finish_reason: FinishReason) -> ContentCandidate 
         logprobs_result: None,
         index: Some(0),
         finish_message: None,
-    }
-}
-
-fn map_finish_reason(reason: FinishReason) -> StopReason {
-    match reason {
-        FinishReason::Stop => StopReason::Stop,
-        FinishReason::MaxTokens => StopReason::MaxTokens,
-        FinishReason::Safety => StopReason::Safety,
-        other => StopReason::Other(format!("{other:?}")),
     }
 }
 

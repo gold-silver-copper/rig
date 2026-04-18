@@ -11,6 +11,7 @@
 use crate::agent::Agent;
 use crate::agent::prompt_request::hooks::PromptHook;
 use crate::agent::prompt_request::streaming::StreamingPromptRequest;
+use crate::completion::StopReason;
 use crate::completion::{
     AssistantChoice, CompletionError, CompletionModel, CompletionRequestBuilder,
     CompletionResponse, GetTokenUsage, Message, Usage,
@@ -106,6 +107,9 @@ where
     /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
     /// Captured silently into `StreamingCompletionResponse::message_id`.
     MessageId(String),
+
+    /// Provider-agnostic reason why the model stopped generating this turn.
+    StopReason(StopReason),
 }
 
 /// Describes a streaming tool call response (in its entirety)
@@ -213,6 +217,8 @@ where
     pub final_response_yielded: AtomicBool,
     /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
     pub message_id: Option<String>,
+    /// Provider-agnostic reason why the model stopped generating this turn.
+    pub stop_reason: Option<StopReason>,
 }
 
 impl<R> StreamingCompletionResponse<R>
@@ -234,6 +240,7 @@ where
             response: None,
             final_response_yielded: AtomicBool::new(false),
             message_id: None,
+            stop_reason: None,
         }
     }
 
@@ -303,6 +310,7 @@ where
             usage: Usage::new(), // Usage is not tracked in streaming responses
             raw_response: value.response,
             message_id: value.message_id,
+            stop_reason: value.stop_reason,
         }
     }
 }
@@ -404,6 +412,10 @@ where
                 }
                 RawStreamingChoice::MessageId(id) => {
                     stream.message_id = Some(id);
+                    stream.poll_next_unpin(cx)
+                }
+                RawStreamingChoice::StopReason(reason) => {
+                    stream.stop_reason = Some(reason);
                     stream.poll_next_unpin(cx)
                 }
             },
@@ -687,6 +699,15 @@ mod tests {
         StreamingCompletionResponse::stream(to_stream_result(stream))
     }
 
+    fn create_stop_reason_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream = stream! {
+            yield Ok(RawStreamingChoice::StopReason(crate::completion::StopReason::MaxTokens));
+            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 0 }));
+        };
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
     fn create_interleaved_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
             yield Ok(RawStreamingChoice::Reasoning {
@@ -845,6 +866,17 @@ mod tests {
         while stream.next().await.is_some() {}
 
         assert!(stream.choice.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stream_captures_stop_reason() {
+        let mut stream = create_stop_reason_stream();
+        while stream.next().await.is_some() {}
+
+        assert_eq!(
+            stream.stop_reason,
+            Some(crate::completion::StopReason::MaxTokens)
+        );
     }
 
     #[tokio::test]

@@ -552,6 +552,9 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
+        let stop_reason = Some(crate::providers::openai::completion::map_finish_reason(
+            &choice.finish_reason,
+        ));
 
         let content = match &choice.message {
             Message::Assistant {
@@ -600,6 +603,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             usage,
             raw_response: response,
             message_id: None,
+            stop_reason,
         })
     }
 }
