@@ -477,12 +477,13 @@ impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
             tools,
             tool_choice,
             additional_params,
-            output_schema: _,
         } = build_compatible_request_core(
             model,
             req,
             CompatibleChatProfile::new("DeepSeek"),
             Message::system,
+            None,
+            |_| false,
             |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
@@ -840,9 +841,43 @@ pub const DEEPSEEK_REASONER: &str = "deepseek-reasoner";
 mod tests {
     use super::*;
     use crate::http_client::mock::MockStreamingClient;
+    use crate::providers::openai::completion::request_conformance;
     use crate::streaming::StreamedAssistantContent;
     use bytes::Bytes;
     use futures::StreamExt;
+
+    struct DeepSeekRequestHarness;
+
+    impl request_conformance::Harness for DeepSeekRequestHarness {
+        fn family_name() -> &'static str {
+            "deepseek"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                DeepseekCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(CompatibleChatProfile::new(
+                    "DeepSeek",
+                ))
+                .preserves_reasoning_assistant_history(),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(DeepSeekRequestHarness);
 
     #[test]
     fn test_deserialize_vec_choice() {

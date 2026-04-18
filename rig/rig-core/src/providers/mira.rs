@@ -226,10 +226,14 @@ impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
 
     fn try_from((model, mut req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
         crate::providers::openai::completion::CompatibleFeaturePolicy::default()
-            .without_tools()
-            .without_tool_choice()
-            .without_additional_params()
-            .apply("Mira AI", &mut req);
+            .with_tools_policy(crate::providers::openai::completion::ToolsPolicy::Unsupported)
+            .with_tool_choice_policy(
+                crate::providers::openai::completion::ToolChoicePolicy::Unsupported,
+            )
+            .with_additional_params_policy(
+                crate::providers::openai::completion::AdditionalParamsPolicy::Unsupported,
+            )
+            .apply("Mira AI", &mut req)?;
 
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         let mut messages = Vec::new();

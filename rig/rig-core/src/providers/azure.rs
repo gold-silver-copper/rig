@@ -587,46 +587,20 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
             tools,
             tool_choice,
             additional_params,
-            output_schema,
         } = crate::providers::openai::completion::build_compatible_request_core(
             model,
             req,
             crate::providers::openai::completion::CompatibleChatProfile::new("Azure OpenAI")
-                .supports_output_schema(),
+                .native_response_format(),
             openai::Message::system,
+            None,
+            |message| matches!(message, openai::Message::ToolResult { .. }),
             |message| Vec::<openai::Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
         let tool_choice = tool_choice
             .map(crate::providers::openai::ToolChoice::try_from)
             .transpose()?;
-
-        let additional_params = if let Some(schema) = output_schema {
-            let name = schema
-                .as_object()
-                .and_then(|o| o.get("title"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("response_schema")
-                .to_string();
-            let mut schema_value = schema.to_value();
-            openai::sanitize_schema(&mut schema_value);
-            let response_format = serde_json::json!({
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": name,
-                        "strict": true,
-                        "schema": schema_value
-                    }
-                }
-            });
-            Some(match additional_params {
-                Some(existing) => json_utils::merge(existing, response_format),
-                None => response_format,
-            })
-        } else {
-            additional_params
-        };
 
         Ok(Self {
             model,
@@ -1056,6 +1030,39 @@ mod azure_tests {
     use crate::embeddings::EmbeddingModel;
     use crate::prelude::TypedPrompt;
     use crate::providers::openai::GPT_5_MINI;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct AzureRequestHarness;
+
+    impl request_conformance::Harness for AzureRequestHarness {
+        fn family_name() -> &'static str {
+            "azure-openai"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                AzureOpenAICompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Azure OpenAI").native_response_format(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(AzureRequestHarness);
 
     #[test]
     fn azure_request_uses_request_model_override() {

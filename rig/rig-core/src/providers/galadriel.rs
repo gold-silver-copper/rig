@@ -461,12 +461,13 @@ impl TryFrom<(&str, CompletionRequest)> for GaladrielCompletionRequest {
             tools,
             tool_choice,
             additional_params,
-            output_schema: _,
         } = crate::providers::openai::completion::build_compatible_request_core(
             model,
             req,
             crate::providers::openai::completion::CompatibleChatProfile::new("Galadriel"),
             Message::system,
+            None,
+            |_| false,
             |message| Ok(vec![message.try_into()?]),
         )?;
 

@@ -14,8 +14,8 @@ use crate::http_client::sse::{Event, GenericEventSource};
 use crate::json_utils::{self, merge};
 use crate::providers::openai::completion::{
     CompatibleStreamingToolCall, GenericCompletionModel, OpenAIRequestParams,
-    ToolCallConflictPolicy, Usage, apply_compatible_tool_call_deltas, take_finalized_tool_calls,
-    take_tool_calls,
+    OpenAiChatProviderProfile, ToolCallConflictPolicy, Usage, apply_compatible_tool_call_deltas,
+    take_finalized_tool_calls, take_tool_calls,
 };
 use crate::streaming::{self, RawStreamingChoice};
 
@@ -101,19 +101,22 @@ fn map_finish_reason(reason: &FinishReason) -> crate::completion::StopReason {
 impl<Ext, H> GenericCompletionModel<Ext, H>
 where
     crate::client::Client<Ext, H>: HttpClientExt + Clone + 'static,
-    Ext: crate::client::Provider + Clone + 'static,
+    Ext: crate::client::Provider + OpenAiChatProviderProfile + Clone + 'static,
 {
     pub(crate) async fn stream(
         &self,
         completion_request: CompletionRequest,
     ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
     {
-        let request = super::CompletionRequest::try_from(OpenAIRequestParams {
-            model: self.model.clone(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })?;
+        let request = super::build_openai_completion_request(
+            OpenAIRequestParams {
+                model: self.model.clone(),
+                request: completion_request,
+                strict_tools: self.strict_tools,
+                tool_result_array_content: self.tool_result_array_content,
+            },
+            Ext::request_profile(),
+        )?;
         let request_messages = serde_json::to_string(&request.messages)
             .expect("Converting to JSON from a Rust struct shouldn't fail");
         let mut request_as_json = serde_json::to_value(request).expect("this should never fail");
@@ -126,7 +129,8 @@ where
         if enabled!(Level::TRACE) {
             tracing::trace!(
                 target: "rig::completions",
-                "OpenAI Chat Completions streaming completion request: {}",
+                "{} streaming completion request: {}",
+                Ext::provider_name(),
                 serde_json::to_string_pretty(&request_as_json)?
             );
         }
@@ -135,7 +139,7 @@ where
 
         let req = self
             .client
-            .post("/chat/completions")?
+            .post(Ext::completions_path())?
             .body(req_body)
             .map_err(|e| CompletionError::HttpError(e.into()))?;
 
@@ -144,7 +148,7 @@ where
                 target: "rig::completions",
                 "chat",
                 gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "openai",
+                gen_ai.provider.name = Ext::telemetry_provider_name(),
                 gen_ai.request.model = self.model,
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = self.model,
@@ -160,13 +164,37 @@ where
 
         let client = self.client.clone();
 
-        tracing::Instrument::instrument(send_compatible_streaming_request(client, req), span).await
+        tracing::Instrument::instrument(
+            send_compatible_streaming_request_with_policy(
+                client,
+                req,
+                Ext::stream_tool_call_conflict_policy(),
+            ),
+            span,
+        )
+        .await
     }
 }
 
 pub async fn send_compatible_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
+) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
+where
+    T: HttpClientExt + Clone + 'static,
+{
+    send_compatible_streaming_request_with_policy(
+        http_client,
+        req,
+        ToolCallConflictPolicy::EvictDistinctIdAndName,
+    )
+    .await
+}
+
+pub(crate) async fn send_compatible_streaming_request_with_policy<T>(
+    http_client: T,
+    req: Request<Vec<u8>>,
+    conflict_policy: ToolCallConflictPolicy,
 ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
@@ -224,7 +252,7 @@ where
                                 name: tool_call.function.name.as_deref(),
                                 arguments: tool_call.function.arguments.as_deref(),
                             }),
-                            ToolCallConflictPolicy::EvictDistinctIdAndName,
+                            conflict_policy,
                         ) {
                             yield Ok(event);
                         }

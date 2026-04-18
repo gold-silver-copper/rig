@@ -354,13 +354,14 @@ impl TryFrom<(&str, CompletionRequest)> for MistralCompletionRequest {
             tools,
             tool_choice,
             additional_params,
-            output_schema: _,
         } = crate::providers::openai::completion::build_compatible_request_core(
             model,
             req,
             crate::providers::openai::completion::CompatibleChatProfile::new("Mistral")
                 .require_messages(),
             |preamble| Message::system(preamble.to_owned()),
+            None,
+            |_| false,
             |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
@@ -641,6 +642,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::openai::completion::request_conformance;
+
+    struct MistralRequestHarness;
+
+    impl request_conformance::Harness for MistralRequestHarness {
+        fn family_name() -> &'static str {
+            "mistral"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                MistralCompletionRequest::try_from((MISTRAL_SMALL, request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    crate::providers::openai::completion::CompatibleChatProfile::new("Mistral")
+                        .require_messages(),
+                )
+                .omits_document_messages(),
+                MISTRAL_SMALL,
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(MistralRequestHarness);
 
     #[test]
     fn test_response_deserialization() {

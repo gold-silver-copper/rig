@@ -634,13 +634,14 @@ impl TryFrom<(&str, CompletionRequest)> for HuggingfaceCompletionRequest {
             tools,
             tool_choice,
             additional_params,
-            output_schema: _,
         } = crate::providers::openai::completion::build_compatible_request_core(
             model,
             req,
             crate::providers::openai::completion::CompatibleChatProfile::new("HuggingFace")
                 .require_messages(),
             Message::system,
+            None,
+            |_| false,
             |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
@@ -797,7 +798,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::openai::completion::request_conformance;
     use serde_path_to_error::deserialize;
+
+    struct HuggingFaceRequestHarness;
+
+    impl request_conformance::Harness for HuggingFaceRequestHarness {
+        fn family_name() -> &'static str {
+            "huggingface"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                HuggingfaceCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    crate::providers::openai::completion::CompatibleChatProfile::new("HuggingFace")
+                        .require_messages(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(HuggingFaceRequestHarness);
 
     #[test]
     fn test_huggingface_request_uses_request_model_override() {

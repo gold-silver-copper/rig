@@ -239,17 +239,18 @@ impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
             tools: _,
             tool_choice: _,
             additional_params,
-            output_schema: _,
         } = crate::providers::openai::completion::build_compatible_request_core(
             model,
             req,
             crate::providers::openai::completion::CompatibleChatProfile::new("Perplexity")
-                .without_tools()
-                .without_tool_choice(),
+                .unsupported_tools()
+                .unsupported_tool_choice(),
             |preamble| Message {
                 role: Role::System,
                 content: preamble.to_owned(),
             },
+            None,
+            |_| false,
             |message| Ok(vec![message.try_into()?]),
         )?;
 

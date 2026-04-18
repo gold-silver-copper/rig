@@ -269,14 +269,15 @@ impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
             tools: _,
             tool_choice: _,
             additional_params,
-            output_schema: _,
         } = crate::providers::openai::completion::build_compatible_request_core(
             model,
             req,
             crate::providers::openai::completion::CompatibleChatProfile::new("Hyperbolic")
-                .without_tools()
-                .without_tool_choice(),
+                .unsupported_tools()
+                .unsupported_tool_choice(),
             Message::system,
+            None,
+            |_| false,
             |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
@@ -687,6 +688,43 @@ mod audio_generation {
 
 #[cfg(test)]
 mod tests {
+    use super::HyperbolicCompletionRequest;
+    use crate::providers::openai::completion::{CompatibleChatProfile, request_conformance};
+
+    struct HyperbolicRequestHarness;
+
+    impl request_conformance::Harness for HyperbolicRequestHarness {
+        fn family_name() -> &'static str {
+            "hyperbolic"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                HyperbolicCompletionRequest::try_from(("default-model", request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::new("Hyperbolic")
+                        .unsupported_tools()
+                        .unsupported_tool_choice(),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(HyperbolicRequestHarness);
+
     #[test]
     fn test_client_initialization() {
         let _client =

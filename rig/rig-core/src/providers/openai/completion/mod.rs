@@ -22,21 +22,17 @@ use tracing::{Instrument, Level, enabled, info_span};
 
 use std::str::FromStr;
 
-mod compat;
-mod request_compat;
-mod stream_compat;
+mod family;
 pub mod streaming;
 
-pub(crate) use compat::{
-    build_completion_response, first_choice, map_finish_reason, non_empty_text,
-};
-pub(crate) use request_compat::{
-    CompatibleChatProfile, CompatibleFeaturePolicy, CompatibleRequestCore,
-    build_compatible_request_core,
-};
-pub(crate) use stream_compat::{
-    CompatibleStreamingToolCall, ToolCallConflictPolicy, apply_compatible_tool_call_deltas,
-    take_finalized_tool_calls, take_tool_calls,
+#[cfg(test)]
+pub(crate) use family::request_conformance;
+pub(crate) use family::{
+    AdditionalParamsPolicy, CompatibleChatProfile, CompatibleFeaturePolicy, CompatibleRequestCore,
+    CompatibleStreamingToolCall, OpenAiChatProviderProfile, ToolCallConflictPolicy,
+    ToolChoicePolicy, ToolsPolicy, apply_compatible_tool_call_deltas,
+    build_compatible_request_core, build_completion_response, first_choice, map_finish_reason,
+    non_empty_text, take_finalized_tool_calls, take_tool_calls,
 };
 
 /// Serializes user content as a plain string when there's a single text item,
@@ -200,10 +196,11 @@ impl Message {
     }
 }
 
-fn history_contains_tool_result(messages: &[Message]) -> bool {
-    messages
-        .iter()
-        .any(|message| matches!(message, Message::ToolResult { .. }))
+fn openai_user_message(content: &str) -> Message {
+    Message::User {
+        content: OneOrMany::one(UserContent::from(content.to_owned())),
+        name: None,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -1055,102 +1052,71 @@ pub struct OpenAIRequestParams {
     pub tool_result_array_content: bool,
 }
 
+fn build_openai_completion_request(
+    params: OpenAIRequestParams,
+    profile: CompatibleChatProfile,
+) -> Result<CompletionRequest, CompletionError> {
+    let OpenAIRequestParams {
+        model,
+        request: req,
+        strict_tools,
+        tool_result_array_content,
+    } = params;
+    let CompatibleRequestCore {
+        model,
+        messages: mut full_history,
+        temperature,
+        max_tokens,
+        tools,
+        tool_choice,
+        additional_params,
+    } = build_compatible_request_core(
+        &model,
+        req,
+        profile,
+        Message::system,
+        Some(openai_user_message),
+        |message| matches!(message, Message::ToolResult { .. }),
+        |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
+    )?;
+
+    if tool_result_array_content {
+        for msg in &mut full_history {
+            if let Message::ToolResult { content, .. } = msg {
+                *content = content.to_array();
+            }
+        }
+    }
+
+    let tool_choice = tool_choice.map(ToolChoice::try_from).transpose()?;
+
+    let tools: Vec<ToolDefinition> = tools
+        .into_iter()
+        .map(|tool| {
+            let def = ToolDefinition::from(tool);
+            if strict_tools { def.with_strict() } else { def }
+        })
+        .collect();
+
+    Ok(CompletionRequest {
+        model,
+        messages: full_history,
+        tools,
+        tool_choice,
+        temperature,
+        max_tokens,
+        additional_params,
+    })
+}
+
 impl TryFrom<OpenAIRequestParams> for CompletionRequest {
     type Error = CompletionError;
 
     fn try_from(params: OpenAIRequestParams) -> Result<Self, Self::Error> {
-        let OpenAIRequestParams {
-            model,
-            request: req,
-            strict_tools,
-            tool_result_array_content,
-        } = params;
-        let CompatibleRequestCore {
-            model,
-            messages: mut full_history,
-            temperature,
-            max_tokens,
-            tools,
-            tool_choice,
-            additional_params,
-            output_schema,
-        } = build_compatible_request_core(
-            &model,
-            req,
-            CompatibleChatProfile::new("OpenAI Chat Completions")
-                .require_messages()
-                .supports_output_schema(),
-            Message::system,
-            |message| Vec::<Message>::try_from(message).map_err(CompletionError::from),
-        )?;
-
-        if tool_result_array_content {
-            for msg in &mut full_history {
-                if let Message::ToolResult { content, .. } = msg {
-                    *content = content.to_array();
-                }
-            }
-        }
-
-        let history_has_tool_result = history_contains_tool_result(&full_history);
-
-        let tool_choice = tool_choice.map(ToolChoice::try_from).transpose()?;
-
-        let tools: Vec<ToolDefinition> = tools
-            .into_iter()
-            .map(|tool| {
-                let def = ToolDefinition::from(tool);
-                if strict_tools { def.with_strict() } else { def }
-            })
-            .collect();
-
-        // Some OpenAI-compatible backends such as llama.cpp will skip tool execution
-        // if `response_format` is sent on the first turn alongside tools. Delay the
-        // schema until after the conversation contains a tool result.
-        let should_apply_response_format =
-            output_schema.is_some() && (tools.is_empty() || history_has_tool_result);
-
-        // Map output_schema to OpenAI's response_format and merge into additional_params
-        let additional_params = if let Some(schema) = output_schema
-            && should_apply_response_format
-        {
-            let name = schema
-                .as_object()
-                .and_then(|o| o.get("title"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("response_schema")
-                .to_string();
-            let mut schema_value = schema.to_value();
-            super::sanitize_schema(&mut schema_value);
-            let response_format = serde_json::json!({
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": name,
-                        "strict": true,
-                        "schema": schema_value
-                    }
-                }
-            });
-            Some(match additional_params {
-                Some(existing) => json_utils::merge(existing, response_format),
-                None => response_format,
-            })
-        } else {
-            additional_params
-        };
-
-        let res = Self {
-            model,
-            messages: full_history,
-            tools,
-            tool_choice,
-            temperature,
-            max_tokens,
-            additional_params,
-        };
-
-        Ok(res)
+        build_openai_completion_request(
+            params,
+            CompatibleChatProfile::openai_chat_completions("OpenAI Chat Completions"),
+        )
     }
 }
 
@@ -1216,6 +1182,7 @@ where
     crate::client::Client<Ext, H>:
         HttpClientExt + Clone + WasmCompatSend + WasmCompatSync + 'static,
     Ext: crate::client::Provider
+        + OpenAiChatProviderProfile
         + crate::client::DebugExt
         + Clone
         + WasmCompatSend
@@ -1241,7 +1208,7 @@ where
                 target: "rig::completions",
                 "chat",
                 gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "openai",
+                gen_ai.provider.name = Ext::telemetry_provider_name(),
                 gen_ai.request.model = self.model,
                 gen_ai.system_instructions = &completion_request.preamble,
                 gen_ai.response.id = tracing::field::Empty,
@@ -1254,17 +1221,21 @@ where
             tracing::Span::current()
         };
 
-        let request = CompletionRequest::try_from(OpenAIRequestParams {
-            model: self.model.to_owned(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })?;
+        let request = build_openai_completion_request(
+            OpenAIRequestParams {
+                model: self.model.to_owned(),
+                request: completion_request,
+                strict_tools: self.strict_tools,
+                tool_result_array_content: self.tool_result_array_content,
+            },
+            Ext::request_profile(),
+        )?;
 
         if enabled!(Level::TRACE) {
             tracing::trace!(
                 target: "rig::completions",
-                "OpenAI Chat Completions completion request: {}",
+                "{} completion request: {}",
+                Ext::provider_name(),
                 serde_json::to_string_pretty(&request)?
             );
         }
@@ -1273,7 +1244,7 @@ where
 
         let req = self
             .client
-            .post("/chat/completions")?
+            .post(Ext::completions_path())?
             .body(body)
             .map_err(|e| CompletionError::HttpError(e.into()))?;
 
@@ -1292,7 +1263,8 @@ where
                         if enabled!(Level::TRACE) {
                             tracing::trace!(
                                 target: "rig::completions",
-                                "OpenAI Chat Completions completion response: {}",
+                                "{} completion response: {}",
+                                Ext::provider_name(),
                                 serde_json::to_string_pretty(&response)?
                             );
                         }
@@ -1341,6 +1313,43 @@ mod conformance_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct OpenAiRequestHarness;
+
+    impl request_conformance::Harness for OpenAiRequestHarness {
+        fn family_name() -> &'static str {
+            "openai-chat"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                CompletionRequest::try_from(OpenAIRequestParams {
+                    model: "default-model".to_owned(),
+                    request,
+                    strict_tools: false,
+                    tool_result_array_content: false,
+                })
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    CompatibleChatProfile::openai_chat_completions("OpenAI Chat Completions"),
+                ),
+                "default-model",
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(OpenAiRequestHarness);
 
     #[test]
     fn test_openai_request_uses_request_model_override() {

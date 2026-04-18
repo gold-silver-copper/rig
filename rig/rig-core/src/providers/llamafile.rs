@@ -172,13 +172,14 @@ impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
             tools,
             tool_choice: _,
             additional_params,
-            output_schema: _,
         } = crate::providers::openai::completion::build_compatible_request_core(
             model,
             req,
             crate::providers::openai::completion::CompatibleChatProfile::new("llamafile")
-                .without_tool_choice(),
+                .unsupported_tool_choice(),
             openai::Message::system,
+            None,
+            |_| false,
             |message| Vec::<openai::Message>::try_from(message).map_err(CompletionError::from),
         )?;
 
@@ -640,6 +641,40 @@ where
 mod tests {
     use super::*;
     use crate::client::Nothing;
+    use crate::providers::openai::completion::request_conformance;
+
+    struct LlamafileRequestHarness;
+
+    impl request_conformance::Harness for LlamafileRequestHarness {
+        fn family_name() -> &'static str {
+            "llamafile"
+        }
+
+        fn run(
+            case: request_conformance::Fixture,
+        ) -> request_conformance::Outcome<serde_json::Value> {
+            request_conformance::serialize_case(case, |request| {
+                LlamafileCompletionRequest::try_from((LLAMA_CPP, request))
+            })
+        }
+
+        fn assert(
+            case: request_conformance::Fixture,
+            actual: request_conformance::Outcome<serde_json::Value>,
+        ) {
+            request_conformance::assert_compatible_chat_case(
+                request_conformance::CompatibleChatExpectation::new(
+                    crate::providers::openai::completion::CompatibleChatProfile::new("llamafile")
+                        .unsupported_tool_choice(),
+                ),
+                LLAMA_CPP,
+                case,
+                actual,
+            );
+        }
+    }
+
+    request_conformance::provider_request_conformance_tests!(LlamafileRequestHarness);
 
     #[test]
     fn test_client_initialization() {
