@@ -1206,23 +1206,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn final_response_can_remain_empty_for_truly_textless_turns() {
+    async fn textless_stream_turns_surface_an_error() {
         let agent = AgentBuilder::new(FinalResponseMockModel {
             scenario: FinalResponseScenario::FinalOnly,
         })
         .build();
 
         let mut stream = agent.stream_prompt("say nothing").await;
-        let mut streamed_text = String::new();
-        let mut final_response_text = None;
+        let mut saw_error = false;
 
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                    text,
-                ))) => streamed_text.push_str(&text.text),
-                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
-                    final_response_text = Some(res.response().to_owned());
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Final(
+                    _,
+                ))) => {}
+                Err(StreamingError::Completion(CompletionError::ResponseError(message))) => {
+                    assert_eq!(message, "stream completed without assistant content");
+                    saw_error = true;
                     break;
                 }
                 Ok(_) => {}
@@ -1230,8 +1230,7 @@ mod tests {
             }
         }
 
-        assert!(streamed_text.is_empty());
-        assert_eq!(final_response_text.as_deref(), Some(""));
+        assert!(saw_error, "expected textless stream turn to surface an error");
     }
 
     /// Background task that logs periodically to detect span leakage.

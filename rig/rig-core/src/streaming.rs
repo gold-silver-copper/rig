@@ -218,6 +218,7 @@ where
     pub final_response_yielded: AtomicBool,
     /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
     pub message_id: Option<String>,
+    finished: bool,
 }
 
 impl<R> StreamingCompletionResponse<R>
@@ -239,6 +240,7 @@ where
             response: None,
             final_response_yielded: AtomicBool::new(false),
             message_id: None,
+            finished: false,
         }
     }
 
@@ -321,6 +323,10 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let stream = self.get_mut();
 
+        if stream.finished {
+            return Poll::Ready(None);
+        }
+
         if stream.is_paused() {
             cx.waker().wake_by_ref();
             return Poll::Pending;
@@ -332,18 +338,23 @@ where
                 // This is run at the end of the inner stream to collect all tokens into
                 // a single unified `Message`.
                 if stream.assistant_items.is_empty() {
-                    stream.assistant_items.push(AssistantContent::text(""));
+                    stream.finished = true;
+                    return Poll::Ready(Some(Err(CompletionError::ResponseError(
+                        "stream completed without assistant content".to_string(),
+                    ))));
                 }
 
                 let assistant_items = std::mem::take(&mut stream.assistant_items);
                 stream.choice = OneOrMany::from_non_empty_iter(assistant_items)
                     .unwrap_or_else(|| OneOrMany::one(AssistantContent::text("")));
+                stream.finished = true;
 
                 Poll::Ready(None)
             }
             Poll::Ready(Some(Err(err))) => {
                 if matches!(err, CompletionError::ProviderError(ref e) if e.to_string().contains("aborted"))
                 {
+                    stream.finished = true;
                     return Poll::Ready(None); // Treat cancellation as stream termination
                 }
                 Poll::Ready(Some(Err(err)))
@@ -691,6 +702,14 @@ mod tests {
         StreamingCompletionResponse::stream(to_stream_result(stream))
     }
 
+    fn create_final_only_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream = stream! {
+            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 1 }));
+        };
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
     fn create_interleaved_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
             yield Ok(RawStreamingChoice::Reasoning {
@@ -841,6 +860,22 @@ mod tests {
             choice_items.first(),
             Some(AssistantContent::Reasoning(Reasoning { id: Some(id), .. })) if id == "rs_only"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_stream_errors_when_provider_finishes_without_assistant_content() {
+        let mut stream = create_final_only_stream();
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(StreamedAssistantContent::Final(MockResponse { token_count: 1 })))
+        ));
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(CompletionError::ResponseError(message)))
+                if message == "stream completed without assistant content"
+        ));
+        assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]
