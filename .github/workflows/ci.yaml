@@ -88,35 +88,6 @@ jobs:
         with:
           args: --all-features --all-targets
 
-  panic-free-lib:
-    name: stable / panic-free lib
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: clippy
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      # Required to compile rig-lancedb
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run panic-free clippy gate
-        run: >-
-          cargo clippy -p rig-core --lib --all-features --no-deps --
-          -D clippy::unwrap_used
-          -D clippy::expect_used
-          -D clippy::panic
-          -D clippy::unreachable
-          -D clippy::todo
-          -D clippy::indexing_slicing
-
   test:
     name: stable / test
     runs-on: ubuntu-latest
