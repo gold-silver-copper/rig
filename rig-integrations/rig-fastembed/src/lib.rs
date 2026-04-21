@@ -5,7 +5,8 @@
         clippy::panic,
         clippy::todo,
         clippy::unreachable,
-        clippy::unwrap_used
+        clippy::unwrap_used,
+        clippy::indexing_slicing
     )
 )]
 
@@ -226,12 +227,9 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
                     )
                 }
             }
-            Err(error) => Self::initialization_failed(
-                None,
-                requested_model,
-                dims.unwrap_or_default(),
-                error,
-            ),
+            Err(error) => {
+                Self::initialization_failed(None, requested_model, dims.unwrap_or_default(), error)
+            }
         }
     }
 

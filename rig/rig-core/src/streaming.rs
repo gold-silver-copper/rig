@@ -869,7 +869,9 @@ mod tests {
 
         assert!(matches!(
             stream.next().await,
-            Some(Ok(StreamedAssistantContent::Final(MockResponse { token_count: 1 })))
+            Some(Ok(StreamedAssistantContent::Final(MockResponse {
+                token_count: 1
+            })))
         ));
         assert!(matches!(
             stream.next().await,

@@ -914,7 +914,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].calls.push(call.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.calls.push(call.clone());
+                                } else {
+                                    exchanges.push(GoogleSearchExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: vec![call.clone()],
+                                        results: Vec::new(),
+                                    });
+                                }
                                 index
                             } else {
                                 exchanges.push(GoogleSearchExchange {
@@ -940,7 +948,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].results.push(result.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.results.push(result.clone());
+                                } else {
+                                    exchanges.push(GoogleSearchExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: Vec::new(),
+                                        results: vec![result.clone()],
+                                    });
+                                }
                             } else {
                                 exchanges.push(GoogleSearchExchange {
                                     call_id: Some(call_id.clone()),
@@ -949,7 +965,16 @@ pub mod interactions_api_types {
                                 });
                             }
                         } else if let Some(index) = last_call_index {
-                            exchanges[index].results.push(result.clone());
+                            if let Some(exchange) = exchanges.get_mut(index) {
+                                exchange.results.push(result.clone());
+                            } else {
+                                exchanges.push(GoogleSearchExchange {
+                                    call_id: None,
+                                    calls: Vec::new(),
+                                    results: vec![result.clone()],
+                                });
+                                last_call_index = Some(exchanges.len() - 1);
+                            }
                         } else {
                             exchanges.push(GoogleSearchExchange {
                                 call_id: None,
@@ -1014,7 +1039,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].calls.push(call.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.calls.push(call.clone());
+                                } else {
+                                    exchanges.push(UrlContextExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: vec![call.clone()],
+                                        results: Vec::new(),
+                                    });
+                                }
                                 index
                             } else {
                                 exchanges.push(UrlContextExchange {
@@ -1040,7 +1073,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].results.push(result.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.results.push(result.clone());
+                                } else {
+                                    exchanges.push(UrlContextExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: Vec::new(),
+                                        results: vec![result.clone()],
+                                    });
+                                }
                             } else {
                                 exchanges.push(UrlContextExchange {
                                     call_id: Some(call_id.clone()),
@@ -1049,7 +1090,16 @@ pub mod interactions_api_types {
                                 });
                             }
                         } else if let Some(index) = last_call_index {
-                            exchanges[index].results.push(result.clone());
+                            if let Some(exchange) = exchanges.get_mut(index) {
+                                exchange.results.push(result.clone());
+                            } else {
+                                exchanges.push(UrlContextExchange {
+                                    call_id: None,
+                                    calls: Vec::new(),
+                                    results: vec![result.clone()],
+                                });
+                                last_call_index = Some(exchanges.len() - 1);
+                            }
                         } else {
                             exchanges.push(UrlContextExchange {
                                 call_id: None,
@@ -1114,7 +1164,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].calls.push(call.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.calls.push(call.clone());
+                                } else {
+                                    exchanges.push(CodeExecutionExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: vec![call.clone()],
+                                        results: Vec::new(),
+                                    });
+                                }
                                 index
                             } else {
                                 exchanges.push(CodeExecutionExchange {
@@ -1140,7 +1198,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].results.push(result.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.results.push(result.clone());
+                                } else {
+                                    exchanges.push(CodeExecutionExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: Vec::new(),
+                                        results: vec![result.clone()],
+                                    });
+                                }
                             } else {
                                 exchanges.push(CodeExecutionExchange {
                                     call_id: Some(call_id.clone()),
@@ -1149,7 +1215,16 @@ pub mod interactions_api_types {
                                 });
                             }
                         } else if let Some(index) = last_call_index {
-                            exchanges[index].results.push(result.clone());
+                            if let Some(exchange) = exchanges.get_mut(index) {
+                                exchange.results.push(result.clone());
+                            } else {
+                                exchanges.push(CodeExecutionExchange {
+                                    call_id: None,
+                                    calls: Vec::new(),
+                                    results: vec![result.clone()],
+                                });
+                                last_call_index = Some(exchanges.len() - 1);
+                            }
                         } else {
                             exchanges.push(CodeExecutionExchange {
                                 call_id: None,

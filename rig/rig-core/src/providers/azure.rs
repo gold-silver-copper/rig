@@ -467,7 +467,12 @@ where
         });
 
         if self.ndims > 0 && self.model.as_str() != TEXT_EMBEDDING_ADA_002 {
-            body["dimensions"] = json!(self.ndims);
+            let body_map = body.as_object_mut().ok_or_else(|| {
+                EmbeddingError::RequestError(Box::new(std::io::Error::other(
+                    "Azure embedding request payload must be a JSON object",
+                )))
+            })?;
+            body_map.insert("dimensions".to_owned(), json!(self.ndims));
         }
 
         let body = serde_json::to_vec(&body)?;

@@ -1,3 +1,15 @@
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unreachable,
+        clippy::unwrap_used,
+        clippy::indexing_slicing
+    )
+)]
+
 use rig::embeddings::{Embedding, EmbeddingModel};
 use rig::vector_store::request::{FilterError, SearchFilter, VectorSearchRequest};
 use rig::vector_store::{InsertDocuments, VectorStoreError, VectorStoreIndex};
@@ -399,12 +411,21 @@ impl SqliteSearchFilter {
                 Null => Ok(Value::Null),
                 Bool(b) => Ok(Value::Integer(b as i64)),
                 String(s) => Ok(Value::Text(s)),
-                Number(n) => Ok(if let Some(float) = n.as_f64() {
-                    Value::Real(float)
-                } else if let Some(int) = n.as_i64() {
+                Number(n) => Ok(if let Some(int) = n.as_i64() {
                     Value::Integer(int)
+                } else if let Some(uint) = n.as_u64() {
+                    let int = i64::try_from(uint).map_err(|_| {
+                        FilterError::Serialization(format!(
+                            "integer value {uint} exceeds SQLite i64 range"
+                        ))
+                    })?;
+                    Value::Integer(int)
+                } else if let Some(float) = n.as_f64() {
+                    Value::Real(float)
                 } else {
-                    unreachable!()
+                    return Err(FilterError::Serialization(
+                        "number value could not be represented for SQLite".to_string(),
+                    ));
                 }),
                 Array(arr) => {
                     let blob = serde_json::to_vec(&arr)
@@ -693,5 +714,24 @@ impl ColumnValue for String {
 
     fn column_type(&self) -> &'static str {
         "TEXT"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqliteSearchFilter;
+    use rig::vector_store::request::{FilterError, SearchFilter};
+
+    #[test]
+    fn compile_params_rejects_u64_values_outside_sqlite_range() {
+        let filter = SqliteSearchFilter::eq("value", serde_json::Value::from(u64::MAX));
+
+        let err = filter
+            .compile_params()
+            .expect_err("out-of-range u64 should fail");
+
+        assert!(
+            matches!(err, FilterError::Serialization(message) if message.contains("exceeds SQLite i64 range"))
+        );
     }
 }

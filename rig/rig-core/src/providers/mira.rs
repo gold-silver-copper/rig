@@ -656,9 +656,12 @@ impl TryFrom<serde_json::Value> for Message {
     type Error = CompletionError;
 
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
-        let role = value["role"].as_str().ok_or_else(|| {
-            CompletionError::ResponseError("Message missing role field".to_owned())
-        })?;
+        let role = value
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                CompletionError::ResponseError("Message missing role field".to_owned())
+            })?;
 
         // Handle both string and array content formats
         let content = match value.get("content") {

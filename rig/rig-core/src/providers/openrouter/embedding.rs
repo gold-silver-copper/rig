@@ -86,16 +86,21 @@ where
             "input": documents,
         });
 
+        let body_map = body.as_object_mut().ok_or_else(|| {
+            EmbeddingError::RequestError(Box::new(std::io::Error::other(
+                "OpenRouter embedding request payload must be a JSON object",
+            )))
+        })?;
         if self.ndims > 0 {
-            body["dimensions"] = json!(self.ndims);
+            body_map.insert("dimensions".to_owned(), json!(self.ndims));
         }
 
         if let Some(encoding_format) = &self.encoding_format {
-            body["encoding_format"] = json!(encoding_format);
+            body_map.insert("encoding_format".to_owned(), json!(encoding_format));
         }
 
         if let Some(user) = &self.user {
-            body["user"] = json!(user);
+            body_map.insert("user".to_owned(), json!(user));
         }
 
         let body = serde_json::to_vec(&body)?;

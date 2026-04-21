@@ -542,13 +542,16 @@ mod image_generation {
         type Error = ImageGenerationError;
 
         fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
-            let data = BASE64_STANDARD
-                .decode(&value.images[0].image)
-                .map_err(|error| {
-                    ImageGenerationError::ResponseError(format!(
-                        "Failed to decode Hyperbolic image payload: {error}"
-                    ))
-                })?;
+            let Some(image) = value.images.first() else {
+                return Err(ImageGenerationError::ResponseError(
+                    "Hyperbolic image response contained no images".to_string(),
+                ));
+            };
+            let data = BASE64_STANDARD.decode(&image.image).map_err(|error| {
+                ImageGenerationError::ResponseError(format!(
+                    "Failed to decode Hyperbolic image payload: {error}"
+                ))
+            })?;
 
             Ok(Self {
                 image: data,
@@ -610,6 +613,25 @@ mod image_generation {
                 ApiResponse::Ok(response) => response.try_into(),
                 ApiResponse::Err(err) => Err(ImageGenerationError::ResponseError(err.message)),
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::ImageGenerationResponse;
+        use crate::image_generation::ImageGenerationError;
+
+        #[test]
+        fn empty_image_generation_response_returns_error() {
+            let response = ImageGenerationResponse { images: Vec::new() };
+
+            let result = crate::image_generation::ImageGenerationResponse::try_from(response);
+
+            assert!(matches!(
+                result,
+                Err(ImageGenerationError::ResponseError(message))
+                    if message == "Hyperbolic image response contained no images"
+            ));
         }
     }
 }

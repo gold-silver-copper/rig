@@ -6,7 +6,8 @@
         clippy::expect_used,
         clippy::panic,
         clippy::unreachable,
-        clippy::todo
+        clippy::todo,
+        clippy::indexing_slicing
     )
 )]
 //! Rig is a Rust library for building LLM-powered applications that focuses on ergonomics and modularity.

@@ -808,8 +808,16 @@ where
         let auth = self.auth_context().await?;
         let headers = default_headers(&auth.api_key, initiator, has_vision);
         let mut request_json = serde_json::to_value(&request)?;
-        request_json["stream"] = json!(true);
-        request_json["stream_options"] = json!({ "include_usage": true });
+        let request_json_map = request_json.as_object_mut().ok_or_else(|| {
+            CompletionError::RequestError(Box::new(std::io::Error::other(
+                "Copilot chat request payload must be a JSON object",
+            )))
+        })?;
+        request_json_map.insert("stream".to_owned(), json!(true));
+        request_json_map.insert(
+            "stream_options".to_owned(),
+            json!({ "include_usage": true }),
+        );
 
         let req = apply_headers(
             post_with_auth_base(&self.client, &auth, "/chat/completions", Transport::Sse)?,
@@ -1159,14 +1167,19 @@ where
             "input": documents,
         });
 
+        let body_map = body.as_object_mut().ok_or_else(|| {
+            EmbeddingError::RequestError(Box::new(std::io::Error::other(
+                "Copilot embedding request payload must be a JSON object",
+            )))
+        })?;
         if self.ndims > 0 && self.model.as_str() != TEXT_EMBEDDING_ADA_002 {
-            body["dimensions"] = json!(self.ndims);
+            body_map.insert("dimensions".to_owned(), json!(self.ndims));
         }
         if let Some(encoding_format) = &self.encoding_format {
-            body["encoding_format"] = json!(encoding_format);
+            body_map.insert("encoding_format".to_owned(), json!(encoding_format));
         }
         if let Some(user) = &self.user {
-            body["user"] = json!(user);
+            body_map.insert("user".to_owned(), json!(user));
         }
 
         let req = apply_headers(

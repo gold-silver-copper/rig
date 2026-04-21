@@ -432,10 +432,15 @@ where
                     );
                 }
 
-                let history_snapshot: Vec<Message> = build_history_for_request(
-                    chat_history.as_deref(),
-                    &new_messages[..new_messages.len().saturating_sub(1)],
-                );
+                let Some((_, pending_history)) = new_messages.split_last() else {
+                    yield Err(StreamingError::InvariantError(
+                        "streaming loop lost the pending prompt history",
+                    ));
+                    break 'outer;
+                };
+
+                let history_snapshot: Vec<Message> =
+                    build_history_for_request(chat_history.as_deref(), pending_history);
 
                 if let Some(ref hook) = self.hook
                     && let HookAction::Terminate { reason } =
@@ -1230,7 +1235,10 @@ mod tests {
             }
         }
 
-        assert!(saw_error, "expected textless stream turn to surface an error");
+        assert!(
+            saw_error,
+            "expected textless stream turn to surface an error"
+        );
     }
 
     /// Background task that logs periodically to detect span leakage.

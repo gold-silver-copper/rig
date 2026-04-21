@@ -365,10 +365,13 @@ where
             }
 
             // Build history for hook callback (input + new messages except last)
-            let history_for_hook = build_history_for_request(
-                chat_history.as_deref(),
-                &new_messages[..new_messages.len().saturating_sub(1)],
-            );
+            let Some((_, pending_history)) = new_messages.split_last() else {
+                return Err(PromptError::InvariantError(
+                    "prompt loop lost the pending prompt history",
+                ));
+            };
+            let history_for_hook =
+                build_history_for_request(chat_history.as_deref(), pending_history);
 
             if let Some(ref hook) = self.hook
                 && let HookAction::Terminate { reason } =
@@ -412,10 +415,8 @@ where
             };
 
             // Build history for completion request (input + new messages except last)
-            let history_for_request = build_history_for_request(
-                chat_history.as_deref(),
-                &new_messages[..new_messages.len().saturating_sub(1)],
-            );
+            let history_for_request =
+                build_history_for_request(chat_history.as_deref(), pending_history);
 
             let resp = build_completion_request(
                 &self.model,

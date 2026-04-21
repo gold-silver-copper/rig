@@ -33,7 +33,12 @@ impl TryFrom<ImageGenerationResponse>
     type Error = ImageGenerationError;
 
     fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
-        let b64_json = value.data[0].b64_json.clone();
+        let Some(image_data) = value.data.first() else {
+            return Err(ImageGenerationError::ResponseError(
+                "OpenAI image response contained no images".to_string(),
+            ));
+        };
+        let b64_json = image_data.b64_json.clone();
 
         let bytes = BASE64_STANDARD.decode(&b64_json).map_err(|error| {
             ImageGenerationError::ResponseError(format!(
@@ -122,5 +127,28 @@ where
             ApiResponse::Ok(response) => response.try_into(),
             ApiResponse::Err(err) => Err(ImageGenerationError::ProviderError(err.message)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImageGenerationResponse;
+    use crate::image_generation::ImageGenerationError;
+
+    #[test]
+    fn empty_image_generation_response_returns_error() {
+        let response = ImageGenerationResponse {
+            created: 0,
+            data: Vec::new(),
+        };
+
+        let err = crate::image_generation::ImageGenerationResponse::try_from(response)
+            .expect_err("empty response should fail");
+
+        assert!(matches!(
+            err,
+            ImageGenerationError::ResponseError(message)
+                if message == "OpenAI image response contained no images"
+        ));
     }
 }
