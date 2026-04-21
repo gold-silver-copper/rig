@@ -441,11 +441,11 @@ where
             }
             StatusCode::INTERNAL_SERVER_ERROR => {
                 let text = http_client::text(response).await?;
-                Err(VerifyError::ProviderError(text))
+                Err(VerifyError::internal_server(text))
             }
             status if status.as_u16() == 529 => {
                 let text = http_client::text(response).await?;
-                Err(VerifyError::ProviderError(text))
+                Err(VerifyError::overloaded(text))
             }
             _ => {
                 let status = response.status();
@@ -454,9 +454,7 @@ where
                     Ok(())
                 } else {
                     let text: String = String::from_utf8_lossy(&response.into_body().await?).into();
-                    Err(VerifyError::HttpError(http_client::Error::Instance(
-                        format!("Failed with '{status}': {text}").into(),
-                    )))
+                    Err(VerifyError::unexpected_status(status, text))
                 }
             }
         }

@@ -439,10 +439,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -700,8 +700,8 @@ where
                     );
 
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
+                        return Err(EmbeddingError::response(
+                            "Response data length does not match input length",
                         ));
                     }
 
@@ -719,11 +719,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::provider(text))
         }
     }
 }

@@ -358,7 +358,7 @@ where
                             },
                             Err(e) => {
                                 if !sse.data.trim().is_empty() {
-                                    yield Err(CompletionError::ResponseError(
+                                    yield Err(CompletionError::response(
                                         format!("Failed to parse JSON: {} (Data: {})", e, sse.data)
                                     ));
                                 }
@@ -366,7 +366,7 @@ where
                         }
                     },
                     Err(e) => {
-                        yield Err(CompletionError::ProviderError(format!("SSE Error: {e}")));
+                        yield Err(CompletionError::provider(format!("SSE Error: {e}")));
                         break;
                     }
                 }

@@ -80,6 +80,86 @@ use std::collections::HashMap;
 use std::ops::{Add, AddAssign};
 use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum CompletionResponseError {
+    #[error("ResponseError: response contained no choices")]
+    MissingChoices,
+
+    #[error("ResponseError: response contained no parts")]
+    MissingParts,
+
+    #[error("ResponseError: response contained no output")]
+    MissingOutput,
+
+    #[error("ResponseError: no content provided")]
+    MissingContent,
+
+    #[error("ResponseError: no response candidates in response")]
+    MissingCandidates,
+
+    #[error("ResponseError: stream completed without assistant content")]
+    StreamEndedWithoutAssistantContent,
+
+    #[error("ResponseError: {context}: {details}")]
+    Context {
+        context: &'static str,
+        details: String,
+    },
+}
+
+impl CompletionResponseError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        let message = message.into();
+
+        match message.as_str() {
+            "Response contained no choices" => Self::MissingChoices,
+            "Response contained no parts" => Self::MissingParts,
+            "Response contained no output" => Self::MissingOutput,
+            "No content provided" => Self::MissingContent,
+            "No response candidates in response" => Self::MissingCandidates,
+            "stream completed without assistant content" => {
+                Self::StreamEndedWithoutAssistantContent
+            }
+            _ => Self::Context {
+                context: "invalid response",
+                details: message,
+            },
+        }
+    }
+
+    pub fn context(context: &'static str, details: impl Into<String>) -> Self {
+        Self::Context {
+            context,
+            details: details.into(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum CompletionProviderError {
+    #[error("ProviderError: request was aborted")]
+    Aborted,
+
+    #[error("ProviderError: {message}")]
+    Message { message: String },
+}
+
+impl CompletionProviderError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        let message = message.into();
+
+        if message.to_ascii_lowercase().contains("aborted") {
+            Self::Aborted
+        } else {
+            Self::Message { message }
+        }
+    }
+
+    pub fn is_aborted(&self) -> bool {
+        matches!(self, Self::Aborted)
+    }
+}
+
 // Errors
 #[derive(Debug, Error)]
 pub enum CompletionError {
@@ -106,12 +186,26 @@ pub enum CompletionError {
     RequestError(#[from] Box<dyn std::error::Error + 'static>),
 
     /// Error parsing the completion response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(CompletionResponseError),
 
     /// Error returned by the completion model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    #[error(transparent)]
+    ProviderError(CompletionProviderError),
+}
+
+impl CompletionError {
+    pub fn response(message: impl Into<String>) -> Self {
+        Self::ResponseError(CompletionResponseError::from_message(message))
+    }
+
+    pub fn response_with_context(context: &'static str, details: impl Into<String>) -> Self {
+        Self::ResponseError(CompletionResponseError::context(context, details))
+    }
+
+    pub fn provider(message: impl Into<String>) -> Self {
+        Self::ProviderError(CompletionProviderError::from_message(message))
+    }
 }
 
 /// Prompt errors
@@ -956,7 +1050,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::ProviderError(
+            Err(CompletionError::provider(
                 "dummy completion model".to_string(),
             ))
         }
@@ -965,7 +1059,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-            Err(CompletionError::ProviderError(
+            Err(CompletionError::provider(
                 "dummy completion model".to_string(),
             ))
         }
@@ -1096,5 +1190,47 @@ mod tests {
         let history = request.chat_history.into_iter().collect::<Vec<_>>();
         assert_eq!(history.len(), 1);
         assert!(matches!(&history[0], Message::User { .. }));
+    }
+
+    #[test]
+    fn completion_response_error_maps_known_messages_to_structured_variants() {
+        assert!(matches!(
+            CompletionError::response("Response contained no choices"),
+            CompletionError::ResponseError(CompletionResponseError::MissingChoices)
+        ));
+        assert!(matches!(
+            CompletionError::response("No response candidates in response"),
+            CompletionError::ResponseError(CompletionResponseError::MissingCandidates)
+        ));
+        assert!(matches!(
+            CompletionError::response("stream completed without assistant content"),
+            CompletionError::ResponseError(
+                CompletionResponseError::StreamEndedWithoutAssistantContent
+            )
+        ));
+    }
+
+    #[test]
+    fn completion_response_error_preserves_unclassified_details() {
+        assert!(matches!(
+            CompletionError::response("provider emitted malformed chunk"),
+            CompletionError::ResponseError(CompletionResponseError::Context {
+                context: "invalid response",
+                details,
+            }) if details == "provider emitted malformed chunk"
+        ));
+    }
+
+    #[test]
+    fn completion_provider_error_classifies_abort_messages() {
+        assert!(matches!(
+            CompletionError::provider("request aborted by caller"),
+            CompletionError::ProviderError(CompletionProviderError::Aborted)
+        ));
+        assert!(matches!(
+            CompletionError::provider("provider unavailable"),
+            CompletionError::ProviderError(CompletionProviderError::Message { message })
+                if message == "provider unavailable"
+        ));
     }
 }

@@ -213,7 +213,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::ProviderError(err.message)
+        EmbeddingError::provider(err.message)
     }
 }
 
@@ -221,7 +221,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
         }
     }
 }
@@ -293,7 +293,7 @@ where
 
         if !response.status().is_success() {
             let text = http_client::text(response).await?;
-            return Err(EmbeddingError::ProviderError(text));
+            return Err(EmbeddingError::provider(text));
         }
 
         let bytes: Vec<u8> = response.into_body().await?;
@@ -301,8 +301,8 @@ where
         let api_resp: EmbeddingResponse = serde_json::from_slice(&bytes)?;
 
         if api_resp.embeddings.len() != docs.len() {
-            return Err(EmbeddingError::ResponseError(
-                "Number of returned embeddings does not match input".into(),
+            return Err(EmbeddingError::response(
+                "Number of returned embeddings does not match input",
             ));
         }
         Ok(api_resp
@@ -366,9 +366,8 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         tc.function.arguments.clone(),
                     ));
                 }
-                let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-                    CompletionError::ResponseError("No content provided".to_owned())
-                })?;
+                let choice = OneOrMany::many(assistant_contents)
+                    .map_err(|_| CompletionError::response("No content provided".to_owned()))?;
                 let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
                 let completion_tokens = resp.eval_count.unwrap_or(0);
 
@@ -405,8 +404,8 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     message_id: None,
                 })
             }
-            _ => Err(CompletionError::ResponseError(
-                "Chat response does not include an assistant message".into(),
+            _ => Err(CompletionError::response(
+                "Chat response does not include an assistant message",
             )),
         }
     }
@@ -616,7 +615,7 @@ where
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(CompletionError::ProviderError(
+                return Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ));
             }
@@ -697,7 +696,7 @@ where
         let mut byte_stream = response.into_body();
 
         if !status.is_success() {
-            return Err(CompletionError::ProviderError(format!(
+            return Err(CompletionError::provider(format!(
                 "Got error status code trying to send a request to Ollama: {status}"
             )));
         }
@@ -964,8 +963,8 @@ impl TryFrom<crate::message::Message> for Vec<Message> {
                                     content: content_string,
                                 })
                             }
-                            _ => Err(crate::message::MessageError::ConversionError(
-                                "Ollama tool-result partition contained non-tool content".into(),
+                            _ => Err(crate::message::MessageError::conversion(
+                                "Ollama tool-result partition contained non-tool content",
                             )),
                         })
                         .collect::<Result<Vec<_>, _>>()
@@ -1032,8 +1031,8 @@ impl TryFrom<crate::message::Message> for Vec<Message> {
                             }
                         }
                         crate::message::AssistantContent::Image(_) => {
-                            return Err(crate::message::MessageError::ConversionError(
-                                "Ollama currently doesn't support images.".into(),
+                            return Err(crate::message::MessageError::conversion(
+                                "Ollama currently doesn't support images.",
                             ));
                         }
                     }

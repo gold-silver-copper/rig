@@ -584,7 +584,7 @@ pub struct CompletionResponse {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::provider(err.message)
     }
 }
 
@@ -592,9 +592,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
 
         let content = match &choice.message {
             Message::Assistant {
@@ -699,13 +700,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -1015,27 +1016,25 @@ impl TryFrom<message::UserContent> for UserContent {
                     DocumentSourceKind::Base64(data) => {
                         let mime = media_type
                             .ok_or_else(|| {
-                                message::MessageError::ConversionError(
-                                    "Image media type required for base64 encoding".into(),
+                                message::MessageError::conversion(
+                                    "Image media type required for base64 encoding",
                                 )
                             })?
                             .to_mime_type();
                         format!("data:{mime};base64,{data}")
                     }
                     DocumentSourceKind::Raw(_) => {
-                        return Err(message::MessageError::ConversionError(
-                            "Raw bytes not supported, encode as base64 first".into(),
+                        return Err(message::MessageError::conversion(
+                            "Raw bytes not supported, encode as base64 first",
                         ));
                     }
                     DocumentSourceKind::String(_) => {
-                        return Err(message::MessageError::ConversionError(
-                            "String source not supported for images".into(),
+                        return Err(message::MessageError::conversion(
+                            "String source not supported for images",
                         ));
                     }
                     DocumentSourceKind::Unknown => {
-                        return Err(message::MessageError::ConversionError(
-                            "Image has no data".into(),
-                        ));
+                        return Err(message::MessageError::conversion("Image has no data"));
                     }
                 };
                 Ok(UserContent::ImageUrl {
@@ -1088,12 +1087,12 @@ impl TryFrom<message::UserContent> for UserContent {
                     })
                 }
                 DocumentSourceKind::String(text) => Ok(UserContent::Text { text }),
-                DocumentSourceKind::Raw(_) => Err(message::MessageError::ConversionError(
-                    "Raw bytes not supported for documents, encode as base64 first".into(),
+                DocumentSourceKind::Raw(_) => Err(message::MessageError::conversion(
+                    "Raw bytes not supported for documents, encode as base64 first",
                 )),
-                DocumentSourceKind::Unknown => Err(message::MessageError::ConversionError(
-                    "Document has no data".into(),
-                )),
+                DocumentSourceKind::Unknown => {
+                    Err(message::MessageError::conversion("Document has no data"))
+                }
             },
 
             message::UserContent::Audio(message::Audio {
@@ -1101,26 +1100,26 @@ impl TryFrom<message::UserContent> for UserContent {
             }) => match data {
                 DocumentSourceKind::Base64(data) => {
                     let format = media_type.ok_or_else(|| {
-                        message::MessageError::ConversionError(
-                            "Audio media type required for base64 encoding".into(),
+                        message::MessageError::conversion(
+                            "Audio media type required for base64 encoding",
                         )
                     })?;
                     Ok(UserContent::InputAudio {
                         input_audio: openai::InputAudio { data, format },
                     })
                 }
-                DocumentSourceKind::Url(_) => Err(message::MessageError::ConversionError(
-                    "OpenRouter does not support audio URLs, encode as base64 first".into(),
+                DocumentSourceKind::Url(_) => Err(message::MessageError::conversion(
+                    "OpenRouter does not support audio URLs, encode as base64 first",
                 )),
-                DocumentSourceKind::Raw(_) => Err(message::MessageError::ConversionError(
-                    "Raw bytes not supported for audio, encode as base64 first".into(),
+                DocumentSourceKind::Raw(_) => Err(message::MessageError::conversion(
+                    "Raw bytes not supported for audio, encode as base64 first",
                 )),
-                DocumentSourceKind::String(_) => Err(message::MessageError::ConversionError(
-                    "String source not supported for audio".into(),
+                DocumentSourceKind::String(_) => Err(message::MessageError::conversion(
+                    "String source not supported for audio",
                 )),
-                DocumentSourceKind::Unknown => Err(message::MessageError::ConversionError(
-                    "Audio has no data".into(),
-                )),
+                DocumentSourceKind::Unknown => {
+                    Err(message::MessageError::conversion("Audio has no data"))
+                }
             },
 
             message::UserContent::Video(message::Video {
@@ -1131,27 +1130,25 @@ impl TryFrom<message::UserContent> for UserContent {
                     DocumentSourceKind::Base64(data) => {
                         let mime = media_type
                             .ok_or_else(|| {
-                                message::MessageError::ConversionError(
-                                    "Video media type required for base64 encoding".into(),
+                                message::MessageError::conversion(
+                                    "Video media type required for base64 encoding",
                                 )
                             })?
                             .to_mime_type();
                         format!("data:{mime};base64,{data}")
                     }
                     DocumentSourceKind::Raw(_) => {
-                        return Err(message::MessageError::ConversionError(
-                            "Raw bytes not supported for video, encode as base64 first".into(),
+                        return Err(message::MessageError::conversion(
+                            "Raw bytes not supported for video, encode as base64 first",
                         ));
                     }
                     DocumentSourceKind::String(_) => {
-                        return Err(message::MessageError::ConversionError(
-                            "String source not supported for video".into(),
+                        return Err(message::MessageError::conversion(
+                            "String source not supported for video",
                         ));
                     }
                     DocumentSourceKind::Unknown => {
-                        return Err(message::MessageError::ConversionError(
-                            "Video has no data".into(),
-                        ));
+                        return Err(message::MessageError::conversion("Video has no data"));
                     }
                 };
                 Ok(UserContent::VideoUrl {
@@ -1159,8 +1156,8 @@ impl TryFrom<message::UserContent> for UserContent {
                 })
             }
 
-            message::UserContent::ToolResult(_) => Err(message::MessageError::ConversionError(
-                "Tool results should be handled as separate messages".into(),
+            message::UserContent::ToolResult(_) => Err(message::MessageError::conversion(
+                "Tool results should be handled as separate messages",
             )),
         }
     }
@@ -1194,8 +1191,8 @@ impl TryFrom<OneOrMany<message::UserContent>> for Vec<Message> {
                             .collect::<Vec<_>>()
                             .join("\n"),
                     }),
-                    _ => Err(message::MessageError::ConversionError(
-                        "OpenRouter tool-result partition contained non-tool content".into(),
+                    _ => Err(message::MessageError::conversion(
+                        "OpenRouter tool-result partition contained non-tool content",
                     )),
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -1206,8 +1203,8 @@ impl TryFrom<OneOrMany<message::UserContent>> for Vec<Message> {
                 .collect::<Result<Vec<_>, _>>()?;
 
             let content = OneOrMany::many(user_content).map_err(|_| {
-                message::MessageError::ConversionError(
-                    "OpenRouter user message did not contain convertible content".into(),
+                message::MessageError::conversion(
+                    "OpenRouter user message did not contain convertible content",
                 )
             })?;
 
@@ -1475,8 +1472,8 @@ impl TryFrom<OneOrMany<message::AssistantContent>> for Vec<Message> {
                     }
                 }
                 message::AssistantContent::Image(_) => {
-                    return Err(Self::Error::ConversionError(
-                        "OpenRouter currently doesn't support images.".into(),
+                    return Err(Self::Error::conversion(
+                        "OpenRouter currently doesn't support images.",
                     ));
                 }
             }
@@ -1756,7 +1753,7 @@ where
             if status.is_success() {
                 let parsed: ApiResponse<CompletionResponse> =
                     serde_json::from_slice(&response_body).map_err(|e| {
-                        CompletionError::ResponseError(format!(
+                        CompletionError::response(format!(
                             "Failed to parse OpenRouter completion response: {}, response body: {}",
                             e,
                             String::from_utf8_lossy(&response_body)
@@ -1773,10 +1770,10 @@ where
                             "OpenRouter response: {response:?}");
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

@@ -109,13 +109,13 @@ where
         if status.is_success() {
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(api_error_response) => Err(TranscriptionError::ProviderError(
-                    api_error_response.message,
-                )),
+                ApiResponse::Err(api_error_response) => {
+                    Err(TranscriptionError::provider(api_error_response.message))
+                }
             }
         } else {
-            let str = String::from_utf8_lossy(&response_body).to_string();
-            Err(TranscriptionError::ProviderError(str))
+            let body = String::from_utf8_lossy(&response_body).into_owned();
+            Err(TranscriptionError::provider_status(status, body))
         }
     }
 }

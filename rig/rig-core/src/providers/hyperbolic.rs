@@ -176,7 +176,7 @@ pub struct CompletionResponse {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::provider(err.message)
     }
 }
 
@@ -184,9 +184,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
 
         let content = match &choice.message {
             Message::Assistant {
@@ -218,13 +219,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 );
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -410,10 +411,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -543,15 +544,11 @@ mod image_generation {
 
         fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
             let Some(image) = value.images.first() else {
-                return Err(ImageGenerationError::ResponseError(
-                    "Hyperbolic image response contained no images".to_string(),
-                ));
+                return Err(ImageGenerationError::missing_images("Hyperbolic"));
             };
-            let data = BASE64_STANDARD.decode(&image.image).map_err(|error| {
-                ImageGenerationError::ResponseError(format!(
-                    "Failed to decode Hyperbolic image payload: {error}"
-                ))
-            })?;
+            let data = BASE64_STANDARD
+                .decode(&image.image)
+                .map_err(|error| ImageGenerationError::decode_payload("Hyperbolic", error))?;
 
             Ok(Self {
                 image: data,
@@ -603,15 +600,13 @@ mod image_generation {
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(ImageGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(ImageGenerationError::provider_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<ImageGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(ImageGenerationError::ResponseError(err.message)),
+                ApiResponse::Err(err) => Err(ImageGenerationError::provider(err.message)),
             }
         }
     }
@@ -629,8 +624,11 @@ mod image_generation {
 
             assert!(matches!(
                 result,
-                Err(ImageGenerationError::ResponseError(message))
-                    if message == "Hyperbolic image response contained no images"
+                Err(ImageGenerationError::ResponseError(
+                    crate::image_generation::ImageGenerationResponseError::MissingImages {
+                        provider: "Hyperbolic"
+                    }
+                ))
             ));
         }
     }
@@ -673,11 +671,9 @@ mod audio_generation {
         type Error = AudioGenerationError;
 
         fn try_from(value: AudioGenerationResponse) -> Result<Self, Self::Error> {
-            let data = BASE64_STANDARD.decode(&value.audio).map_err(|error| {
-                AudioGenerationError::ResponseError(format!(
-                    "Failed to decode Hyperbolic audio payload: {error}"
-                ))
-            })?;
+            let data = BASE64_STANDARD
+                .decode(&value.audio)
+                .map_err(|error| AudioGenerationError::decode_payload("Hyperbolic", error))?;
 
             Ok(Self {
                 audio: data,
@@ -725,15 +721,13 @@ mod audio_generation {
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(AudioGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(AudioGenerationError::provider_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<AudioGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(AudioGenerationError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(AudioGenerationError::provider(err.message)),
             }
         }
     }

@@ -92,9 +92,9 @@ where
                     self.usage = final_response.usage();
                 }
                 Err(e) => {
-                    break Err(PromptError::CompletionError(
-                        CompletionError::ResponseError(e.to_string()),
-                    ));
+                    break Err(PromptError::CompletionError(CompletionError::response(
+                        e.to_string(),
+                    )));
                 }
                 _ => continue,
             }

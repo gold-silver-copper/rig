@@ -438,10 +438,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -593,14 +593,13 @@ where
         if status.is_success() {
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(api_error_response) => Err(TranscriptionError::ProviderError(
-                    api_error_response.message,
-                )),
+                ApiResponse::Err(api_error_response) => {
+                    Err(TranscriptionError::provider(api_error_response.message))
+                }
             }
         } else {
-            Err(TranscriptionError::ProviderError(
-                String::from_utf8_lossy(&response_body).to_string(),
-            ))
+            let body = String::from_utf8_lossy(&response_body).into_owned();
+            Err(TranscriptionError::provider_status(status, body))
         }
     }
 }

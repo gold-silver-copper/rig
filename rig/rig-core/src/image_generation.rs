@@ -2,8 +2,45 @@
 //! Rig allows calling a number of different providers (that support image generation) using the [ImageGenerationModel] trait.
 use crate::http_client;
 use crate::markers::{Missing, Provided};
+use http::StatusCode;
 use serde_json::Value;
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ImageGenerationResponseError {
+    #[error("ResponseError: {provider} image response contained no images")]
+    MissingImages { provider: &'static str },
+
+    #[error("ResponseError: failed to decode {provider} image payload: {source}")]
+    Base64Decode {
+        provider: &'static str,
+        #[source]
+        source: base64::DecodeError,
+    },
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+#[derive(Debug, Error)]
+pub enum ImageGenerationProviderError {
+    #[error("ProviderError: image generation endpoint is not supported yet for {provider}")]
+    UnsupportedEndpoint { provider: String },
+
+    #[error("ProviderError: request failed with status {status}: {body}")]
+    Status { status: StatusCode, body: String },
+
+    #[error("ProviderError: {message}")]
+    Message { message: String },
+}
+
+impl ImageGenerationProviderError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ImageGenerationError {
@@ -20,12 +57,45 @@ pub enum ImageGenerationError {
     RequestError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
     /// Error parsing the transcription response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(ImageGenerationResponseError),
 
     /// Error returned by the transcription model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    #[error(transparent)]
+    ProviderError(ImageGenerationProviderError),
+}
+
+impl ImageGenerationError {
+    pub fn missing_images(provider: &'static str) -> Self {
+        Self::ResponseError(ImageGenerationResponseError::MissingImages { provider })
+    }
+
+    pub fn decode_payload(provider: &'static str, source: base64::DecodeError) -> Self {
+        Self::ResponseError(ImageGenerationResponseError::Base64Decode { provider, source })
+    }
+
+    pub fn response_message(message: impl Into<String>) -> Self {
+        Self::ResponseError(ImageGenerationResponseError::Message {
+            message: message.into(),
+        })
+    }
+
+    pub fn provider(message: impl Into<String>) -> Self {
+        Self::ProviderError(ImageGenerationProviderError::from_message(message))
+    }
+
+    pub fn provider_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::ProviderError(ImageGenerationProviderError::Status {
+            status,
+            body: body.into(),
+        })
+    }
+
+    pub fn unsupported_endpoint(provider: impl Into<String>) -> Self {
+        Self::ProviderError(ImageGenerationProviderError::UnsupportedEndpoint {
+            provider: provider.into(),
+        })
+    }
 }
 pub trait ImageGeneration<M>
 where
@@ -162,5 +232,34 @@ where
         let model = self.model.clone();
 
         model.image_generation(self.build()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImageGenerationError, ImageGenerationProviderError, ImageGenerationResponseError};
+    use http::StatusCode;
+
+    #[test]
+    fn image_generation_error_builders_preserve_structure() {
+        assert!(matches!(
+            ImageGenerationError::missing_images("OpenAI"),
+            ImageGenerationError::ResponseError(ImageGenerationResponseError::MissingImages {
+                provider: "OpenAI"
+            })
+        ));
+        assert!(matches!(
+            ImageGenerationError::provider_status(StatusCode::BAD_GATEWAY, "bad gateway"),
+            ImageGenerationError::ProviderError(ImageGenerationProviderError::Status {
+                status,
+                body,
+            }) if status == StatusCode::BAD_GATEWAY && body == "bad gateway"
+        ));
+        assert!(matches!(
+            ImageGenerationError::unsupported_endpoint("custom-subprovider"),
+            ImageGenerationError::ProviderError(
+                ImageGenerationProviderError::UnsupportedEndpoint { provider }
+            ) if provider == "custom-subprovider"
+        ));
     }
 }

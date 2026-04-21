@@ -165,9 +165,8 @@ impl TryFrom<message::Message> for Vec<Message> {
                             // reasoning items. Silently skip to avoid crashing the process.
                         }
                         message::AssistantContent::Image(_) => {
-                            return Err(message::MessageError::ConversionError(
-                                "Image content is not currently supported on Mistral via Rig"
-                                    .into(),
+                            return Err(message::MessageError::conversion(
+                                "Image content is not currently supported on Mistral via Rig",
                             ));
                         }
                     }
@@ -322,7 +321,7 @@ impl TryFrom<message::ToolChoice> for ToolChoice {
             message::ToolChoice::None => Self::None,
             message::ToolChoice::Required => Self::Any,
             message::ToolChoice::Specific { .. } => {
-                return Err(CompletionError::ProviderError(
+                return Err(CompletionError::provider(
                     "Mistral doesn't support requiring specific tools to be called".to_string(),
                 ));
             }
@@ -492,9 +491,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
         let content = match &choice.message {
             Message::Assistant {
                 content,
@@ -521,13 +521,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 );
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -562,8 +562,8 @@ fn assistant_content_to_streaming_choices(
             RawStreamingToolCall::new(tc.id, tc.function.name, tc.function.arguments),
         )]),
         message::AssistantContent::Reasoning(_) => Ok(Vec::new()),
-        message::AssistantContent::Image(_) => Err(CompletionError::ResponseError(
-            "Image content is not supported on Mistral via Rig".into(),
+        message::AssistantContent::Image(_) => Err(CompletionError::response(
+            "Image content is not supported on Mistral via Rig",
         )),
     }
 }
@@ -635,11 +635,11 @@ where
                         span.record_response_metadata(&response);
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
                 let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider(text))
             }
         }
         .instrument(span)

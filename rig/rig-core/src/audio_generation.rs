@@ -5,8 +5,39 @@ use crate::{
     http_client,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
+use http::StatusCode;
 use serde_json::Value;
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum AudioGenerationResponseError {
+    #[error("ResponseError: failed to decode {provider} audio payload: {source}")]
+    Base64Decode {
+        provider: &'static str,
+        #[source]
+        source: base64::DecodeError,
+    },
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+#[derive(Debug, Error)]
+pub enum AudioGenerationProviderError {
+    #[error("ProviderError: request failed with status {status}: {body}")]
+    Status { status: StatusCode, body: String },
+
+    #[error("ProviderError: {message}")]
+    Message { message: String },
+}
+
+impl AudioGenerationProviderError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum AudioGenerationError {
@@ -23,12 +54,35 @@ pub enum AudioGenerationError {
     RequestError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
     /// Error parsing the transcription response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(AudioGenerationResponseError),
 
     /// Error returned by the transcription model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    #[error(transparent)]
+    ProviderError(AudioGenerationProviderError),
+}
+
+impl AudioGenerationError {
+    pub fn decode_payload(provider: &'static str, source: base64::DecodeError) -> Self {
+        Self::ResponseError(AudioGenerationResponseError::Base64Decode { provider, source })
+    }
+
+    pub fn response_message(message: impl Into<String>) -> Self {
+        Self::ResponseError(AudioGenerationResponseError::Message {
+            message: message.into(),
+        })
+    }
+
+    pub fn provider(message: impl Into<String>) -> Self {
+        Self::ProviderError(AudioGenerationProviderError::from_message(message))
+    }
+
+    pub fn provider_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::ProviderError(AudioGenerationProviderError::Status {
+            status,
+            body: body.into(),
+        })
+    }
 }
 pub trait AudioGeneration<M>
 where
@@ -168,5 +222,22 @@ where
         let model = self.model.clone();
 
         model.audio_generation(self.build()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AudioGenerationError, AudioGenerationProviderError};
+    use http::StatusCode;
+
+    #[test]
+    fn audio_generation_provider_status_preserves_http_context() {
+        assert!(matches!(
+            AudioGenerationError::provider_status(StatusCode::BAD_GATEWAY, "bad gateway"),
+            AudioGenerationError::ProviderError(AudioGenerationProviderError::Status {
+                status,
+                body,
+            }) if status == StatusCode::BAD_GATEWAY && body == "bad gateway"
+        ));
     }
 }

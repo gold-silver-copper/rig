@@ -181,9 +181,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
 
         match &choice.message {
             Message {
@@ -201,7 +202,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 raw_response: response,
                 message_id: None,
             }),
-            _ => Err(CompletionError::ResponseError(
+            _ => Err(CompletionError::response(
                 "Response contained no assistant message".to_owned(),
             )),
         }
@@ -291,7 +292,7 @@ impl TryFrom<message::Message> for Message {
                     .into_iter()
                     .map(|content| match content {
                         message::UserContent::Text(message::Text { text }) => Ok(text),
-                        _ => Err(MessageError::ConversionError(
+                        _ => Err(MessageError::conversion(
                             "Only text content is supported by Perplexity".to_owned(),
                         )),
                     })
@@ -310,7 +311,7 @@ impl TryFrom<message::Message> for Message {
                     .map(|content| {
                         Ok(match content {
                             message::AssistantContent::Text(message::Text { text }) => text,
-                            _ => return Err(MessageError::ConversionError(
+                            _ => return Err(MessageError::conversion(
                                 "Only text assistant message content is supported by Perplexity"
                                     .to_owned(),
                             )),
@@ -428,10 +429,10 @@ where
                         }
                         Ok(response.try_into()?)
                     }
-                    ApiResponse::Err(error) => Err(CompletionError::ProviderError(error.message)),
+                    ApiResponse::Err(error) => Err(CompletionError::provider(error.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

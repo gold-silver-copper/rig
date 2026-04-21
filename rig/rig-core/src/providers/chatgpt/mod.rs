@@ -420,7 +420,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::ProviderError(err.to_string()))?;
+            .map_err(|err| CompletionError::provider(err.to_string()))?;
 
         let req = self
             .add_auth_headers(self.client.post("/responses")?, &auth)
@@ -433,9 +433,9 @@ where
 
         match raw_response.clone().try_into() {
             Ok(response) => Ok(response),
-            Err(CompletionError::ResponseError(message))
-                if message == "Response contained no parts" =>
-            {
+            Err(CompletionError::ResponseError(
+                crate::completion::CompletionResponseError::MissingParts,
+            )) => {
                 responses_api::streaming::completion_response_from_sse_body(
                     &text,
                     raw_response,
@@ -551,7 +551,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::ProviderError(err.to_string()))?;
+            .map_err(|err| CompletionError::provider(err.to_string()))?;
 
         let req = self
             .add_auth_headers(self.client.post("/responses")?, &auth)

@@ -125,7 +125,7 @@ pub const GPT_4_1: &str = "gpt-4.1";
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::provider(err.message)
     }
 }
 
@@ -391,7 +391,7 @@ impl TryFrom<crate::message::ToolChoice> for ToolChoice {
     fn try_from(value: crate::message::ToolChoice) -> Result<Self, Self::Error> {
         let res = match value {
             message::ToolChoice::Specific { .. } => {
-                return Err(CompletionError::ProviderError(
+                return Err(CompletionError::provider(
                     "Provider doesn't support only using specific tools".to_string(),
                 ));
             }
@@ -421,14 +421,11 @@ impl TryFrom<message::ToolResult> for Message {
         let text = value
             .content
             .into_iter()
-            .map(|content| {
-                match content {
+            .map(|content| match content {
                 message::ToolResultContent::Text(message::Text { text }) => Ok(text),
-                message::ToolResultContent::Image(_) => Err(message::MessageError::ConversionError(
-                    "OpenAI does not support images in tool results. Tool results must be text."
-                        .into(),
+                message::ToolResultContent::Image(_) => Err(message::MessageError::conversion(
+                    "OpenAI does not support images in tool results. Tool results must be text.",
                 )),
-            }
             })
             .collect::<Result<Vec<_>, _>>()?
             .join("\n");
@@ -462,28 +459,28 @@ impl TryFrom<message::UserContent> for UserContent {
                     let url = format!(
                         "data:{};base64,{}",
                         media_type.map(|i| i.to_mime_type()).ok_or(
-                            message::MessageError::ConversionError(
-                                "OpenAI Image URI must have media type".into()
+                            message::MessageError::conversion(
+                                "OpenAI Image URI must have media type"
                             )
                         )?,
                         data
                     );
 
-                    let detail = detail.ok_or(message::MessageError::ConversionError(
-                        "OpenAI image URI must have image detail".into(),
+                    let detail = detail.ok_or(message::MessageError::conversion(
+                        "OpenAI image URI must have image detail",
                     ))?;
 
                     Ok(UserContent::Image {
                         image_url: ImageUrl { url, detail },
                     })
                 }
-                DocumentSourceKind::Raw(_) => Err(message::MessageError::ConversionError(
-                    "Raw files not supported, encode as base64 first".into(),
+                DocumentSourceKind::Raw(_) => Err(message::MessageError::conversion(
+                    "Raw files not supported, encode as base64 first",
                 )),
-                DocumentSourceKind::Unknown => Err(message::MessageError::ConversionError(
-                    "Document has no body".into(),
-                )),
-                doc => Err(message::MessageError::ConversionError(format!(
+                DocumentSourceKind::Unknown => {
+                    Err(message::MessageError::conversion("Document has no body"))
+                }
+                doc => Err(message::MessageError::conversion(format!(
                     "Unsupported document type: {doc:?}"
                 ))),
             },
@@ -491,8 +488,8 @@ impl TryFrom<message::UserContent> for UserContent {
                 if let DocumentSourceKind::Base64(text) | DocumentSourceKind::String(text) = data {
                     Ok(UserContent::Text { text })
                 } else {
-                    Err(message::MessageError::ConversionError(
-                        "Documents must be base64 or a string".into(),
+                    Err(message::MessageError::conversion(
+                        "Documents must be base64 or a string",
                     ))
                 }
             }
@@ -508,24 +505,24 @@ impl TryFrom<message::UserContent> for UserContent {
                         },
                     },
                 }),
-                DocumentSourceKind::Url(_) => Err(message::MessageError::ConversionError(
-                    "URLs are not supported for audio".into(),
+                DocumentSourceKind::Url(_) => Err(message::MessageError::conversion(
+                    "URLs are not supported for audio",
                 )),
-                DocumentSourceKind::Raw(_) => Err(message::MessageError::ConversionError(
-                    "Raw files are not supported for audio".into(),
+                DocumentSourceKind::Raw(_) => Err(message::MessageError::conversion(
+                    "Raw files are not supported for audio",
                 )),
-                DocumentSourceKind::Unknown => Err(message::MessageError::ConversionError(
-                    "Audio has no body".into(),
-                )),
-                audio => Err(message::MessageError::ConversionError(format!(
+                DocumentSourceKind::Unknown => {
+                    Err(message::MessageError::conversion("Audio has no body"))
+                }
+                audio => Err(message::MessageError::conversion(format!(
                     "Unsupported audio type: {audio:?}"
                 ))),
             },
-            message::UserContent::ToolResult(_) => Err(message::MessageError::ConversionError(
-                "Tool result is in unsupported format".into(),
+            message::UserContent::ToolResult(_) => Err(message::MessageError::conversion(
+                "Tool result is in unsupported format",
             )),
-            message::UserContent::Video(_) => Err(message::MessageError::ConversionError(
-                "Video is in unsupported format".into(),
+            message::UserContent::Video(_) => Err(message::MessageError::conversion(
+                "Video is in unsupported format",
             )),
         }
     }
@@ -546,8 +543,8 @@ impl TryFrom<OneOrMany<message::UserContent>> for Vec<Message> {
                 .into_iter()
                 .map(|content| match content {
                     message::UserContent::ToolResult(tool_result) => tool_result.try_into(),
-                    _ => Err(message::MessageError::ConversionError(
-                        "OpenAI tool-result partition contained non-tool content".into(),
+                    _ => Err(message::MessageError::conversion(
+                        "OpenAI tool-result partition contained non-tool content",
                     )),
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -558,8 +555,8 @@ impl TryFrom<OneOrMany<message::UserContent>> for Vec<Message> {
                 .collect::<Result<Vec<_>, _>>()?;
 
             let other_content = OneOrMany::many(other_content).map_err(|_| {
-                message::MessageError::ConversionError(
-                    "OpenAI user message did not contain convertible content".into(),
+                message::MessageError::conversion(
+                    "OpenAI user message did not contain convertible content",
                 )
             })?;
 
@@ -587,9 +584,8 @@ impl TryFrom<OneOrMany<message::AssistantContent>> for Vec<Message> {
                     // Silently skip unsupported reasoning content.
                 }
                 message::AssistantContent::Image(_) => {
-                    return Err(message::MessageError::ConversionError(
-                        "The OpenAI Completions API doesn't support image content in assistant messages!"
-                            .into(),
+                    return Err(message::MessageError::conversion(
+                        "The OpenAI Completions API doesn't support image content in assistant messages!",
                     ));
                 }
             }
@@ -691,7 +687,7 @@ impl TryFrom<Message> for message::Message {
                 message::Message::Assistant {
                     id: None,
                     content: OneOrMany::many(content).map_err(|_| {
-                        message::MessageError::ConversionError(
+                        message::MessageError::conversion(
                             "Neither `content` nor `tool_calls` was provided to the Message"
                                 .to_owned(),
                         )
@@ -798,9 +794,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
 
         let content = match &choice.message {
             Message::Assistant {
@@ -837,13 +834,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 );
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -1322,11 +1319,11 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
                 let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider(text))
             }
         }
         .instrument(span)

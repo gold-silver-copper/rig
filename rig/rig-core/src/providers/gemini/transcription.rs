@@ -129,8 +129,8 @@ where
 
             Ok(transcription::TranscriptionResponse::try_from(body)?)
         } else {
-            let text = String::from_utf8_lossy(&response.into_body().await?).into();
-            Err(TranscriptionError::ProviderError(text))
+            let text = String::from_utf8_lossy(&response.into_body().await?).into_owned();
+            Err(TranscriptionError::provider(text))
         }
     }
 }
@@ -141,9 +141,10 @@ impl TryFrom<GenerateContentResponse>
     type Error = TranscriptionError;
 
     fn try_from(response: GenerateContentResponse) -> Result<Self, Self::Error> {
-        let candidate = response.candidates.first().ok_or_else(|| {
-            TranscriptionError::ResponseError("No response candidates in response".into())
-        })?;
+        let candidate = response
+            .candidates
+            .first()
+            .ok_or_else(TranscriptionError::missing_candidates)?;
 
         let part = candidate
             .content
@@ -155,16 +156,8 @@ impl TryFrom<GenerateContentResponse>
                 part: PartKind::Text(text),
                 ..
             }) => text,
-            None => {
-                return Err(TranscriptionError::ResponseError(
-                    "Response content contains no text".to_string(),
-                ));
-            }
-            _ => {
-                return Err(TranscriptionError::ResponseError(
-                    "Response content was not text".to_string(),
-                ));
-            }
+            None => return Err(TranscriptionError::missing_text()),
+            _ => return Err(TranscriptionError::non_text_response()),
         };
 
         Ok(transcription::TranscriptionResponse {

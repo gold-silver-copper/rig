@@ -169,9 +169,9 @@ where
                         .await
                         .map_err(CompletionError::HttpError)?,
                 )
-                .into();
+                .into_owned();
 
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider(text))
             }
         }
         .instrument(span)
@@ -387,7 +387,7 @@ impl TryFrom<Vec<completion::ToolDefinition>> for Tool {
                                 "Tool '{}' could not be converted to a schema: {:?}",
                                 tool.name, e,
                             );
-                            return Err(CompletionError::ProviderError(emsg));
+                            return Err(CompletionError::provider(emsg));
                         }
                     }
                 };
@@ -410,9 +410,10 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
     type Error = CompletionError;
 
     fn try_from(response: GenerateContentResponse) -> Result<Self, Self::Error> {
-        let candidate = response.candidates.first().ok_or_else(|| {
-            CompletionError::ResponseError("No response candidates in response".into())
-        })?;
+        let candidate = response
+            .candidates
+            .first()
+            .ok_or_else(|| CompletionError::response("No response candidates in response"))?;
 
         let content = candidate
             .content
@@ -427,7 +428,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                     .finish_message
                     .as_deref()
                     .unwrap_or("no finish message provided");
-                CompletionError::ResponseError(format!(
+                CompletionError::response(format!(
                     "Gemini candidate missing content ({reason}, finish_message={message})"
                 ))
             })?
@@ -465,7 +466,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                                     )
                                 }
                                 _ => {
-                                    return Err(CompletionError::ResponseError(format!(
+                                    return Err(CompletionError::response(format!(
                                         "Unsupported media type {mime_type:?}"
                                     )));
                                 }
@@ -484,8 +485,8 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                             )
                         }
                         _ => {
-                            return Err(CompletionError::ResponseError(
-                                "Response did not contain a message or tool call".into(),
+                            return Err(CompletionError::response(
+                                "Response did not contain a message or tool call",
                             ));
                         }
                     })
@@ -494,7 +495,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             .collect::<Result<Vec<_>, _>>()?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -783,12 +784,12 @@ pub mod gemini_api_types {
                     PartKind::InlineData(Blob { mime_type, data })
                 }
                 DocumentSourceKind::Raw(_) => {
-                    return Err(message::MessageError::ConversionError(
-                        "Raw files not supported, encode as base64 first".into(),
+                    return Err(message::MessageError::conversion(
+                        "Raw files not supported, encode as base64 first",
                     ));
                 }
                 DocumentSourceKind::Unknown => {
-                    return Err(message::MessageError::ConversionError(
+                    return Err(message::MessageError::conversion(
                         "Can't convert an unknown document source".to_string(),
                     ));
                 }
@@ -841,7 +842,7 @@ pub mod gemini_api_types {
                                         let mime_type = image
                                             .media_type
                                             .as_ref()
-                                            .ok_or(message::MessageError::ConversionError(
+                                            .ok_or(message::MessageError::conversion(
                                                 "Image media type is required for Gemini tool results".to_string(),
                                             ))?
                                             .to_mime_type();
@@ -870,7 +871,7 @@ pub mod gemini_api_types {
                                         }
                                     }
                                     _ => {
-                                        return Err(message::MessageError::ConversionError(
+                                        return Err(message::MessageError::conversion(
                                             "Unsupported image source kind for tool results"
                                                 .to_string(),
                                         ));
@@ -909,11 +910,11 @@ pub mod gemini_api_types {
                                 additional_params: None,
                             })
                         }
-                        _ => Err(message::MessageError::ConversionError(format!(
+                        _ => Err(message::MessageError::conversion(format!(
                             "Unsupported image media type {media_type:?}"
                         ))),
                     },
-                    None => Err(message::MessageError::ConversionError(
+                    None => Err(message::MessageError::conversion(
                         "Media type for image is required for Gemini".to_string(),
                     )),
                 },
@@ -921,7 +922,7 @@ pub mod gemini_api_types {
                     data, media_type, ..
                 }) => {
                     let Some(media_type) = media_type else {
-                        return Err(MessageError::ConversionError(
+                        return Err(MessageError::conversion(
                             "A mime type is required for document inputs to Gemini".to_string(),
                         ));
                     };
@@ -949,13 +950,13 @@ pub mod gemini_api_types {
                                     base64::engine::general_purpose::STANDARD
                                         .decode(&data)
                                         .map_err(|e| {
-                                            MessageError::ConversionError(format!(
+                                            MessageError::conversion(format!(
                                                 "Failed to decode base64: {e}"
                                             ))
                                         })?,
                                 )
                                 .map_err(|e| {
-                                    MessageError::ConversionError(format!(
+                                    MessageError::conversion(format!(
                                         "Invalid UTF-8 in document: {e}"
                                     ))
                                 })?;
@@ -966,12 +967,12 @@ pub mod gemini_api_types {
                                 file_uri,
                             }),
                             DocumentSourceKind::Raw(_) => {
-                                return Err(MessageError::ConversionError(
+                                return Err(MessageError::conversion(
                                     "Raw files not supported, encode as base64 first".to_string(),
                                 ));
                             }
                             DocumentSourceKind::Unknown => {
-                                return Err(MessageError::ConversionError(
+                                return Err(MessageError::conversion(
                                     "Document has no body".to_string(),
                                 ));
                             }
@@ -994,12 +995,12 @@ pub mod gemini_api_types {
                                 PartKind::InlineData(Blob { mime_type, data })
                             }
                             DocumentSourceKind::Raw(_) => {
-                                return Err(message::MessageError::ConversionError(
-                                    "Raw files not supported, encode as base64 first".into(),
+                                return Err(message::MessageError::conversion(
+                                    "Raw files not supported, encode as base64 first",
                                 ));
                             }
                             _ => {
-                                return Err(message::MessageError::ConversionError(
+                                return Err(message::MessageError::conversion(
                                     "Document has no body".to_string(),
                                 ));
                             }
@@ -1011,7 +1012,7 @@ pub mod gemini_api_types {
                             ..Default::default()
                         })
                     } else {
-                        Err(message::MessageError::ConversionError(format!(
+                        Err(message::MessageError::conversion(format!(
                             "Unsupported document media type {media_type:?}"
                         )))
                     }
@@ -1021,7 +1022,7 @@ pub mod gemini_api_types {
                     data, media_type, ..
                 }) => {
                     let Some(media_type) = media_type else {
-                        return Err(MessageError::ConversionError(
+                        return Err(MessageError::conversion(
                             "A mime type is required for audio inputs to Gemini".to_string(),
                         ));
                     };
@@ -1038,17 +1039,17 @@ pub mod gemini_api_types {
                             file_uri,
                         }),
                         DocumentSourceKind::String(_) => {
-                            return Err(message::MessageError::ConversionError(
-                                "Strings cannot be used as audio files!".into(),
+                            return Err(message::MessageError::conversion(
+                                "Strings cannot be used as audio files!",
                             ));
                         }
                         DocumentSourceKind::Raw(_) => {
-                            return Err(message::MessageError::ConversionError(
-                                "Raw files not supported, encode as base64 first".into(),
+                            return Err(message::MessageError::conversion(
+                                "Raw files not supported, encode as base64 first",
                             ));
                         }
                         DocumentSourceKind::Unknown => {
-                            return Err(message::MessageError::ConversionError(
+                            return Err(message::MessageError::conversion(
                                 "Content has no body".to_string(),
                             ));
                         }
@@ -1077,7 +1078,7 @@ pub mod gemini_api_types {
                                 })
                             } else {
                                 if mime_type.is_none() {
-                                    return Err(MessageError::ConversionError(
+                                    return Err(MessageError::conversion(
                                         "A mime type is required for non-Youtube video file inputs to Gemini"
                                             .to_string(),
                                     ));
@@ -1091,7 +1092,7 @@ pub mod gemini_api_types {
                         }
                         DocumentSourceKind::Base64(data) => {
                             let Some(mime_type) = mime_type else {
-                                return Err(MessageError::ConversionError(
+                                return Err(MessageError::conversion(
                                     "A media type is expected for base64 encoded strings"
                                         .to_string(),
                                 ));
@@ -1099,17 +1100,17 @@ pub mod gemini_api_types {
                             PartKind::InlineData(Blob { mime_type, data })
                         }
                         DocumentSourceKind::String(_) => {
-                            return Err(message::MessageError::ConversionError(
-                                "Strings cannot be used as audio files!".into(),
+                            return Err(message::MessageError::conversion(
+                                "Strings cannot be used as audio files!",
                             ));
                         }
                         DocumentSourceKind::Raw(_) => {
-                            return Err(message::MessageError::ConversionError(
-                                "Raw file data not supported, encode as base64 first".into(),
+                            return Err(message::MessageError::conversion(
+                                "Raw file data not supported, encode as base64 first",
                             ));
                         }
                         DocumentSourceKind::Unknown => {
-                            return Err(message::MessageError::ConversionError(
+                            return Err(message::MessageError::conversion(
                                 "Media type for video is required for Gemini".to_string(),
                             ));
                         }
@@ -1149,11 +1150,11 @@ pub mod gemini_api_types {
                                 additional_params: None,
                             })
                         }
-                        _ => Err(message::MessageError::ConversionError(format!(
+                        _ => Err(message::MessageError::conversion(format!(
                             "Unsupported image media type {media_type:?}"
                         ))),
                     },
-                    None => Err(message::MessageError::ConversionError(
+                    None => Err(message::MessageError::conversion(
                         "Media type for image is required for Gemini".to_string(),
                     )),
                 },
@@ -1634,9 +1635,7 @@ pub mod gemini_api_types {
         };
 
         let Some(defs_obj) = defs_value.as_object() else {
-            return Err(CompletionError::ResponseError(
-                "$defs must be an object".into(),
-            ));
+            return Err(CompletionError::response("$defs must be an object"));
         };
 
         resolve_refs(&mut schema, defs_obj)?;
@@ -1665,7 +1664,7 @@ pub mod gemini_api_types {
                     let def_name = parse_ref_path(ref_str)?;
 
                     let def = defs.get(&def_name).ok_or_else(|| {
-                        CompletionError::ResponseError(format!("Reference not found: {}", ref_str))
+                        CompletionError::response(format!("Reference not found: {}", ref_str))
                     })?;
 
                     let mut resolved = def.clone();
@@ -1701,13 +1700,13 @@ pub mod gemini_api_types {
             } else if let Some(name) = fragment.strip_prefix("/definitions/") {
                 Ok(name.to_string())
             } else {
-                Err(CompletionError::ResponseError(format!(
+                Err(CompletionError::response(format!(
                     "Unsupported reference format: {}",
                     ref_str
                 )))
             }
         } else {
-            Err(CompletionError::ResponseError(format!(
+            Err(CompletionError::response(format!(
                 "Only fragment references (#/...) are supported: {}",
                 ref_str
             )))
@@ -1909,8 +1908,8 @@ pub mod gemini_api_types {
                     items,
                 })
             } else {
-                Err(CompletionError::ResponseError(
-                    "Expected a JSON object for Schema".into(),
+                Err(CompletionError::response(
+                    "Expected a JSON object for Schema",
                 ))
             }
         }

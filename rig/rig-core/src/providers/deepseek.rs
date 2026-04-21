@@ -123,7 +123,7 @@ enum ApiResponse<T> {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::provider(err.message)
     }
 }
 
@@ -385,9 +385,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
         let content = match &choice.message {
             Message::Assistant {
                 content,
@@ -420,13 +421,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -618,10 +619,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

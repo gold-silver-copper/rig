@@ -4,9 +4,60 @@
 use crate::markers::{Missing, Provided};
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use crate::{http_client, json_utils};
+use http::StatusCode;
 use std::io;
 use std::{fs, path::Path};
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TranscriptionResponseError {
+    #[error("ResponseError: no response candidates in response")]
+    MissingCandidates,
+
+    #[error("ResponseError: response content contains no text")]
+    MissingText,
+
+    #[error("ResponseError: response content was not text")]
+    NonTextResponse,
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+impl TranscriptionResponseError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        let message = message.into();
+
+        match message.as_str() {
+            "No response candidates in response" => Self::MissingCandidates,
+            "Response content contains no text" => Self::MissingText,
+            "Response content was not text" => Self::NonTextResponse,
+            _ => Self::Message { message },
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TranscriptionProviderError {
+    #[error("ProviderError: transcription endpoint is not supported yet for {provider}")]
+    UnsupportedEndpoint { provider: String },
+
+    #[error("ProviderError: request failed with status {status}: {body}")]
+    Status { status: StatusCode, body: String },
+
+    #[error("ProviderError: {message}")]
+    Message { message: String },
+}
+
+impl TranscriptionProviderError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
 
 // Errors
 #[derive(Debug, Error)]
@@ -31,12 +82,47 @@ pub enum TranscriptionError {
     RequestError(#[from] Box<dyn std::error::Error + 'static>),
 
     /// Error parsing the transcription response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(TranscriptionResponseError),
 
     /// Error returned by the transcription model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    #[error(transparent)]
+    ProviderError(TranscriptionProviderError),
+}
+
+impl TranscriptionError {
+    pub fn response(message: impl Into<String>) -> Self {
+        Self::ResponseError(TranscriptionResponseError::from_message(message))
+    }
+
+    pub fn missing_candidates() -> Self {
+        Self::ResponseError(TranscriptionResponseError::MissingCandidates)
+    }
+
+    pub fn missing_text() -> Self {
+        Self::ResponseError(TranscriptionResponseError::MissingText)
+    }
+
+    pub fn non_text_response() -> Self {
+        Self::ResponseError(TranscriptionResponseError::NonTextResponse)
+    }
+
+    pub fn provider(message: impl Into<String>) -> Self {
+        Self::ProviderError(TranscriptionProviderError::from_message(message))
+    }
+
+    pub fn provider_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::ProviderError(TranscriptionProviderError::Status {
+            status,
+            body: body.into(),
+        })
+    }
+
+    pub fn unsupported_endpoint(provider: impl Into<String>) -> Self {
+        Self::ProviderError(TranscriptionProviderError::UnsupportedEndpoint {
+            provider: provider.into(),
+        })
+    }
 }
 
 /// Trait defining a low-level LLM transcription interface
@@ -285,5 +371,42 @@ where
     pub async fn send(self) -> Result<TranscriptionResponse<M::Response>, TranscriptionError> {
         let model = self.model.clone();
         model.transcription(self.build()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TranscriptionError, TranscriptionProviderError, TranscriptionResponseError};
+    use http::StatusCode;
+
+    #[test]
+    fn transcription_response_error_maps_known_messages() {
+        assert!(matches!(
+            TranscriptionError::response("No response candidates in response"),
+            TranscriptionError::ResponseError(TranscriptionResponseError::MissingCandidates)
+        ));
+        assert!(matches!(
+            TranscriptionError::response("Response content contains no text"),
+            TranscriptionError::ResponseError(TranscriptionResponseError::MissingText)
+        ));
+        assert!(matches!(
+            TranscriptionError::response("Response content was not text"),
+            TranscriptionError::ResponseError(TranscriptionResponseError::NonTextResponse)
+        ));
+    }
+
+    #[test]
+    fn transcription_provider_error_captures_status_and_unsupported_endpoint() {
+        assert!(matches!(
+            TranscriptionError::provider_status(StatusCode::BAD_GATEWAY, "upstream failed"),
+            TranscriptionError::ProviderError(TranscriptionProviderError::Status { status, body })
+                if status == StatusCode::BAD_GATEWAY && body == "upstream failed"
+        ));
+        assert!(matches!(
+            TranscriptionError::unsupported_endpoint("custom-subprovider"),
+            TranscriptionError::ProviderError(
+                TranscriptionProviderError::UnsupportedEndpoint { provider }
+            ) if provider == "custom-subprovider"
+        ));
     }
 }

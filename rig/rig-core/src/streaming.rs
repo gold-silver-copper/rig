@@ -339,8 +339,8 @@ where
                 // a single unified `Message`.
                 if stream.assistant_items.is_empty() {
                     stream.finished = true;
-                    return Poll::Ready(Some(Err(CompletionError::ResponseError(
-                        "stream completed without assistant content".to_string(),
+                    return Poll::Ready(Some(Err(CompletionError::response(
+                        "stream completed without assistant content",
                     ))));
                 }
 
@@ -352,8 +352,7 @@ where
                 Poll::Ready(None)
             }
             Poll::Ready(Some(Err(err))) => {
-                if matches!(err, CompletionError::ProviderError(ref e) if e.to_string().contains("aborted"))
-                {
+                if matches!(err, CompletionError::ProviderError(ref e) if e.is_aborted()) {
                     stream.finished = true;
                     return Poll::Ready(None); // Treat cancellation as stream termination
                 }
@@ -875,8 +874,9 @@ mod tests {
         ));
         assert!(matches!(
             stream.next().await,
-            Some(Err(CompletionError::ResponseError(message)))
-                if message == "stream completed without assistant content"
+            Some(Err(CompletionError::ResponseError(
+                crate::completion::CompletionResponseError::StreamEndedWithoutAssistantContent
+            )))
         ));
         assert!(stream.next().await.is_none());
     }

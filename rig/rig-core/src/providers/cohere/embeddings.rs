@@ -148,11 +148,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(error) => Err(EmbeddingError::ProviderError(error.message)),
+                ApiResponse::Err(error) => Err(EmbeddingError::provider(error.message)),
             }
         } else {
-            let text = String::from_utf8_lossy(&response.into_body().await?).into();
-            Err(EmbeddingError::ProviderError(text))
+            let text = String::from_utf8_lossy(&response.into_body().await?).into_owned();
+            Err(EmbeddingError::provider(text))
         }
     }
 }

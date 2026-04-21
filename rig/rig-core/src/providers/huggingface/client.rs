@@ -36,9 +36,7 @@ impl SubProvider {
     pub fn transcription_endpoint(&self, model: &str) -> Result<String, TranscriptionError> {
         match self {
             SubProvider::HFInference => Ok(format!("/{model}")),
-            _ => Err(TranscriptionError::ProviderError(format!(
-                "transcription endpoint is not supported yet for {self}"
-            ))),
+            _ => Err(TranscriptionError::unsupported_endpoint(self.to_string())),
         }
     }
 
@@ -49,9 +47,7 @@ impl SubProvider {
     pub fn image_generation_endpoint(&self, model: &str) -> Result<String, ImageGenerationError> {
         match self {
             SubProvider::HFInference => Ok(format!("/{model}")),
-            _ => Err(ImageGenerationError::ProviderError(format!(
-                "image generation endpoint is not supported yet for {self}"
-            ))),
+            _ => Err(ImageGenerationError::unsupported_endpoint(self.to_string())),
         }
     }
 

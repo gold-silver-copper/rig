@@ -215,7 +215,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .collect::<Result<Vec<_>, _>>()?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -459,7 +459,7 @@ impl TryFrom<message::ImageMediaType> for ImageFormat {
             message::ImageMediaType::GIF => ImageFormat::GIF,
             message::ImageMediaType::WEBP => ImageFormat::WEBP,
             _ => {
-                return Err(MessageError::ConversionError(
+                return Err(MessageError::conversion(
                     format!("Unsupported image media type: {media_type:?}").to_owned(),
                 ));
             }
@@ -483,7 +483,7 @@ impl TryFrom<DocumentMediaType> for DocumentFormat {
     fn try_from(value: DocumentMediaType) -> Result<Self, Self::Error> {
         match value {
             DocumentMediaType::PDF => Ok(DocumentFormat::PDF),
-            other => Err(MessageError::ConversionError(format!(
+            other => Err(MessageError::conversion(format!(
                 "DocumentFormat only supports PDF for base64 sources, got: {}",
                 other.to_mime_type()
             ))),
@@ -499,7 +499,7 @@ impl TryFrom<message::AssistantContent> for Content {
                 text,
                 cache_control: None,
             }),
-            message::AssistantContent::Image(_) => Err(MessageError::ConversionError(
+            message::AssistantContent::Image(_) => Err(MessageError::conversion(
                 "Anthropic currently doesn't support images.".to_string(),
             )),
             message::AssistantContent::ToolCall(message::ToolCall { id, function, .. }) => {
@@ -525,7 +525,7 @@ fn anthropic_content_from_assistant_content(
             text,
             cache_control: None,
         }]),
-        message::AssistantContent::Image(_) => Err(MessageError::ConversionError(
+        message::AssistantContent::Image(_) => Err(MessageError::conversion(
             "Anthropic currently doesn't support images.".to_string(),
         )),
         message::AssistantContent::ToolCall(message::ToolCall { id, function, .. }) => {
@@ -559,7 +559,7 @@ fn anthropic_content_from_assistant_content(
             }
 
             if converted.is_empty() {
-                return Err(MessageError::ConversionError(
+                return Err(MessageError::conversion(
                     "Cannot convert empty reasoning content to Anthropic format".to_string(),
                 ));
             }
@@ -591,13 +591,13 @@ impl TryFrom<message::Message> for Message {
                             }
                             message::ToolResultContent::Image(image) => {
                                 let DocumentSourceKind::Base64(data) = image.data else {
-                                    return Err(MessageError::ConversionError(
+                                    return Err(MessageError::conversion(
                                         "Only base64 strings can be used with the Anthropic API"
                                             .to_string(),
                                     ));
                                 };
                                 let media_type =
-                                    image.media_type.ok_or(MessageError::ConversionError(
+                                    image.media_type.ok_or(MessageError::conversion(
                                         "Image media type is required".to_owned(),
                                     ))?;
                                 Ok(ToolResultContent::Image(ImageSource::Base64 {
@@ -615,7 +615,7 @@ impl TryFrom<message::Message> for Message {
                         let source = match data {
                             DocumentSourceKind::Base64(data) => {
                                 let media_type =
-                                    media_type.ok_or(MessageError::ConversionError(
+                                    media_type.ok_or(MessageError::conversion(
                                         "Image media type is required for Claude API".to_string(),
                                     ))?;
                                 ImageSource::Base64 {
@@ -625,12 +625,12 @@ impl TryFrom<message::Message> for Message {
                             }
                             DocumentSourceKind::Url(url) => ImageSource::Url { url },
                             DocumentSourceKind::Unknown => {
-                                return Err(MessageError::ConversionError(
-                                    "Image content has no body".into(),
+                                return Err(MessageError::conversion(
+                                    "Image content has no body",
                                 ));
                             }
                             doc => {
-                                return Err(MessageError::ConversionError(format!(
+                                return Err(MessageError::conversion(format!(
                                     "Unsupported document type: {doc:?}"
                                 )));
                             }
@@ -644,7 +644,7 @@ impl TryFrom<message::Message> for Message {
                     message::UserContent::Document(message::Document {
                         data, media_type, ..
                     }) => {
-                        let media_type = media_type.ok_or(MessageError::ConversionError(
+                        let media_type = media_type.ok_or(MessageError::conversion(
                             "Document media type is required".to_string(),
                         ))?;
 
@@ -654,8 +654,8 @@ impl TryFrom<message::Message> for Message {
                                     DocumentSourceKind::Base64(data)
                                     | DocumentSourceKind::String(data) => data,
                                     _ => {
-                                        return Err(MessageError::ConversionError(
-                                            "Only base64 encoded data is supported for PDF documents".into(),
+                                        return Err(MessageError::conversion(
+                                            "Only base64 encoded data is supported for PDF documents",
                                         ));
                                     }
                                 };
@@ -669,8 +669,8 @@ impl TryFrom<message::Message> for Message {
                                     DocumentSourceKind::String(data)
                                     | DocumentSourceKind::Base64(data) => data,
                                     _ => {
-                                        return Err(MessageError::ConversionError(
-                                            "Only string or base64 data is supported for plain text documents".into(),
+                                        return Err(MessageError::conversion(
+                                            "Only string or base64 data is supported for plain text documents",
                                         ));
                                     }
                                 };
@@ -680,7 +680,7 @@ impl TryFrom<message::Message> for Message {
                                 }
                             }
                             other => {
-                                return Err(MessageError::ConversionError(format!(
+                                return Err(MessageError::conversion(format!(
                                     "Anthropic only supports PDF and plain text documents, got: {}",
                                     other.to_mime_type()
                                 )));
@@ -692,10 +692,10 @@ impl TryFrom<message::Message> for Message {
                             cache_control: None,
                         })
                     }
-                    message::UserContent::Audio { .. } => Err(MessageError::ConversionError(
+                    message::UserContent::Audio { .. } => Err(MessageError::conversion(
                         "Audio is not supported in Anthropic".to_owned(),
                     )),
-                    message::UserContent::Video { .. } => Err(MessageError::ConversionError(
+                    message::UserContent::Video { .. } => Err(MessageError::conversion(
                         "Video is not supported in Anthropic".to_owned(),
                     )),
                 })?,
@@ -721,7 +721,7 @@ impl TryFrom<message::Message> for Message {
 
                 Message {
                     content: OneOrMany::many(converted_content).map_err(|_| {
-                        MessageError::ConversionError(
+                        MessageError::conversion(
                             "Assistant message did not contain Anthropic-compatible content"
                                 .to_owned(),
                         )
@@ -752,7 +752,7 @@ impl TryFrom<Content> for message::AssistantContent {
                 message::AssistantContent::Reasoning(Reasoning::redacted(data))
             }
             _ => {
-                return Err(MessageError::ConversionError(
+                return Err(MessageError::conversion(
                     "Content did not contain a message, tool call, or reasoning".to_owned(),
                 ));
             }
@@ -825,7 +825,7 @@ impl TryFrom<Message> for message::Message {
                             }
                         },
                         _ => {
-                            return Err(MessageError::ConversionError(
+                            return Err(MessageError::conversion(
                                 "Unsupported content type for User role".to_owned(),
                             ));
                         }
@@ -1014,15 +1014,15 @@ impl TryFrom<message::ToolChoice> for ToolChoice {
             message::ToolChoice::Required => Self::Any,
             message::ToolChoice::Specific { function_names } => {
                 if function_names.len() != 1 {
-                    return Err(CompletionError::ProviderError(
-                        "Only one tool may be specified to be used by Claude".into(),
+                    return Err(CompletionError::provider(
+                        "Only one tool may be specified to be used by Claude",
                     ));
                 }
 
                 Self::Tool {
                     name: function_names.first().cloned().ok_or_else(|| {
-                        CompletionError::ProviderError(
-                            "Claude tool choice requires exactly one function name".into(),
+                        CompletionError::provider(
+                            "Claude tool choice requires exactly one function name",
                         )
                     })?,
                 }
@@ -1453,7 +1453,7 @@ where
                         completion.try_into()
                     }
                     ApiResponse::Error(ApiErrorResponse { message }) => {
-                        Err(CompletionError::ResponseError(message))
+                        Err(CompletionError::response(message))
                     }
                 }
             } else {
@@ -1464,7 +1464,7 @@ where
                         .map_err(CompletionError::HttpError)?,
                 )
                 .into();
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider(text))
             }
         }
         .instrument(span)

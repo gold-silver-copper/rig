@@ -120,7 +120,7 @@ impl TryFrom<RawMessage> for message::Message {
                     text: raw.content,
                 })),
             }),
-            _ => Err(CompletionError::ResponseError(format!(
+            _ => Err(CompletionError::response(format!(
                 "Unsupported message role: {}",
                 raw.role
             ))),
@@ -397,7 +397,7 @@ where
                 .client
                 .send::<_, bytes::Bytes>(req)
                 .await
-                .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+                .map_err(|e| CompletionError::provider(e.to_string()))?;
 
             let status = response.status();
             let response_body = response.into_body().into_future().await?.to_vec();
@@ -405,7 +405,7 @@ where
             if !status.is_success() {
                 let status = status.as_u16();
                 let error_text = String::from_utf8_lossy(&response_body).to_string();
-                return Err(CompletionError::ProviderError(format!(
+                return Err(CompletionError::provider(format!(
                     "API error: {status} - {error_text}"
                 )));
             }
@@ -506,7 +506,7 @@ where
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::provider(err.message)
     }
 }
 
@@ -517,7 +517,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         let (content, usage) = match &response {
             CompletionResponse::Structured { choices, usage, .. } => {
                 let choice = choices.first().ok_or_else(|| {
-                    CompletionError::ResponseError("Response contained no choices".to_owned())
+                    CompletionError::response("Response contained no choices".to_owned())
                 })?;
 
                 let usage = usage
@@ -537,7 +537,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 let content = match message {
                     Message::Assistant { content, .. } => {
                         if content.is_empty() {
-                            return Err(CompletionError::ResponseError(
+                            return Err(CompletionError::response(
                                 "Response contained empty content".to_owned(),
                             ));
                         }
@@ -554,7 +554,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         content.iter().map(|c| {
                             match c {
                                 AssistantContent::Text(text) => Ok(completion::AssistantContent::text(&text.text)),
-                                other => Err(CompletionError::ResponseError(
+                                other => Err(CompletionError::response(
                                     format!("Unsupported content type: {other:?}. The Mira provider currently only supports text content")
                                 ))
                             }
@@ -562,13 +562,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     }
                     Message::User { .. } => {
                         tracing::warn!(target: "rig", "Received user message in response where assistant message was expected");
-                        return Err(CompletionError::ResponseError(
+                        return Err(CompletionError::response(
                             "Received user message in response where assistant message was expected".to_owned()
                         ));
                     }
                     Message::System { .. } => {
                         tracing::warn!(target: "rig", "Received system message in response where assistant message was expected");
-                        return Err(CompletionError::ResponseError(
+                        return Err(CompletionError::response(
                             "Received system message in response where assistant message was expected".to_owned(),
                         ));
                     }
@@ -583,7 +583,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         };
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -659,9 +659,7 @@ impl TryFrom<serde_json::Value> for Message {
         let role = value
             .get("role")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                CompletionError::ResponseError("Message missing role field".to_owned())
-            })?;
+            .ok_or_else(|| CompletionError::response("Message missing role field".to_owned()))?;
 
         // Handle both string and array content formats
         let content = match value.get("content") {
@@ -677,13 +675,13 @@ impl TryFrom<serde_json::Value> for Message {
                     .collect::<Vec<_>>()
                     .join("\n"),
                 _ => {
-                    return Err(CompletionError::ResponseError(
+                    return Err(CompletionError::response(
                         "Message content must be string or array".to_owned(),
                     ));
                 }
             },
             None => {
-                return Err(CompletionError::ResponseError(
+                return Err(CompletionError::response(
                     "Message missing content field".to_owned(),
                 ));
             }
@@ -698,7 +696,7 @@ impl TryFrom<serde_json::Value> for Message {
                 id: None,
                 content: OneOrMany::one(AssistantContent::Text(message::Text { text: content })),
             }),
-            _ => Err(CompletionError::ResponseError(format!(
+            _ => Err(CompletionError::response(format!(
                 "Unsupported message role: {role}"
             ))),
         }

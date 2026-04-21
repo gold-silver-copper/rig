@@ -252,8 +252,8 @@ where
                             && profile.should_evict(existing, &incoming)
                         {
                             let Some(evicted) = tool_calls.remove(&incoming.index) else {
-                                yield Err(CompletionError::ResponseError(
-                                    "streaming tool call disappeared before eviction".into(),
+                                yield Err(CompletionError::response(
+                                    "streaming tool call disappeared before eviction",
                                 ));
                                 return;
                             };
@@ -344,7 +344,7 @@ where
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
                     terminated_with_error = true;
-                    yield Err(CompletionError::ProviderError(error.to_string()));
+                    yield Err(CompletionError::provider(error.to_string()));
                     break;
                 }
             }
@@ -678,9 +678,7 @@ mod tests {
                     CompatibleFinishReason::Other,
                     vec![tool_call_chunk(0, Some("call_123"), Some("ping"), Some(""))],
                 )))),
-                "bad" => Err(CompletionError::ProviderError(
-                    "normalize failed".to_owned(),
-                )),
+                "bad" => Err(CompletionError::provider("normalize failed".to_owned())),
                 _ => Ok(None),
             }
         }

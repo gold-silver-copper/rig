@@ -35,8 +35,8 @@ impl CompletionResponse {
                 tool_calls,
                 ..
             } => Ok((content, citations, tool_calls)),
-            _ => Err(CompletionError::ResponseError(
-                "Cohere completion response did not contain an assistant message".into(),
+            _ => Err(CompletionError::response(
+                "Cohere completion response did not contain an assistant message",
             )),
         }
     }
@@ -154,7 +154,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     .collect::<Vec<_>>(),
             )
             .map_err(|_| {
-                CompletionError::ResponseError(
+                CompletionError::response(
                     "Cohere response declared tool calls but provided none".to_owned(),
                 )
             })?
@@ -166,7 +166,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 }
             }))
             .map_err(|_| {
-                CompletionError::ResponseError(
+                CompletionError::response(
                     "Response contained no message or tool call (empty)".to_owned(),
                 )
             })?
@@ -384,12 +384,12 @@ impl TryFrom<message::Message> for Vec<Message> {
                             message::ToolResultContent::Text(text) => {
                                 Ok(ToolResultContent::Text { text: text.text })
                             }
-                            _ => Err(message::MessageError::ConversionError(
+                            _ => Err(message::MessageError::conversion(
                                 "Only text tool result content is supported by Cohere".to_owned(),
                             )),
                         })?,
                     }),
-                    _ => Err(message::MessageError::ConversionError(
+                    _ => Err(message::MessageError::conversion(
                         "Only text content is supported by Cohere".to_owned(),
                     )),
                 })
@@ -428,7 +428,7 @@ impl TryFrom<message::Message> for Vec<Message> {
                             text_content.push(AssistantContent::Thinking { thinking });
                         }
                         message::AssistantContent::Image(_) => {
-                            return Err(message::MessageError::ConversionError(
+                            return Err(message::MessageError::conversion(
                                 "Cohere currently doesn't support images.".to_owned(),
                             ));
                         }
@@ -487,7 +487,7 @@ impl TryFrom<Message> for message::Message {
                 }));
 
                 let content = OneOrMany::many(content).map_err(|_| {
-                    message::MessageError::ConversionError(
+                    message::MessageError::conversion(
                         "Expected either text content or tool calls".to_string(),
                     )
                 })?;
@@ -504,7 +504,7 @@ impl TryFrom<Message> for message::Message {
                         ToolResultContent::Document { document } => {
                             message::ToolResultContent::text(
                                 serde_json::to_string(&document.data).map_err(|e| {
-                                    message::MessageError::ConversionError(
+                                    message::MessageError::conversion(
                                         format!("Failed to convert tool result document content into text: {e}"),
                                     )
                                 })?,
@@ -689,7 +689,7 @@ where
                     json_response.try_into()?;
                 Ok(completion)
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&body).to_string(),
                 ))
             }

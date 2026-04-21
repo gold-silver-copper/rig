@@ -132,7 +132,7 @@ where
 
                 Ok(docs)
             }
-            ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
         }
     }
 }

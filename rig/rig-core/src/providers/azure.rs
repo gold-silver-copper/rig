@@ -385,7 +385,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::ProviderError(err.message)
+        EmbeddingError::provider(err.message)
     }
 }
 
@@ -393,7 +393,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
         }
     }
 }
@@ -497,8 +497,8 @@ where
                     );
 
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
+                        return Err(EmbeddingError::response(
+                            "Response data length does not match input length",
                         ));
                     }
 
@@ -512,11 +512,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::provider(text))
         }
     }
 }
@@ -764,10 +764,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -909,14 +909,13 @@ where
         if status.is_success() {
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(api_error_response) => Err(TranscriptionError::ProviderError(
-                    api_error_response.message,
-                )),
+                ApiResponse::Err(api_error_response) => {
+                    Err(TranscriptionError::provider(api_error_response.message))
+                }
             }
         } else {
-            Err(TranscriptionError::ProviderError(
-                String::from_utf8_lossy(&response_body).to_string(),
-            ))
+            let body = String::from_utf8_lossy(&response_body).into_owned();
+            Err(TranscriptionError::provider_status(status, body))
         }
     }
 }
@@ -984,15 +983,13 @@ mod image_generation {
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(ImageGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(ImageGenerationError::provider_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<ImageGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(ImageGenerationError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(ImageGenerationError::provider(err.message)),
             }
         }
     }
@@ -1066,10 +1063,8 @@ mod audio_generation {
             let response_body = response.into_body().into_future().await?;
 
             if !status.is_success() {
-                return Err(AudioGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(AudioGenerationError::provider_status(status, body));
             }
 
             Ok(AudioGenerationResponse {

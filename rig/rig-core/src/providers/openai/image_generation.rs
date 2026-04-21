@@ -34,17 +34,13 @@ impl TryFrom<ImageGenerationResponse>
 
     fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
         let Some(image_data) = value.data.first() else {
-            return Err(ImageGenerationError::ResponseError(
-                "OpenAI image response contained no images".to_string(),
-            ));
+            return Err(ImageGenerationError::missing_images("OpenAI"));
         };
         let b64_json = image_data.b64_json.clone();
 
-        let bytes = BASE64_STANDARD.decode(&b64_json).map_err(|error| {
-            ImageGenerationError::ResponseError(format!(
-                "Failed to decode OpenAI image payload: {error}"
-            ))
-        })?;
+        let bytes = BASE64_STANDARD
+            .decode(&b64_json)
+            .map_err(|error| ImageGenerationError::decode_payload("OpenAI", error))?;
 
         Ok(image_generation::ImageGenerationResponse {
             image: bytes,
@@ -115,17 +111,14 @@ where
             let status = response.status();
             let text = http_client::text(response).await?;
 
-            return Err(ImageGenerationError::ProviderError(format!(
-                "{}: {}",
-                status, text,
-            )));
+            return Err(ImageGenerationError::provider_status(status, text));
         }
 
         let text = http_client::text(response).await?;
 
         match serde_json::from_str::<ApiResponse<ImageGenerationResponse>>(&text)? {
             ApiResponse::Ok(response) => response.try_into(),
-            ApiResponse::Err(err) => Err(ImageGenerationError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(ImageGenerationError::provider(err.message)),
         }
     }
 }
@@ -147,8 +140,11 @@ mod tests {
 
         assert!(matches!(
             err,
-            ImageGenerationError::ResponseError(message)
-                if message == "OpenAI image response contained no images"
+            ImageGenerationError::ResponseError(
+                crate::image_generation::ImageGenerationResponseError::MissingImages {
+                    provider: "OpenAI"
+                }
+            )
         ));
     }
 }

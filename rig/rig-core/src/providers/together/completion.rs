@@ -304,10 +304,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Error(err) => Err(CompletionError::ProviderError(err.error)),
+                    ApiResponse::Error(err) => Err(CompletionError::provider(err.error)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -348,7 +348,7 @@ impl TryFrom<crate::message::ToolChoice> for ToolChoice {
                 Self::Function(vec)
             }
             choice => {
-                return Err(CompletionError::ProviderError(format!(
+                return Err(CompletionError::provider(format!(
                     "Unsupported tool choice type: {choice:?}"
                 )));
             }

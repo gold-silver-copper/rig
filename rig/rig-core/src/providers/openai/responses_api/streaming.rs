@@ -245,7 +245,7 @@ pub(crate) fn parse_sse_completion_body(
     }
 
     completed.ok_or_else(|| {
-        CompletionError::ProviderError(
+        CompletionError::provider(
             provider_error.unwrap_or_else(|| {
                 format!("{provider_name} stream did not yield response.completed")
             }),
@@ -351,7 +351,7 @@ impl RawChoiceAccumulator {
                             "{provider_name} returned a terminal response without an error message"
                         )
                     });
-                Err(CompletionError::ProviderError(error_message))
+                Err(CompletionError::provider(error_message))
             }
             _ => Ok(()),
         }
@@ -516,8 +516,8 @@ pub(crate) fn raw_choices_from_sse_body(
                         Some("response.failed") => ResponseChunkKind::ResponseFailed,
                         Some("response.incomplete") => ResponseChunkKind::ResponseIncomplete,
                         _ => {
-                            return Err(CompletionError::ResponseError(
-                                "unexpected OpenAI Responses terminal event type".into(),
+                            return Err(CompletionError::response(
+                                "unexpected OpenAI Responses terminal event type",
                             ));
                         }
                     };
@@ -530,7 +530,7 @@ pub(crate) fn raw_choices_from_sse_body(
                     .and_then(|error| error.get("message"))
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(data);
-                return Err(CompletionError::ProviderError(message.to_owned()));
+                return Err(CompletionError::provider(message.to_owned()));
             }
             _ => {}
         }
@@ -566,7 +566,7 @@ pub(crate) async fn completion_response_from_sse_body(
     }
 
     if choice_is_empty(&stream.choice) {
-        return Err(CompletionError::ResponseError(
+        return Err(CompletionError::response(
             "Response contained no parts".to_owned(),
         ));
     }
@@ -694,7 +694,7 @@ where
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
                     terminated_with_error = true;
-                    yield Err(CompletionError::ProviderError(error.to_string()));
+                    yield Err(CompletionError::provider(error.to_string()));
                     break;
                 }
             }

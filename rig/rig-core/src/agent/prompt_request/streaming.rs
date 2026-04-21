@@ -1021,7 +1021,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::ProviderError(
+            Err(CompletionError::provider(
                 "completion is unused in this streaming test".to_string(),
             ))
         }
@@ -1048,7 +1048,7 @@ mod tests {
                     ));
                     yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(4)));
                 } else if let Some(error) = validation_error {
-                    yield Err(CompletionError::ProviderError(error));
+                    yield Err(CompletionError::provider(error));
                 } else {
                     yield Ok(RawStreamingChoice::Message("done".to_string()));
                     yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(6)));
@@ -1152,7 +1152,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::ProviderError(
+            Err(CompletionError::provider(
                 "completion is unused in this streaming test".to_string(),
             ))
         }
@@ -1225,8 +1225,9 @@ mod tests {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Final(
                     _,
                 ))) => {}
-                Err(StreamingError::Completion(CompletionError::ResponseError(message))) => {
-                    assert_eq!(message, "stream completed without assistant content");
+                Err(StreamingError::Completion(CompletionError::ResponseError(
+                    crate::completion::CompletionResponseError::StreamEndedWithoutAssistantContent,
+                ))) => {
                     saw_error = true;
                     break;
                 }

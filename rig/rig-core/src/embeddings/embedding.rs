@@ -13,6 +13,57 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
+pub enum EmbeddingResponseError {
+    #[error("ResponseError: response data length does not match input length")]
+    MismatchedEmbeddingCount,
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+impl EmbeddingResponseError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        let message = message.into();
+
+        match message.as_str() {
+            "Response data length does not match input length"
+            | "Number of returned embeddings does not match input" => {
+                Self::MismatchedEmbeddingCount
+            }
+            _ => Self::Message { message },
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EmbeddingProviderError {
+    #[error("ProviderError: {message}")]
+    Message { message: String },
+}
+
+impl EmbeddingProviderError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EmbeddingInitializationError {
+    #[error("InitializationError: {message}")]
+    Message { message: String },
+}
+
+impl EmbeddingInitializationError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum EmbeddingError {
     /// Http error (e.g.: connection error, timeout, etc.)
     #[error("HttpError: {0}")]
@@ -46,16 +97,16 @@ pub enum EmbeddingError {
     DocumentError(Box<dyn std::error::Error + 'static>),
 
     /// Error parsing the completion response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(EmbeddingResponseError),
 
     /// Error returned by the embedding model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    #[error(transparent)]
+    ProviderError(EmbeddingProviderError),
 
     /// The embedding backend or local runtime could not be initialized.
-    #[error("InitializationError: {0}")]
-    InitializationError(String),
+    #[error(transparent)]
+    InitializationError(EmbeddingInitializationError),
 
     /// The embedding backend returned no embeddings for a request that should produce one.
     #[error("EmptyResponse: embedding backend returned no embeddings")]
@@ -64,6 +115,20 @@ pub enum EmbeddingError {
     /// The embedding backend omitted the embedding for a specific document.
     #[error("MissingEmbeddingForDocument: backend omitted embedding for document index {index}")]
     MissingEmbeddingForDocument { index: usize },
+}
+
+impl EmbeddingError {
+    pub fn response(message: impl Into<String>) -> Self {
+        Self::ResponseError(EmbeddingResponseError::from_message(message))
+    }
+
+    pub fn provider(message: impl Into<String>) -> Self {
+        Self::ProviderError(EmbeddingProviderError::from_message(message))
+    }
+
+    pub fn initialization(message: impl Into<String>) -> Self {
+        Self::InitializationError(EmbeddingInitializationError::from_message(message))
+    }
 }
 
 /// Trait for embedding models that can generate embeddings for documents.
@@ -142,3 +207,43 @@ impl PartialEq for Embedding {
 }
 
 impl Eq for Embedding {}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EmbeddingError, EmbeddingInitializationError, EmbeddingProviderError,
+        EmbeddingResponseError,
+    };
+
+    #[test]
+    fn embedding_response_error_maps_count_mismatches() {
+        assert!(matches!(
+            EmbeddingError::response("Response data length does not match input length"),
+            EmbeddingError::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
+        ));
+        assert!(matches!(
+            EmbeddingError::response("Number of returned embeddings does not match input"),
+            EmbeddingError::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
+        ));
+    }
+
+    #[test]
+    fn embedding_error_preserves_unclassified_messages() {
+        assert!(matches!(
+            EmbeddingError::response("embedding payload missing vector"),
+            EmbeddingError::ResponseError(EmbeddingResponseError::Message { message })
+                if message == "embedding payload missing vector"
+        ));
+        assert!(matches!(
+            EmbeddingError::provider("provider throttled request"),
+            EmbeddingError::ProviderError(EmbeddingProviderError::Message { message })
+                if message == "provider throttled request"
+        ));
+        assert!(matches!(
+            EmbeddingError::initialization("tokenizer failed to load"),
+            EmbeddingError::InitializationError(EmbeddingInitializationError::Message {
+                message
+            }) if message == "tokenizer failed to load"
+        ));
+    }
+}

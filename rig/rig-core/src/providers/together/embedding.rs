@@ -38,7 +38,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::ProviderError(err.message())
+        EmbeddingError::provider(err.message())
     }
 }
 
@@ -46,7 +46,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Error(err) => Err(EmbeddingError::ProviderError(err.message())),
+            ApiResponse::Error(err) => Err(EmbeddingError::provider(err.message())),
         }
     }
 }
@@ -113,8 +113,8 @@ where
             match body {
                 ApiResponse::Ok(response) => {
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
+                        return Err(EmbeddingError::response(
+                            "Response data length does not match input length",
                         ));
                     }
 
@@ -132,11 +132,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Error(err) => Err(EmbeddingError::ProviderError(err.message())),
+                ApiResponse::Error(err) => Err(EmbeddingError::provider(err.message())),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::provider(text))
         }
     }
 }

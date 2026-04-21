@@ -232,7 +232,7 @@ pub struct CompletionResponse {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::provider(err.message)
     }
 }
 
@@ -240,9 +240,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let Choice { message, .. } = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let Choice { message, .. } = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
 
         let mut content = message
             .content
@@ -259,7 +260,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         }));
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -327,7 +328,7 @@ impl TryFrom<Message> for message::Message {
                         .content
                         .map(|content| message::UserContent::text(&content))
                         .ok_or_else(|| {
-                            message::MessageError::ConversionError("Empty user message".to_string())
+                            message::MessageError::conversion("Empty user message".to_string())
                         })?,
                 ),
             }),
@@ -345,10 +346,10 @@ impl TryFrom<Message> for message::Message {
                         ),
                 )
                 .map_err(|_| {
-                    message::MessageError::ConversionError("Empty assistant message".to_string())
+                    message::MessageError::conversion("Empty assistant message".to_string())
                 })?,
             }),
-            _ => Err(message::MessageError::ConversionError(format!(
+            _ => Err(message::MessageError::conversion(format!(
                 "Unknown role: {}",
                 message.role
             ))),
@@ -395,13 +396,13 @@ impl TryFrom<message::Message> for Message {
                             tool_calls.push(tool_call.clone().into());
                         }
                         message::AssistantContent::Reasoning(_) => {
-                            return Err(MessageError::ConversionError(
-                                "Galadriel currently doesn't support reasoning.".into(),
+                            return Err(MessageError::conversion(
+                                "Galadriel currently doesn't support reasoning.",
                             ));
                         }
                         message::AssistantContent::Image(_) => {
-                            return Err(MessageError::ConversionError(
-                                "Galadriel currently doesn't support images.".into(),
+                            return Err(MessageError::conversion(
+                                "Galadriel currently doesn't support images.",
                             ));
                         }
                     }
@@ -611,12 +612,12 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
                 }
             } else {
                 let text = http_client::text(response).await?;
 
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider(text))
             }
         }
         .instrument(span)

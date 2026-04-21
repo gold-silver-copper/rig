@@ -305,7 +305,7 @@ impl TryFrom<crate::completion::Message> for Vec<InputItem> {
                                     text,
                                 }) = tool_result_content
                                 else {
-                                    return Err(CompletionError::ProviderError(
+                                    return Err(CompletionError::provider(
                                         "This thing only supports text!".to_string(),
                                     ));
                                 };
@@ -406,7 +406,7 @@ impl TryFrom<crate::completion::Message> for Vec<InputItem> {
                             });
                         }
                         message => {
-                            return Err(CompletionError::ProviderError(format!(
+                            return Err(CompletionError::provider(format!(
                                 "Unsupported message: {message:?}"
                             )));
                         }
@@ -454,14 +454,14 @@ impl TryFrom<crate::completion::Message> for Vec<InputItem> {
                         }
                         crate::message::AssistantContent::Reasoning(reasoning) => {
                             let openai_reasoning = openai_reasoning_from_core(&reasoning)
-                                .map_err(|err| CompletionError::ProviderError(err.to_string()))?;
+                                .map_err(|err| CompletionError::provider(err.to_string()))?;
                             reasoning_items.push(InputItem {
                                 role: None,
                                 input: InputContent::Reasoning(openai_reasoning),
                             });
                         }
                         crate::message::AssistantContent::Image(_) => {
-                            return Err(CompletionError::ProviderError(
+                            return Err(CompletionError::provider(
                                 "Assistant image content is not supported in OpenAI Responses API"
                                     .to_string(),
                             ));
@@ -495,7 +495,7 @@ fn openai_reasoning_from_core(
     reasoning: &crate::message::Reasoning,
 ) -> Result<OpenAIReasoning, MessageError> {
     let id = reasoning.id.clone().ok_or_else(|| {
-        MessageError::ConversionError(
+        MessageError::conversion(
             "An OpenAI-generated ID is required when using OpenAI reasoning items".to_string(),
         )
     })?;
@@ -1419,7 +1419,7 @@ where
                 response.try_into()
             } else {
                 let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider(text))
             }
         }
         .instrument(span)
@@ -1442,7 +1442,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
         if response.output.is_empty() {
-            return Err(CompletionError::ResponseError(
+            return Err(CompletionError::response(
                 "Response contained no parts".to_owned(),
             ));
         }
@@ -1461,7 +1461,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .collect();
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -1651,9 +1651,8 @@ impl TryFrom<message::Message> for Vec<Message> {
                                 ..
                             }) => Ok::<_, message::MessageError>(Message::ToolResult {
                                 tool_call_id: call_id.ok_or_else(|| {
-                                    MessageError::ConversionError(
-                                        "Tool result `call_id` is required for OpenAI Responses API"
-                                            .into(),
+                                    MessageError::conversion(
+                                        "Tool result `call_id` is required for OpenAI Responses API",
                                     )
                                 })?,
                                 output: {
@@ -1662,13 +1661,12 @@ impl TryFrom<message::Message> for Vec<Message> {
                                         completion::message::ToolResultContent::Text(Text {
                                             text,
                                         }) => text,
-                                        _ => return  Err(MessageError::ConversionError("This API only currently supports text tool results".into()))
+                                        _ => return  Err(MessageError::conversion("This API only currently supports text tool results"))
                                     }
                                 },
                             }),
-                            _ => Err(MessageError::ConversionError(
-                                "OpenAI Responses tool-result partition contained non-tool content"
-                                    .into(),
+                            _ => Err(MessageError::conversion(
+                                "OpenAI Responses tool-result partition contained non-tool content",
                             )),
                         })
                         .collect::<Result<Vec<_>, _>>()
@@ -1696,13 +1694,12 @@ impl TryFrom<message::Message> for Vec<Message> {
                                     }
                                     DocumentSourceKind::Url(url) => url,
                                     DocumentSourceKind::Raw(_) => {
-                                        return Err(MessageError::ConversionError(
-                                            "Raw files not supported, encode as base64 first"
-                                                .into(),
+                                        return Err(MessageError::conversion(
+                                            "Raw files not supported, encode as base64 first",
                                         ));
                                     }
                                     doc => {
-                                        return Err(MessageError::ConversionError(format!(
+                                        return Err(MessageError::conversion(format!(
                                             "Unsupported document type: {doc}"
                                         )));
                                     }
@@ -1726,13 +1723,12 @@ impl TryFrom<message::Message> for Vec<Message> {
                                     ),
                                     DocumentSourceKind::Url(url) => (None, Some(url), None),
                                     DocumentSourceKind::Raw(_) => {
-                                        return Err(MessageError::ConversionError(
-                                            "Raw files not supported, encode as base64 first"
-                                                .into(),
+                                        return Err(MessageError::conversion(
+                                            "Raw files not supported, encode as base64 first",
                                         ));
                                     }
                                     doc => {
-                                        return Err(MessageError::ConversionError(format!(
+                                        return Err(MessageError::conversion(format!(
                                             "Unsupported document type: {doc}"
                                         )));
                                     }
@@ -1761,17 +1757,17 @@ impl TryFrom<message::Message> for Vec<Message> {
                                     },
                                 },
                             }),
-                            message::UserContent::Audio(_) => Err(MessageError::ConversionError(
-                                "Audio must be base64 encoded data".into(),
+                            message::UserContent::Audio(_) => Err(MessageError::conversion(
+                                "Audio must be base64 encoded data",
                             )),
-                            _ => Err(MessageError::ConversionError(
-                                "Unsupported user content for OpenAI Responses API".into(),
+                            _ => Err(MessageError::conversion(
+                                "Unsupported user content for OpenAI Responses API",
                             )),
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
                     let other_content = OneOrMany::many(other_content).map_err(|_| {
-                        MessageError::ConversionError(
+                        MessageError::conversion(
                             "User message did not contain OpenAI Responses-compatible content"
                                 .to_string(),
                         )
@@ -1785,8 +1781,8 @@ impl TryFrom<message::Message> for Vec<Message> {
             }
             message::Message::Assistant { content, id } => {
                 let assistant_message_id = id.ok_or_else(|| {
-                    MessageError::ConversionError(
-                        "Assistant message ID is required for OpenAI Responses API".into(),
+                    MessageError::conversion(
+                        "Assistant message ID is required for OpenAI Responses API",
                     )
                 })?;
 
@@ -1810,9 +1806,8 @@ impl TryFrom<message::Message> for Vec<Message> {
                         content: OneOrMany::one(AssistantContentType::ToolCall(
                             OutputFunctionCall {
                                 call_id: call_id.ok_or_else(|| {
-                                    MessageError::ConversionError(
-                                        "Tool call `call_id` is required for OpenAI Responses API"
-                                            .into(),
+                                    MessageError::conversion(
+                                        "Tool call `call_id` is required for OpenAI Responses API",
                                     )
                                 })?,
                                 arguments: function.arguments,
@@ -1836,12 +1831,9 @@ impl TryFrom<message::Message> for Vec<Message> {
                             status: ToolStatus::Completed,
                         }])
                     }
-                    crate::message::AssistantContent::Image(_) => {
-                        Err(MessageError::ConversionError(
-                            "Assistant image content is not supported in OpenAI Responses API"
-                                .into(),
-                        ))
-                    }
+                    crate::message::AssistantContent::Image(_) => Err(MessageError::conversion(
+                        "Assistant image content is not supported in OpenAI Responses API",
+                    )),
                 }
             }
         }

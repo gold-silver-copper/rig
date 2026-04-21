@@ -481,9 +481,10 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
     type Error = CompletionError;
 
     fn try_from(response: ChatCompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
 
         let content = match &choice.message {
             openai::completion::Message::Assistant {
@@ -520,13 +521,13 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
                 );
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = crate::OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -622,7 +623,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::ProviderError(err.to_string()))
+            .map_err(|err| CompletionError::provider(err.to_string()))
     }
 
     fn chat_request(
@@ -713,13 +714,13 @@ where
                             message_id: core.message_id,
                         })
                     }
-                    ChatApiResponse::Err(err) => Err(CompletionError::ProviderError(
-                        err.error_message().to_string(),
-                    )),
+                    ChatApiResponse::Err(err) => {
+                        Err(CompletionError::provider(err.error_message().to_string()))
+                    }
                 }
             } else {
                 let body = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(body))
+                Err(CompletionError::provider(body))
             }
         }
         .instrument(span)
@@ -791,7 +792,7 @@ where
                 })
             } else {
                 let body = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(body))
+                Err(CompletionError::provider(body))
             }
         }
         .instrument(span)
@@ -1005,7 +1006,7 @@ where
                                             .map(|err| err.message.clone())
                                             .unwrap_or_else(|| "Copilot response stream failed".into());
                                         terminated_with_error = true;
-                                        yield Err(CompletionError::ProviderError(error));
+                                        yield Err(CompletionError::provider(error));
                                         break;
                                     }
                                     _ => continue,
@@ -1017,7 +1018,7 @@ where
                         }
                         Err(error) => {
                             terminated_with_error = true;
-                            yield Err(CompletionError::ProviderError(error.to_string()));
+                            yield Err(CompletionError::provider(error.to_string()));
                             break;
                         }
                     }
@@ -1159,7 +1160,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| EmbeddingError::ProviderError(err.to_string()))?;
+            .map_err(|err| EmbeddingError::provider(err.to_string()))?;
 
         let headers = default_headers(&auth.api_key, "user", false);
         let mut body = json!({
@@ -1206,7 +1207,7 @@ where
                 Ok(parsed) => parsed,
                 Err(parse_error) => {
                     if let Ok(err) = serde_json::from_slice::<NestedApiError>(&body) {
-                        return Err(EmbeddingError::ProviderError(err.error.message));
+                        return Err(EmbeddingError::provider(err.error.message));
                     }
 
                     let preview = String::from_utf8_lossy(&body);
@@ -1216,7 +1217,7 @@ where
                         preview.into_owned()
                     };
 
-                    return Err(EmbeddingError::ProviderError(format!(
+                    return Err(EmbeddingError::provider(format!(
                         "Failed to parse Copilot embeddings response: {parse_error}; body: {preview}"
                     )));
                 }
@@ -1237,7 +1238,7 @@ where
                 .collect())
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::provider(text))
         }
     }
 }
