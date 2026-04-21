@@ -142,15 +142,14 @@ where
             .await?;
 
         // Merge the embeddings with their respective documents
-        Ok(docs
-            .into_iter()
+        docs.into_iter()
             .map(|(i, doc)| {
                 let embeddings = embeddings
                     .remove(&i)
                     .ok_or(EmbeddingError::MissingEmbeddingForDocument { index: i })?;
                 Ok((doc, embeddings))
             })
-            .collect::<Result<Vec<_>, EmbeddingError>>()?)
+            .collect::<Result<Vec<_>, EmbeddingError>>()
     }
 }
 
@@ -268,6 +267,38 @@ mod tests {
                 definition: "An ancient tool used by the ancestors of the inhabitants of planet Jiro to farm the land.".to_string(),
             }
         ]
+    }
+
+    #[derive(Clone)]
+    struct MissingEmbeddingModel;
+
+    impl EmbeddingModel for MissingEmbeddingModel {
+        const MAX_DOCUMENTS: usize = 5;
+
+        type Client = Nothing;
+
+        fn make(_: &Self::Client, _: impl Into<String>, _: Option<usize>) -> Self {
+            Self
+        }
+
+        fn ndims(&self) -> usize {
+            10
+        }
+
+        async fn embed_texts(
+            &self,
+            documents: impl IntoIterator<Item = String> + Send,
+        ) -> Result<Vec<crate::embeddings::Embedding>, crate::embeddings::EmbeddingError> {
+            let mut embeddings = documents
+                .into_iter()
+                .map(|doc| Embedding {
+                    document: doc,
+                    vec: vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                })
+                .collect::<Vec<_>>();
+            embeddings.pop();
+            Ok(embeddings)
+        }
     }
 
     #[tokio::test]
@@ -406,5 +437,22 @@ mod tests {
         assert_eq!(
             second_definition.1.rest()[0].document, "A fictional creature found in the distant, swampy marshlands of the planet Glibbo in the Andromeda galaxy.".to_string()
         )
+    }
+
+    #[tokio::test]
+    async fn test_build_returns_error_when_backend_omits_embedding() {
+        let fake_definitions = definitions_single_text();
+
+        let err = EmbeddingsBuilder::new(MissingEmbeddingModel)
+            .documents(fake_definitions)
+            .unwrap()
+            .build()
+            .await
+            .expect_err("backend should not be allowed to omit embeddings");
+
+        assert!(matches!(
+            err,
+            crate::embeddings::EmbeddingError::MissingEmbeddingForDocument { index: 1 }
+        ));
     }
 }

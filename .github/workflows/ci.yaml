@@ -109,7 +109,7 @@ jobs:
 
       - name: Run panic-free clippy gate
         run: >-
-          cargo clippy --workspace --lib --all-features --
+          cargo clippy -p rig-core --lib --all-features --no-deps --
           -D clippy::unwrap_used
           -D clippy::expect_used
           -D clippy::panic

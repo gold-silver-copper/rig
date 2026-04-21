@@ -204,15 +204,14 @@ where
                     println!("================================================================");
                     println!();
 
-                    if self.0.show_usage() {
-                        if let Some(Usage {
+                    if self.0.show_usage()
+                        && let Some(Usage {
                             input_tokens,
                             output_tokens,
                             ..
                         }) = self.0.usage()
-                        {
-                            println!("Input {input_tokens} tokens\nOutput {output_tokens} tokens");
-                        }
+                    {
+                        println!("Input {input_tokens} tokens\nOutput {output_tokens} tokens");
                     }
                 }
                 Err(e) => println!("Error reading request: {e}"),

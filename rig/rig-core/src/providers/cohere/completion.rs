@@ -14,6 +14,8 @@ use crate::providers::cohere::streaming::StreamingCompletionResponse;
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, Level, enabled, info_span};
 
+type AssistantMessageParts = (Vec<AssistantContent>, Vec<Citation>, Vec<ToolCall>);
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CompletionResponse {
     pub id: String,
@@ -25,9 +27,7 @@ pub struct CompletionResponse {
 
 impl CompletionResponse {
     /// Return that parts of the response for assistant messages w/o dealing with the other variants
-    pub fn message(
-        &self,
-    ) -> Result<(Vec<AssistantContent>, Vec<Citation>, Vec<ToolCall>), CompletionError> {
+    pub fn message(&self) -> Result<AssistantMessageParts, CompletionError> {
         match self.message.clone() {
             Message::Assistant {
                 content,
