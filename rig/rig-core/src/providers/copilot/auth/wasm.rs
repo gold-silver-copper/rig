@@ -1,4 +1,4 @@
-use super::{AuthContext, AuthError, DeviceCodeHandler};
+use super::{AuthContext, AuthError, AuthFlowError, DeviceCodeHandler};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -28,9 +28,7 @@ impl PlatformAuthenticator {
     }
 
     pub(super) async fn auth_context_oauth(&self) -> Result<AuthContext, AuthError> {
-        Err(AuthError::Message(
-            "GitHub Copilot OAuth is not supported on wasm targets".into(),
-        ))
+        Err(AuthError::Flow(AuthFlowError::UnsupportedOnWasm))
     }
 
     pub(super) async fn auth_context_with_github_access_token(
@@ -54,9 +52,7 @@ impl PlatformAuthenticator {
             .await?;
 
         let Some(api_key) = response.token.filter(|token| !token.trim().is_empty()) else {
-            return Err(AuthError::Message(
-                "GitHub Copilot API key response did not include a token".into(),
-            ));
+            return Err(AuthError::Flow(AuthFlowError::MissingApiKeyToken));
         };
 
         Ok(AuthContext {

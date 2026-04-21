@@ -245,8 +245,8 @@ pub enum PromptError {
     IoError(#[from] std::io::Error),
 
     /// An internal invariant required to continue the prompt flow was not satisfied.
-    #[error("InvariantError: {0}")]
-    InvariantError(&'static str),
+    #[error(transparent)]
+    InvariantError(PromptInvariantError),
 }
 
 impl PromptError {
@@ -259,6 +259,34 @@ impl PromptError {
             reason: reason.into(),
         }
     }
+
+    pub(crate) fn invariant(error: PromptInvariantError) -> Self {
+        Self::InvariantError(error)
+    }
+}
+
+/// Structured invariants enforced by the prompt execution loops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum PromptInvariantError {
+    /// The prompt loop lost the message it was about to send.
+    #[error("InvariantError: prompt loop lost the pending prompt message")]
+    MissingPendingPromptMessage,
+
+    /// The prompt loop lost the prior messages needed to build history.
+    #[error("InvariantError: prompt loop lost the pending prompt history")]
+    MissingPendingPromptHistory,
+
+    /// A non-tool assistant item reached the tool execution queue.
+    #[error("InvariantError: tool execution queue contained non-tool assistant content")]
+    NonToolAssistantContentQueued,
+
+    /// Tool execution finished without producing any tool result items.
+    #[error("InvariantError: tool execution completed without tool results")]
+    MissingToolExecutionResults,
+
+    /// A streaming assistant turn passed a non-empty guard but still had no content to persist.
+    #[error("InvariantError: assistant turn produced no content after non-empty guard")]
+    MissingAssistantTurnContentAfterGuard,
 }
 
 /// Errors that can occur when using typed structured output via [`TypedPrompt::prompt_typed`].

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     OneOrMany,
-    completion::{CompletionModel, Document, Message, PromptError, Usage},
+    completion::{CompletionModel, Document, Message, PromptError, PromptInvariantError, Usage},
     json_utils,
     message::{AssistantContent, ToolChoice, ToolResultContent, UserContent},
     tool::server::ToolServerHandle,
@@ -345,8 +345,8 @@ where
         let last_prompt = loop {
             // Get the last message (the current prompt)
             let Some(prompt) = new_messages.last().cloned() else {
-                return Err(PromptError::InvariantError(
-                    "prompt loop lost the pending prompt message",
+                return Err(PromptError::invariant(
+                    PromptInvariantError::MissingPendingPromptMessage,
                 ));
             };
 
@@ -366,8 +366,8 @@ where
 
             // Build history for hook callback (input + new messages except last)
             let Some((_, pending_history)) = new_messages.split_last() else {
-                return Err(PromptError::InvariantError(
-                    "prompt loop lost the pending prompt history",
+                return Err(PromptError::invariant(
+                    PromptInvariantError::MissingPendingPromptHistory,
                 ));
             };
             let history_for_hook =
@@ -531,8 +531,8 @@ where
 
                     async move {
                         let AssistantContent::ToolCall(tool_call) = choice else {
-                            return Err(PromptError::InvariantError(
-                                "tool execution queue contained non-tool assistant content",
+                            return Err(PromptError::invariant(
+                                PromptInvariantError::NonToolAssistantContentQueued,
                             ));
                         };
 
@@ -631,7 +631,7 @@ where
                 .collect::<Result<Vec<_>, _>>()?;
 
             let content = OneOrMany::from_non_empty_iter(tool_content).ok_or(
-                PromptError::InvariantError("tool execution completed without tool results"),
+                PromptError::invariant(PromptInvariantError::MissingToolExecutionResults),
             )?;
 
             new_messages.push(Message::User { content });

@@ -18,7 +18,7 @@ use tracing_futures::Instrument;
 use super::ToolCallHookAction;
 use crate::{
     agent::Agent,
-    completion::{CompletionError, CompletionModel, PromptError},
+    completion::{CompletionError, CompletionModel, PromptError, PromptInvariantError},
     message::{Message, Text},
     tool::ToolSetError,
 };
@@ -188,8 +188,8 @@ pub enum StreamingError {
     Prompt(#[from] Box<PromptError>),
     #[error("ToolSetError: {0}")]
     Tool(#[from] ToolSetError),
-    #[error("InvariantError: {0}")]
-    InvariantError(&'static str),
+    #[error(transparent)]
+    InvariantError(PromptInvariantError),
 }
 
 const UNKNOWN_AGENT_NAME: &str = "Unnamed Agent";
@@ -411,7 +411,7 @@ where
             'outer: loop {
                 let Some(current_prompt) = new_messages.last().cloned() else {
                     yield Err(StreamingError::InvariantError(
-                        "streaming loop lost the pending prompt message",
+                        PromptInvariantError::MissingPendingPromptMessage,
                     ));
                     break 'outer;
                 };
@@ -434,7 +434,7 @@ where
 
                 let Some((_, pending_history)) = new_messages.split_last() else {
                     yield Err(StreamingError::InvariantError(
-                        "streaming loop lost the pending prompt history",
+                        PromptInvariantError::MissingPendingPromptHistory,
                     ));
                     break 'outer;
                 };
@@ -691,7 +691,7 @@ where
                     if !content_items.is_empty() {
                         let Some(content) = OneOrMany::from_non_empty_iter(content_items) else {
                             yield Err(StreamingError::InvariantError(
-                                "assistant turn produced no content after non-empty guard",
+                                PromptInvariantError::MissingAssistantTurnContentAfterGuard,
                             ));
                             break 'outer;
                         };

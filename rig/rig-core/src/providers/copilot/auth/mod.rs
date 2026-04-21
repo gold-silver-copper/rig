@@ -76,8 +76,8 @@ impl fmt::Debug for Authenticator {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
-    #[error("{0}")]
-    Message(String),
+    #[error(transparent)]
+    Flow(AuthFlowError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -85,6 +85,69 @@ pub enum AuthError {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
 }
+
+/// Structured GitHub Copilot authentication flow failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthFlowError {
+    /// Copilot OAuth is unavailable on the current target.
+    UnsupportedOnWasm,
+    /// The device-code authorization window expired before the user finished it.
+    DeviceAuthorizationTimedOut,
+    /// GitHub reported that the device code expired before completion.
+    DeviceAuthorizationExpired,
+    /// GitHub reported that the user denied the device authorization request.
+    DeviceAuthorizationDenied,
+    /// GitHub returned a terminal OAuth device-code error.
+    DeviceAuthorizationFailed {
+        error_code: Option<String>,
+        error_description: Option<String>,
+    },
+    /// The Copilot API key response was missing the issued token.
+    MissingApiKeyToken,
+}
+
+impl std::fmt::Display for AuthFlowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedOnWasm => {
+                f.write_str("GitHub Copilot OAuth is not supported on wasm targets")
+            }
+            Self::DeviceAuthorizationTimedOut => {
+                f.write_str("Timed out waiting for GitHub Copilot device authorization")
+            }
+            Self::DeviceAuthorizationExpired => {
+                f.write_str("GitHub device authorization expired before it completed")
+            }
+            Self::DeviceAuthorizationDenied => {
+                f.write_str("GitHub device authorization was denied")
+            }
+            Self::DeviceAuthorizationFailed {
+                error_code,
+                error_description,
+            } => match (
+                error_code.as_deref(),
+                error_description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|description| !description.is_empty()),
+            ) {
+                (Some(error_code), Some(description)) => write!(
+                    f,
+                    "GitHub device authorization failed: {error_code} ({description})"
+                ),
+                (Some(error_code), None) => {
+                    write!(f, "GitHub device authorization failed: {error_code}")
+                }
+                (None, _) => f.write_str("GitHub device authorization failed: unknown error"),
+            },
+            Self::MissingApiKeyToken => {
+                f.write_str("GitHub Copilot API key response did not include a token")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AuthFlowError {}
 
 #[derive(Debug, Clone)]
 pub struct AuthContext {

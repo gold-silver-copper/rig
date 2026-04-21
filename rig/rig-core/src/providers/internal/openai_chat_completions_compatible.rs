@@ -768,10 +768,13 @@ mod tests {
                         Some("{\"x\":"),
                     )],
                 )),
-                "finish" => Some(tool_call_choice(
-                    CompatibleFinishReason::ToolCalls,
-                    Vec::new(),
-                )),
+                "finish" => Some(CompatibleChoice {
+                    finish_reason: CompatibleFinishReason::ToolCalls,
+                    text: Some("done".to_owned()),
+                    reasoning: None,
+                    tool_calls: Vec::new(),
+                    details: Vec::new(),
+                }),
                 _ => None,
             };
 
@@ -961,11 +964,16 @@ mod tests {
             .expect("stream should start");
 
         let mut saw_final = false;
+        let mut saw_text = false;
         let mut saw_tool_call = false;
 
         while let Some(item) = stream.next().await {
             match item.expect("stream item should be ok") {
                 StreamedAssistantContent::ToolCallDelta { .. } => {}
+                StreamedAssistantContent::Text(text) => {
+                    assert_eq!(text.text, "done");
+                    saw_text = true;
+                }
                 StreamedAssistantContent::Final(_) => saw_final = true,
                 StreamedAssistantContent::ToolCall { .. } => saw_tool_call = true,
                 other => panic!(
@@ -977,6 +985,10 @@ mod tests {
         assert!(
             saw_final,
             "stream should still yield a final response after dropping the partial tool call"
+        );
+        assert!(
+            saw_text,
+            "stream should yield replacement assistant text after dropping the partial tool call"
         );
         assert!(
             !saw_tool_call,

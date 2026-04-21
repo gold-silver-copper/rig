@@ -1,4 +1,4 @@
-use super::{AuthContext, AuthError, DeviceCodeHandler, DeviceCodePrompt};
+use super::{AuthContext, AuthError, AuthFlowError, DeviceCodeHandler, DeviceCodePrompt};
 use serde::{Deserialize, Serialize};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -217,9 +217,7 @@ impl PlatformAuthenticator {
             tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
         }
 
-        Err(AuthError::Message(
-            "Timed out waiting for GitHub Copilot device authorization".into(),
-        ))
+        Err(AuthError::Flow(AuthFlowError::DeviceAuthorizationTimedOut))
     }
 
     async fn refresh_api_key(&self, access_token: &str) -> Result<ApiKeyRecord, AuthError> {
@@ -241,9 +239,7 @@ impl PlatformAuthenticator {
             .await?;
 
         if response.token.is_none() {
-            return Err(AuthError::Message(
-                "GitHub Copilot API key response did not include a token".into(),
-            ));
+            return Err(AuthError::Flow(AuthFlowError::MissingApiKeyToken));
         }
 
         Ok(response)
@@ -408,30 +404,16 @@ fn next_poll_interval_seconds(
     match error {
         Some("authorization_pending") => Ok(current_interval),
         Some("slow_down") => Ok(current_interval.saturating_add(DEVICE_CODE_SLOW_DOWN_SECONDS)),
-        Some("expired_token") => Err(AuthError::Message(
-            "GitHub device authorization expired before it completed".into(),
-        )),
-        Some("access_denied") => Err(AuthError::Message(
-            "GitHub device authorization was denied".into(),
-        )),
-        Some(other) => Err(AuthError::Message(format_oauth_error(
-            "GitHub device authorization failed",
-            other,
-            error_description,
-        ))),
-        None => Err(AuthError::Message(
-            "GitHub device authorization failed: unknown error".into(),
-        )),
-    }
-}
-
-fn format_oauth_error(prefix: &str, error: &str, description: Option<&str>) -> String {
-    match description
-        .map(str::trim)
-        .filter(|description| !description.is_empty())
-    {
-        Some(description) => format!("{prefix}: {error} ({description})"),
-        None => format!("{prefix}: {error}"),
+        Some("expired_token") => Err(AuthError::Flow(AuthFlowError::DeviceAuthorizationExpired)),
+        Some("access_denied") => Err(AuthError::Flow(AuthFlowError::DeviceAuthorizationDenied)),
+        Some(other) => Err(AuthError::Flow(AuthFlowError::DeviceAuthorizationFailed {
+            error_code: Some(other.to_owned()),
+            error_description: error_description.map(ToOwned::to_owned),
+        })),
+        None => Err(AuthError::Flow(AuthFlowError::DeviceAuthorizationFailed {
+            error_code: None,
+            error_description: None,
+        })),
     }
 }
 
@@ -455,6 +437,7 @@ mod tests {
         ApiKeyRecord, bootstrap_token_fingerprint, next_poll_interval_seconds,
         normalize_poll_interval_seconds, should_retry_with_fresh_access_token_status,
     };
+    use crate::providers::copilot::auth::{AuthError, AuthFlowError};
     use reqwest::StatusCode;
 
     #[test]
@@ -541,7 +524,10 @@ mod tests {
     fn poll_interval_rejects_terminal_errors() {
         let denied = next_poll_interval_seconds(5, Some("access_denied"), None)
             .expect_err("access denied should fail");
-        assert_eq!(denied.to_string(), "GitHub device authorization was denied");
+        assert!(matches!(
+            denied,
+            AuthError::Flow(AuthFlowError::DeviceAuthorizationDenied)
+        ));
 
         let unknown = next_poll_interval_seconds(
             5,
@@ -549,10 +535,14 @@ mod tests {
             Some("OAuth app device flow is disabled"),
         )
         .expect_err("device flow disabled should fail");
-        assert_eq!(
-            unknown.to_string(),
-            "GitHub device authorization failed: device_flow_disabled (OAuth app device flow is disabled)"
-        );
+        assert!(matches!(
+            unknown,
+            AuthError::Flow(AuthFlowError::DeviceAuthorizationFailed {
+                error_code,
+                error_description,
+            }) if error_code.as_deref() == Some("device_flow_disabled")
+                && error_description.as_deref() == Some("OAuth app device flow is disabled")
+        ));
     }
 
     #[test]
