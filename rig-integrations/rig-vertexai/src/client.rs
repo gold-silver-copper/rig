@@ -120,7 +120,7 @@ pub struct Client {
     project: String,
     location: String,
     credentials: Credentials,
-    pub(crate) vertex_client: Arc<OnceCell<Result<vertexai::client::PredictionService, String>>>,
+    pub(crate) vertex_client: Arc<OnceCell<vertexai::client::PredictionService>>,
 }
 
 impl Client {
@@ -184,9 +184,8 @@ impl Client {
 
     pub async fn get_inner(&self) -> Result<&vertexai::client::PredictionService, String> {
         let credentials = self.credentials.clone();
-        let client = self
-            .vertex_client
-            .get_or_init(|| async {
+        self.vertex_client
+            .get_or_try_init(|| async {
                 let mut builder = vertexai::client::PredictionService::builder();
                 builder = builder.with_credentials(credentials);
                 builder
@@ -198,9 +197,7 @@ impl Client {
                         )
                     })
             })
-            .await;
-
-        client.as_ref().map_err(Clone::clone)
+            .await
     }
 }
 

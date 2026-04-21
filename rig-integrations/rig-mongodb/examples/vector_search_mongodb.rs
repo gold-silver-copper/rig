@@ -49,7 +49,7 @@ where
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenAI client
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     // Initialize MongoDB client
     let mongodb_connection_string =

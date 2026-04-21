@@ -43,7 +43,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Initialize OpenAI client.
     // Get your API key from https://platform.openai.com/api-keys
-    let openai_client = OpenAIClient::from_env();
+    let openai_client = OpenAIClient::from_env()?;
 
     let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
 

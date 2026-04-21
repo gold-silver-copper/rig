@@ -29,10 +29,10 @@ fn string_processor(text: String, operation: String) -> Result<String, rig::tool
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().pretty().init();
 
-    let string_agent = providers::openai::Client::from_env()
+    let string_agent = providers::openai::Client::from_env()?
         .agent(providers::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
@@ -56,4 +56,6 @@ async fn main() {
         println!("User: {prompt}");
         println!("Agent: {}", string_agent.prompt(prompt).await.unwrap());
     }
+
+    Ok(())
 }

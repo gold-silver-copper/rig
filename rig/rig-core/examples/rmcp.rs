@@ -262,7 +262,7 @@ async fn main() -> anyhow::Result<()> {
     let server_info = mcp_service.peer_info();
     tracing::info!("Connected to server: {server_info:#?}");
 
-    let openai_client = openai::Client::from_env();
+    let openai_client = openai::Client::from_env()?;
     let agent = openai_client
         .agent(openai::GPT_4O)
         .preamble("You are a helpful assistant who has access to a number of tools from an MCP server designed to be used for incrementing and decrementing a counter.")

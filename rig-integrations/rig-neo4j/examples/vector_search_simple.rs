@@ -28,7 +28,7 @@ pub struct Word {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenAI client
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     // Initialize Neo4j client
     let neo4j_uri = env::var("NEO4J_URI").expect("NEO4J_URI not set");

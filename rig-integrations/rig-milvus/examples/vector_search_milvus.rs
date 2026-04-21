@@ -26,7 +26,7 @@ impl std::fmt::Display for WordDefinition {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
-    let openai_client = rig::providers::openai::Client::from_env();
+    let openai_client = rig::providers::openai::Client::from_env()?;
     let model = openai_client.embedding_model(rig::providers::openai::TEXT_EMBEDDING_3_SMALL);
 
     let base_url = std::env::var("MILVUS_BASE_URL").expect("the MILVUS_BASE_URL env var to exist");

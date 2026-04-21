@@ -307,7 +307,7 @@ async fn main() -> Result<(), anyhow::Error> {
         env::var("ECHOCHAMBERS_API_KEY").expect("ECHOCHAMBERS_API_KEY not set");
 
     // Create OpenAI client
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     // Create agent with all tools
     let echochambers_agent = openai_client

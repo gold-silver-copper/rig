@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Create Anthropic client
-    let anthropic_client = anthropic::Client::from_env();
+    let anthropic_client = anthropic::Client::from_env()?;
     let agent = ReasoningAgent {
         chain_of_thought_extractor: anthropic_client
             .extractor(anthropic::completion::CLAUDE_SONNET_4_6)

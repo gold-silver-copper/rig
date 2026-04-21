@@ -100,7 +100,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     // Create OpenAI client
-    let openai_client = providers::openai::Client::from_env();
+    let openai_client = providers::openai::Client::from_env()?;
 
     // Create agent with a single context prompt and two tools
     let calculator_agent = openai_client

@@ -49,10 +49,10 @@ fn sum_numbers(numbers: Vec<i64>) -> Result<i64, rig::tool::ToolError> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().pretty().init();
 
-    let calculator_agent = providers::openai::Client::from_env()
+    let calculator_agent = providers::openai::Client::from_env()?
         .agent(providers::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
@@ -74,4 +74,6 @@ async fn main() {
         println!("User: {prompt}");
         println!("Agent: {}", calculator_agent.prompt(prompt).await.unwrap());
     }
+
+    Ok(())
 }

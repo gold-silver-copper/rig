@@ -35,7 +35,7 @@ async fn main() -> Result<(), anyhow::Error> {
     dotenvy::dotenv().ok();
 
     // Create OpenAI client
-    let openai_client = openai::Client::from_env();
+    let openai_client = openai::Client::from_env()?;
     let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
 
     // setup Postgres

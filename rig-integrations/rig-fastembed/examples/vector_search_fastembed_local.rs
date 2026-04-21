@@ -53,7 +53,7 @@ async fn main() -> Result<(), anyhow::Error> {
         UserDefinedEmbeddingModel::new(onnx_file, tokenizer_files).with_pooling(Pooling::Mean);
 
     let embedding_model =
-        EmbeddingModel::new_from_user_defined(user_defined_model, 384, test_model_info);
+        EmbeddingModel::new_from_user_defined(user_defined_model, 384, test_model_info)?;
 
     // Create documents
     let documents = vec![

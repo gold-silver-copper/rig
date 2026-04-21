@@ -20,7 +20,7 @@ struct DocumentScore {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     let manipulation_agent = openai_client
         .extractor::<DocumentScore>(openai::GPT_4)

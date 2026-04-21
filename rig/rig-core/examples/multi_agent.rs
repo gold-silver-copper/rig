@@ -66,7 +66,7 @@ impl<M: CompletionModel + 'static> Tool for TranslatorTool<M> {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
-    let openai_client = OpenAIClient::from_env();
+    let openai_client = OpenAIClient::from_env()?;
     let model = openai_client.completion_model(openai::GPT_4O);
 
     let translator_agent = AgentBuilder::new(model.clone())

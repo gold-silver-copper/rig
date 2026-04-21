@@ -31,7 +31,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Create the embedding model for our vector store
     // We'll use OpenAI's embedding model for this example
-    let openai_client = rig::providers::openai::Client::from_env();
+    let openai_client = rig::providers::openai::Client::from_env()?;
     let embedding_model =
         openai_client.embedding_model(rig::providers::openai::TEXT_EMBEDDING_ADA_002);
 

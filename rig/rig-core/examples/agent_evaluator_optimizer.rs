@@ -27,7 +27,7 @@ All operations should be O(1).
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     let generator_agent = openai_client
         .agent(openai::GPT_4)

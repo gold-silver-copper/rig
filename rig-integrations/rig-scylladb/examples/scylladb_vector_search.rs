@@ -27,7 +27,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .expect("Failed to create ScyllaDB session");
 
     // Create OpenAI client and embedding model
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
     let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
 
     // Create ScyllaDB vector store

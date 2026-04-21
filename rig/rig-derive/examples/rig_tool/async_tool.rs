@@ -25,10 +25,10 @@ async fn async_operation(input: String, delay_ms: u64) -> Result<String, ToolErr
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().pretty().init();
 
-    let async_agent = providers::openai::Client::from_env()
+    let async_agent = providers::openai::Client::from_env()?
         .agent(providers::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
@@ -51,4 +51,6 @@ async fn main() {
         println!("User: {prompt}");
         println!("Agent: {}", async_agent.prompt(prompt).await.unwrap());
     }
+
+    Ok(())
 }

@@ -127,7 +127,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     // Create agent with a single context prompt and two tools
-    let calculator_agent = providers::openai::Client::from_env()
+    let calculator_agent = providers::openai::Client::from_env()?
         .agent(providers::openai::GPT_4O)
         .preamble(
             "You are a calculator here to help the user perform arithmetic

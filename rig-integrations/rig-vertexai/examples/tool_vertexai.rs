@@ -48,7 +48,7 @@ async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt().with_target(false).init();
 
     // Create Vertex AI client using implicit credentials
-    let client = Client::from_env();
+    let client = Client::from_env()?;
 
     // Create agent with a calculator tool
     let calculator_agent = client

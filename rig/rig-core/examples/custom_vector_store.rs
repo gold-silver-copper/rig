@@ -180,7 +180,7 @@ struct Document {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenAI client from environment
-    let openai_client = openai::Client::from_env();
+    let openai_client = openai::Client::from_env()?;
     // Convert it to an EmbeddingModel
     let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
 
