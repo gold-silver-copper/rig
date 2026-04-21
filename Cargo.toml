@@ -5,8 +5,7 @@ members = [
     "rig-integrations/*"
 ]
 exclude = [
-    "archived",
-    "rig/rig"
+    "archived"
 ]
 
 [workspace.lints.clippy]
