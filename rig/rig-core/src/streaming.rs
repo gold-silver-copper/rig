@@ -357,6 +357,7 @@ where
                     stream.finished = true;
                     return Poll::Ready(None); // Treat cancellation as stream termination
                 }
+                stream.finished = true;
                 Poll::Ready(Some(Err(err)))
             }
             Poll::Ready(Some(Ok(choice))) => match choice {
