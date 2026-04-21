@@ -38,9 +38,7 @@ impl Client {
         Self
     }
 
-    /// Create an embedding model with the given name.
-    /// Note: default embedding dimension of 0 will be used if model is not known.
-    /// If this is the case, it's better to use function `embedding_model_with_ndims`
+    /// Create an embedding model from a known FastEmbed model identifier.
     ///
     /// # Example
     /// ```
@@ -67,20 +65,21 @@ impl Client {
     /// Create an embedding builder with the given embedding model.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// use rig_fastembed::{Client, FastembedModel};
     ///
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// // Initialize the Fastembed client
     /// let fastembed_client = Client::new();
     ///
     /// let embeddings = fastembed_client
-    ///     .embeddings(&FastembedModel::AllMiniLML6V2Q)?
-    ///     .simple_document("doc0", "Hello, world!")
-    ///     .simple_document("doc1", "Goodbye, world!")
+    ///     .embeddings::<String>(&FastembedModel::AllMiniLML6V2Q)?
+    ///     .documents(vec!["Hello, world!".to_string(), "Goodbye, world!".to_string()])?
     ///     .build()
-    ///     .await
-    ///     .map_err(|error| rig::embeddings::EmbeddingError::ResponseError(error.to_string()))?;
-    /// # Ok::<_, rig::embeddings::EmbeddingError>(())
+    ///     .await?;
+    /// # let _ = embeddings;
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(feature = "hf-hub")]
     pub fn embeddings<D: Embed>(
@@ -100,7 +99,7 @@ enum EmbedderState {
 #[derive(Clone)]
 pub struct EmbeddingModel {
     embedder: EmbedderState,
-    pub model: FastembedModel,
+    pub model: Option<FastembedModel>,
     requested_model: String,
     ndims: usize,
 }
@@ -113,7 +112,7 @@ impl EmbeddingModel {
     }
 
     fn initialization_failed(
-        model: FastembedModel,
+        model: Option<FastembedModel>,
         requested_model: String,
         ndims: usize,
         error: impl Into<String>,
@@ -124,6 +123,16 @@ impl EmbeddingModel {
             requested_model,
             ndims,
         }
+    }
+
+    /// Return the model identifier originally requested by the caller.
+    pub fn requested_model(&self) -> &str {
+        &self.requested_model
+    }
+
+    /// Return whether this model is ready to serve embeddings.
+    pub fn is_available(&self) -> bool {
+        matches!(self.embedder, EmbedderState::Ready(_))
     }
 
     fn embedder(&self) -> Result<&Arc<TextEmbedding>, EmbeddingError> {
@@ -149,7 +158,7 @@ impl EmbeddingModel {
 
         Ok(Self {
             embedder: EmbedderState::Ready(embedder),
-            model: model.to_owned(),
+            model: Some(model.to_owned()),
             requested_model: Self::model_name(model),
             ndims,
         })
@@ -170,7 +179,7 @@ impl EmbeddingModel {
 
         Ok(Self {
             embedder: EmbedderState::Ready(embedder),
-            model: model_info.model.to_owned(),
+            model: Some(model_info.model.to_owned()),
             requested_model: model_info.model_code.clone(),
             ndims,
         })
@@ -199,7 +208,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
                 {
                     Self::new(&model, ndims).unwrap_or_else(|error| {
                         Self::initialization_failed(
-                            model,
+                            Some(model),
                             requested_model,
                             ndims,
                             error.to_string(),
@@ -210,7 +219,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
                 #[cfg(not(feature = "hf-hub"))]
                 {
                     Self::initialization_failed(
-                        model,
+                        Some(model),
                         requested_model,
                         ndims,
                         "FastEmbed support requires the `hf-hub` feature".to_string(),
@@ -218,7 +227,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
                 }
             }
             Err(error) => Self::initialization_failed(
-                FastembedModel::BGESmallENV15,
+                None,
                 requested_model,
                 dims.unwrap_or_default(),
                 error,
@@ -267,10 +276,27 @@ mod tests {
             None,
         );
 
+        assert!(model.model.is_none());
+        assert_eq!(model.requested_model(), "not-a-fastembed-model");
+        assert!(!model.is_available());
+
         let error = embeddings::EmbeddingModel::embed_text(&model, "hello")
             .await
             .expect_err("invalid model should return an initialization error");
 
         assert!(matches!(error, EmbeddingError::InitializationError(_)));
+    }
+
+    #[test]
+    fn invalid_model_with_explicit_dims_keeps_dims_without_fabricating_a_model() {
+        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &Client::new(),
+            "not-a-fastembed-model",
+            Some(384),
+        );
+
+        assert!(model.model.is_none());
+        assert_eq!(embeddings::EmbeddingModel::ndims(&model), 384);
+        assert_eq!(model.requested_model(), "not-a-fastembed-model");
     }
 }
