@@ -1,5 +1,6 @@
 //! Migrated from `examples/anthropic_plaintext_document.rs`.
 
+use anyhow::Result;
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
@@ -27,8 +28,8 @@ Key Features:
 
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
-async fn plaintext_document_prompt() {
-    let client = anthropic::Client::from_env();
+async fn plaintext_document_prompt() -> Result<()> {
+    let client = anthropic::Client::from_env()?;
     let agent = client
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
         .preamble("You are a helpful assistant that analyzes documents.")
@@ -47,12 +48,13 @@ async fn plaintext_document_prompt() {
 
     assert_nonempty_response(&response);
     assert_contains_any_case_insensitive(&response, &["safety", "speed", "concurrency"]);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
-async fn plaintext_document_with_instruction() {
-    let client = anthropic::Client::from_env();
+async fn plaintext_document_with_instruction() -> Result<()> {
+    let client = anthropic::Client::from_env()?;
     let agent = client
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
         .preamble("You are a helpful assistant that analyzes documents.")
@@ -71,4 +73,5 @@ async fn plaintext_document_with_instruction() {
         .expect("instruction prompt should succeed");
 
     assert_contains_any_case_insensitive(&response, &["safety", "speed", "concurrency"]);
+    Ok(())
 }

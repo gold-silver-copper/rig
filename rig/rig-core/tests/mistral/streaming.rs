@@ -1,5 +1,6 @@
 //! Mistral streaming coverage, including the migrated example path.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::mistral;
 use rig::streaming::StreamingPrompt;
@@ -12,8 +13,8 @@ use super::DEFAULT_MODEL;
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn streaming_smoke() {
-    let client = mistral::Client::from_env();
+async fn streaming_smoke() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let agent = client
         .agent(DEFAULT_MODEL)
         .preamble(STREAMING_PREAMBLE)
@@ -25,12 +26,13 @@ async fn streaming_smoke() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn example_streaming_prompt() {
-    let client = mistral::Client::from_env();
+async fn example_streaming_prompt() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let agent = client
         .agent(DEFAULT_MODEL)
         .preamble("Be precise and concise.")
@@ -45,4 +47,5 @@ async fn example_streaming_prompt() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

@@ -182,7 +182,7 @@ where
 
         loop {
             print!("> ");
-            stdout.flush().unwrap();
+            stdout.flush()?;
 
             let mut input = String::new();
             match stdin.read_line(&mut input) {
@@ -205,12 +205,14 @@ where
                     println!();
 
                     if self.0.show_usage() {
-                        let Usage {
+                        if let Some(Usage {
                             input_tokens,
                             output_tokens,
                             ..
-                        } = self.0.usage().unwrap();
-                        println!("Input {input_tokens} tokens\nOutput {output_tokens} tokens");
+                        }) = self.0.usage()
+                        {
+                            println!("Input {input_tokens} tokens\nOutput {output_tokens} tokens");
+                        }
                     }
                 }
                 Err(e) => println!("Error reading request: {e}"),

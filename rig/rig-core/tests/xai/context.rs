@@ -1,5 +1,6 @@
 //! xAI context smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::xai;
@@ -14,8 +15,8 @@ const XAI_CONTEXT_DOCS: [&str; 3] = [
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
-async fn context_smoke() {
-    let client = xai::Client::from_env();
+async fn context_smoke() -> Result<()> {
+    let client = xai::Client::from_env()?;
     let agent = XAI_CONTEXT_DOCS
         .iter()
         .copied()
@@ -39,4 +40,5 @@ async fn context_smoke() {
         .expect("context prompt should succeed");
 
     assert_contains_any_case_insensitive(&response, &["ancient tool"]);
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! Groq tools smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::groq;
@@ -10,8 +11,8 @@ use super::TOOLS_MODEL;
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn tools_smoke() {
-    let client = groq::Client::from_env();
+async fn tools_smoke() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let agent = client
         .agent(TOOLS_MODEL)
         .preamble(
@@ -29,4 +30,5 @@ async fn tools_smoke() {
         .expect("tool prompt should succeed");
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

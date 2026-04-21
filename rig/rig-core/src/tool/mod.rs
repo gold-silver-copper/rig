@@ -350,9 +350,12 @@ impl ToolSet {
     /// Call a tool with the given name and arguments
     pub async fn call(&self, toolname: &str, args: String) -> Result<String, ToolSetError> {
         if let Some(tool) = self.tools.get(toolname) {
+            let pretty_args = serde_json::to_string_pretty(&args).unwrap_or_else(|error| {
+                format!("\"<failed to pretty-print tool arguments: {error}>\"")
+            });
             tracing::debug!(target: "rig",
                 "Calling tool {toolname} with args:\n{}",
-                serde_json::to_string_pretty(&args).unwrap()
+                pretty_args
             );
             Ok(tool.call(args).await?)
         } else {

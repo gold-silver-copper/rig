@@ -25,18 +25,20 @@ pub struct CompletionResponse {
 
 impl CompletionResponse {
     /// Return that parts of the response for assistant messages w/o dealing with the other variants
-    pub fn message(&self) -> (Vec<AssistantContent>, Vec<Citation>, Vec<ToolCall>) {
-        let Message::Assistant {
-            content,
-            citations,
-            tool_calls,
-            ..
-        } = self.message.clone()
-        else {
-            unreachable!("Completion responses will only return an assistant message")
-        };
-
-        (content, citations, tool_calls)
+    pub fn message(
+        &self,
+    ) -> Result<(Vec<AssistantContent>, Vec<Citation>, Vec<ToolCall>), CompletionError> {
+        match self.message.clone() {
+            Message::Assistant {
+                content,
+                citations,
+                tool_calls,
+                ..
+            } => Ok((content, citations, tool_calls)),
+            _ => Err(CompletionError::ResponseError(
+                "Cohere completion response did not contain an assistant message".into(),
+            )),
+        }
     }
 }
 
@@ -137,7 +139,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let (content, _, tool_calls) = response.message();
+        let (content, _, tool_calls) = response.message()?;
 
         let model_response = if !tool_calls.is_empty() {
             OneOrMany::many(
@@ -151,7 +153,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     })
                     .collect::<Vec<_>>(),
             )
-            .expect("We have atleast 1 tool call in this if block")
+            .map_err(|_| {
+                CompletionError::ResponseError(
+                    "Cohere response declared tool calls but provided none".to_owned(),
+                )
+            })?
         } else {
             OneOrMany::many(content.into_iter().map(|content| match content {
                 AssistantContent::Text { text } => completion::AssistantContent::text(text),
@@ -185,7 +191,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .unwrap_or_default();
 
         Ok(completion::CompletionResponse {
-            choice: OneOrMany::many(model_response).expect("There is atleast one content"),
+            choice: model_response,
             usage,
             raw_response: response,
             message_id: None,
@@ -649,7 +655,11 @@ where
 
         let req_body = serde_json::to_vec(&request)?;
 
-        let req = self.client.post("/v2/chat")?.body(req_body).unwrap();
+        let req = self
+            .client
+            .post("/v2/chat")?
+            .body(req_body)
+            .map_err(|error| CompletionError::HttpError(error.into()))?;
 
         async {
             let response = self
@@ -702,6 +712,7 @@ where
 mod tests {
     use super::*;
     use serde_path_to_error::deserialize;
+    use std::error::Error;
 
     #[test]
     fn test_deserialize_completion_response() {
@@ -740,7 +751,7 @@ mod tests {
         let result: Result<CompletionResponse, _> = deserialize(&mut deserializer);
 
         let response = result.unwrap();
-        let (_, citations, tool_calls) = response.message();
+        let (_, citations, tool_calls) = response.message().unwrap();
         let CompletionResponse {
             id,
             finish_reason,
@@ -806,5 +817,25 @@ mod tests {
 
         let completion_message: completion::Message = message.clone().try_into().unwrap();
         let _converted_back: Vec<Message> = completion_message.try_into().unwrap();
+    }
+
+    #[test]
+    fn completion_response_message_rejects_non_assistant_payloads() -> Result<(), Box<dyn Error>> {
+        let response = CompletionResponse {
+            id: "resp".to_string(),
+            finish_reason: FinishReason::Complete,
+            message: Message::User {
+                content: OneOrMany::one(UserContent::Text {
+                    text: "Hello, world!".to_string(),
+                }),
+            },
+            usage: None,
+        };
+
+        if response.message().is_err() {
+            Ok(())
+        } else {
+            Err("expected non-assistant Cohere payload to return an error".into())
+        }
     }
 }

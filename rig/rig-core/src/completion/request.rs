@@ -145,6 +145,14 @@ pub enum PromptError {
         chat_history: Vec<Message>,
         reason: String,
     },
+
+    /// An I/O operation required by the prompt flow failed.
+    #[error("IoError: {0}")]
+    IoError(#[from] std::io::Error),
+
+    /// An internal invariant required to continue the prompt flow was not satisfied.
+    #[error("InvariantError: {0}")]
+    InvariantError(&'static str),
 }
 
 impl PromptError {
@@ -567,9 +575,9 @@ impl CompletionRequest {
             })
             .collect::<Vec<_>>();
 
-        Some(Message::User {
-            content: OneOrMany::many(messages).expect("There will be atleast one document"),
-        })
+        let content = OneOrMany::from_non_empty_iter(messages)?;
+
+        Some(Message::User { content })
     }
 
     /// Adds a provider-hosted tool by storing it in `additional_params.tools`.
@@ -866,10 +874,18 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
         if let Some(preamble) = self.preamble {
             chat_history.insert(0, Message::system(preamble));
         }
-        chat_history.push(self.prompt);
-
-        let chat_history =
-            OneOrMany::many(chat_history).expect("There will always be at least the prompt");
+        let prompt = self.prompt;
+        let mut iter = chat_history.into_iter();
+        let chat_history = if let Some(first) = iter.next() {
+            let mut history = OneOrMany::one(first);
+            for message in iter {
+                history.push(message);
+            }
+            history.push(prompt);
+            history
+        } else {
+            OneOrMany::one(prompt)
+        };
         let additional_params = merge_provider_tools_into_additional_params(
             self.additional_params,
             self.provider_tools,

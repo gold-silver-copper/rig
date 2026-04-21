@@ -546,7 +546,9 @@ impl TryFrom<OneOrMany<message::UserContent>> for Vec<Message> {
                 .into_iter()
                 .map(|content| match content {
                     message::UserContent::ToolResult(tool_result) => tool_result.try_into(),
-                    _ => unreachable!(),
+                    _ => Err(message::MessageError::ConversionError(
+                        "OpenAI tool-result partition contained non-tool content".into(),
+                    )),
                 })
                 .collect::<Result<Vec<_>, _>>()
         } else {
@@ -555,8 +557,11 @@ impl TryFrom<OneOrMany<message::UserContent>> for Vec<Message> {
                 .map(|content| content.try_into())
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let other_content = OneOrMany::many(other_content)
-                .expect("There must be other content here if there were no tool result content");
+            let other_content = OneOrMany::many(other_content).map_err(|_| {
+                message::MessageError::ConversionError(
+                    "OpenAI user message did not contain convertible content".into(),
+                )
+            })?;
 
             Ok(vec![Message::User {
                 content: other_content,
@@ -582,9 +587,10 @@ impl TryFrom<OneOrMany<message::AssistantContent>> for Vec<Message> {
                     // Silently skip unsupported reasoning content.
                 }
                 message::AssistantContent::Image(_) => {
-                    panic!(
+                    return Err(message::MessageError::ConversionError(
                         "The OpenAI Completions API doesn't support image content in assistant messages!"
-                    );
+                            .into(),
+                    ));
                 }
             }
         }
@@ -1355,6 +1361,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn test_openai_request_uses_request_model_override() {
@@ -1410,6 +1417,26 @@ mod tests {
             serde_json::to_value(openai_request).expect("serialization should succeed");
 
         assert_eq!(serialized["model"], "gpt-4o-mini");
+    }
+
+    #[test]
+    fn assistant_image_history_is_rejected_for_chat_completions() -> Result<(), Box<dyn Error>> {
+        let content = crate::OneOrMany::one(crate::message::AssistantContent::Image(
+            crate::message::Image {
+                data: crate::message::DocumentSourceKind::Url(
+                    "https://example.com/image.png".into(),
+                ),
+                media_type: None,
+                detail: None,
+                additional_params: None,
+            },
+        ));
+
+        if Vec::<Message>::try_from(content).is_err() {
+            Ok(())
+        } else {
+            Err("expected assistant image history conversion to fail".into())
+        }
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Hugging Face streaming coverage for the default and Together-backed inference paths.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::huggingface::{self, SubProvider};
 use rig::streaming::StreamingPrompt;
@@ -10,8 +11,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
-async fn streaming_smoke() {
-    let client = huggingface::Client::from_env();
+async fn streaming_smoke() -> Result<()> {
+    let client = huggingface::Client::from_env()?;
     let agent = client
         .agent("meta-llama/Meta-Llama-3.1-8B-Instruct")
         .preamble(STREAMING_PREAMBLE)
@@ -23,11 +24,12 @@ async fn streaming_smoke() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
-async fn together_subprovider_streaming() {
+async fn together_subprovider_streaming() -> Result<()> {
     let api_key = std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY must be set");
     let agent = huggingface::Client::builder()
         .api_key(&api_key)
@@ -47,4 +49,5 @@ async fn together_subprovider_streaming() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

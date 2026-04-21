@@ -1,5 +1,6 @@
 //! Migrated from `examples/mistral_embeddings.rs`.
 
+use anyhow::Result;
 use rig::Embed;
 use rig::client::{EmbeddingsClient, ProviderClient};
 use rig::embeddings::EmbeddingsBuilder;
@@ -17,8 +18,8 @@ struct Greetings {
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY and --features derive"]
-async fn derive_embeddings_and_vector_search() {
-    let client = mistral::Client::from_env();
+async fn derive_embeddings_and_vector_search() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let embedding_model = client.embedding_model(mistral::embedding::MISTRAL_EMBED);
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
         .document(Greetings {
@@ -49,4 +50,5 @@ async fn derive_embeddings_and_vector_search() {
         results[0].2.message.contains("Hello"),
         "expected the hello document to be the closest match"
     );
+    Ok(())
 }

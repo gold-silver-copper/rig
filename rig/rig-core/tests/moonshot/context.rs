@@ -1,5 +1,6 @@
 //! Moonshot context smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::moonshot;
@@ -8,8 +9,8 @@ use crate::support::{CONTEXT_DOCS, CONTEXT_PROMPT, assert_contains_any_case_inse
 
 #[tokio::test]
 #[ignore = "requires MOONSHOT_API_KEY"]
-async fn context_smoke() {
-    let client = moonshot::Client::from_env();
+async fn context_smoke() -> Result<()> {
+    let client = moonshot::Client::from_env()?;
     let agent = CONTEXT_DOCS
         .iter()
         .copied()
@@ -32,4 +33,5 @@ async fn context_smoke() {
             "used by the ancestors",
         ],
     );
+    Ok(())
 }

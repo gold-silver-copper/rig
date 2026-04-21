@@ -1,5 +1,6 @@
 //! xAI extractor smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::xai;
 
@@ -7,8 +8,8 @@ use crate::support::{EXTRACTOR_TEXT, SmokePerson, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
-async fn extractor_smoke() {
-    let client = xai::Client::from_env();
+async fn extractor_smoke() -> Result<()> {
+    let client = xai::Client::from_env()?;
     let extractor = client.extractor::<SmokePerson>(xai::GROK_3_MINI).build();
 
     let response = extractor
@@ -32,4 +33,5 @@ async fn extractor_smoke() {
     assert_nonempty_response(last_name);
     assert_nonempty_response(job);
     assert!(response.usage.total_tokens > 0, "usage should be populated");
+    Ok(())
 }

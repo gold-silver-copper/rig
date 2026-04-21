@@ -1,5 +1,6 @@
 //! Migrated from `examples/multi_turn_streaming_gemini.rs`.
 
+use anyhow::Result;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,13 +37,13 @@ type StreamingResult = Pin<Box<dyn Stream<Item = Result<Text, StreamingError>> +
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn manual_multi_turn_streaming_loop() {
+async fn manual_multi_turn_streaming_loop() -> Result<()> {
     let add_calls = Arc::new(AtomicUsize::new(0));
     let subtract_calls = Arc::new(AtomicUsize::new(0));
     let multiply_calls = Arc::new(AtomicUsize::new(0));
     let divide_calls = Arc::new(AtomicUsize::new(0));
 
-    let client = gemini::Client::from_env();
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble("You must use tools to answer arithmetic prompts.")
@@ -80,6 +81,7 @@ async fn manual_multi_turn_streaming_loop() {
         divide_calls.load(Ordering::SeqCst) >= 1,
         "divide should be called"
     );
+    Ok(())
 }
 
 async fn multi_turn_prompt<M>(

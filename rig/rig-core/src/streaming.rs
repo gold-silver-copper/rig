@@ -29,6 +29,10 @@ use std::sync::atomic::AtomicBool;
 use std::task::{Context, Poll};
 use tokio::sync::watch;
 
+#[derive(Debug, thiserror::Error)]
+#[error("PauseControlError: {0}")]
+pub struct PauseControlError(#[from] watch::error::SendError<bool>);
+
 /// Control for pausing and resuming a streaming response
 pub struct PauseControl {
     pub(crate) paused_tx: watch::Sender<bool>,
@@ -44,12 +48,12 @@ impl PauseControl {
         }
     }
 
-    pub fn pause(&self) {
-        self.paused_tx.send(true).unwrap();
+    pub fn pause(&self) -> Result<(), PauseControlError> {
+        self.paused_tx.send(true).map_err(PauseControlError::from)
     }
 
-    pub fn resume(&self) {
-        self.paused_tx.send(false).unwrap();
+    pub fn resume(&self) -> Result<(), PauseControlError> {
+        self.paused_tx.send(false).map_err(PauseControlError::from)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -242,12 +246,12 @@ where
         self.abort_handle.abort();
     }
 
-    pub fn pause(&self) {
-        self.pause_control.pause();
+    pub fn pause(&self) -> Result<(), PauseControlError> {
+        self.pause_control.pause()
     }
 
-    pub fn resume(&self) {
-        self.pause_control.resume();
+    pub fn resume(&self) -> Result<(), PauseControlError> {
+        self.pause_control.resume()
     }
 
     pub fn is_paused(&self) -> bool {
@@ -331,8 +335,9 @@ where
                     stream.assistant_items.push(AssistantContent::text(""));
                 }
 
-                stream.choice = OneOrMany::many(std::mem::take(&mut stream.assistant_items))
-                    .expect("There should be at least one assistant message");
+                let assistant_items = std::mem::take(&mut stream.assistant_items);
+                stream.choice = OneOrMany::from_non_empty_iter(assistant_items)
+                    .unwrap_or_else(|| OneOrMany::one(AssistantContent::text("")));
 
                 Poll::Ready(None)
             }
@@ -571,7 +576,8 @@ where
                 println!("\nResult: {res}");
             }
             Ok(StreamedAssistantContent::Final(res)) => {
-                let json_res = serde_json::to_string_pretty(&res).unwrap();
+                let json_res = serde_json::to_string_pretty(&res)
+                    .unwrap_or_else(|error| format!("{{\"serialization_error\":\"{error}\"}}"));
                 println!();
                 tracing::info!("Final result: {json_res}");
             }
@@ -793,11 +799,11 @@ mod tests {
         let stream = create_mock_stream();
 
         // Test pause
-        stream.pause();
+        stream.pause().expect("pause should succeed");
         assert!(stream.is_paused());
 
         // Test resume
-        stream.resume();
+        stream.resume().expect("resume should succeed");
         assert!(!stream.is_paused());
     }
 

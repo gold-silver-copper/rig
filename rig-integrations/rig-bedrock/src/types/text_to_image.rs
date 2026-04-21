@@ -112,9 +112,16 @@ impl TryFrom<TextToImageResponse>
         }
 
         if let Some(images) = value.to_owned().images {
-            let data = BASE64_STANDARD
-                .decode(&images[0])
-                .expect("Could not decode image.");
+            let encoded = images.first().ok_or_else(|| {
+                ImageGenerationError::ResponseError(
+                    "Malformed response from model: no images returned".to_string(),
+                )
+            })?;
+            let data = BASE64_STANDARD.decode(encoded).map_err(|error| {
+                ImageGenerationError::ResponseError(format!(
+                    "Malformed response from model: could not decode image: {error}"
+                ))
+            })?;
 
             return Ok(Self {
                 image: data,

@@ -1,5 +1,6 @@
 //! Hugging Face context smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::huggingface;
@@ -8,8 +9,8 @@ use crate::support::{CONTEXT_DOCS, CONTEXT_PROMPT, assert_contains_any_case_inse
 
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
-async fn context_smoke() {
-    let client = huggingface::Client::from_env();
+async fn context_smoke() -> Result<()> {
+    let client = huggingface::Client::from_env()?;
     let agent = CONTEXT_DOCS
         .iter()
         .copied()
@@ -33,4 +34,5 @@ async fn context_smoke() {
             "used by the ancestors",
         ],
     );
+    Ok(())
 }

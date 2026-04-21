@@ -165,7 +165,10 @@ impl TryFrom<message::Message> for Vec<Message> {
                             // reasoning items. Silently skip to avoid crashing the process.
                         }
                         message::AssistantContent::Image(_) => {
-                            panic!("Image content is not currently supported on Mistral via Rig");
+                            return Err(message::MessageError::ConversionError(
+                                "Image content is not currently supported on Mistral via Rig"
+                                    .into(),
+                            ));
                         }
                     }
                 }

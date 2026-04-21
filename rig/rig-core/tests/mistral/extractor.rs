@@ -1,5 +1,6 @@
 //! Mistral extractor smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::mistral;
 
@@ -9,8 +10,8 @@ use super::DEFAULT_MODEL;
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn extractor_smoke() {
-    let client = mistral::Client::from_env();
+async fn extractor_smoke() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let extractor = client.extractor::<SmokePerson>(DEFAULT_MODEL).build();
 
     let response = extractor
@@ -34,4 +35,5 @@ async fn extractor_smoke() {
     assert_nonempty_response(last_name);
     assert_nonempty_response(job);
     assert!(response.usage.total_tokens > 0, "usage should be populated");
+    Ok(())
 }

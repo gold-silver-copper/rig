@@ -121,7 +121,7 @@ impl MultipartForm {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|error| error.duration())
             .as_nanos();
         format!("----boundary{}", timestamp)
     }
@@ -183,8 +183,10 @@ impl MultipartForm {
     }
 }
 
-impl From<MultipartForm> for reqwest::multipart::Form {
-    fn from(value: MultipartForm) -> Self {
+impl TryFrom<MultipartForm> for reqwest::multipart::Form {
+    type Error = reqwest::Error;
+
+    fn try_from(value: MultipartForm) -> Result<Self, Self::Error> {
         let mut form = reqwest::multipart::Form::new();
 
         for part in value.parts {
@@ -199,7 +201,7 @@ impl From<MultipartForm> for reqwest::multipart::Form {
                         req_part = req_part.file_name(filename);
                     }
                     if let Some(content_type) = part.content_type {
-                        req_part = req_part.mime_str(content_type.as_ref()).unwrap();
+                        req_part = req_part.mime_str(content_type.as_ref())?;
                     }
 
                     form = form.part(part.name, req_part);
@@ -207,7 +209,7 @@ impl From<MultipartForm> for reqwest::multipart::Form {
             }
         }
 
-        form
+        Ok(form)
     }
 }
 

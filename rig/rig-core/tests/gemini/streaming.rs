@@ -1,5 +1,6 @@
 //! Gemini streaming coverage, including the migrated example path.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::gemini;
 use rig::providers::gemini::completion::gemini_api_types::{
@@ -13,7 +14,7 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn streaming_smoke() {
+async fn streaming_smoke() -> Result<()> {
     let thinking_config = GenerationConfig {
         thinking_config: Some(ThinkingConfig {
             thinking_budget: None,
@@ -24,7 +25,7 @@ async fn streaming_smoke() {
     };
     let additional_params = AdditionalParameters::default().with_config(thinking_config);
 
-    let client = gemini::Client::from_env();
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent(gemini::completion::GEMINI_3_FLASH_PREVIEW)
         .preamble(STREAMING_PREAMBLE)
@@ -40,11 +41,12 @@ async fn streaming_smoke() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn example_streaming_prompt() {
+async fn example_streaming_prompt() -> Result<()> {
     let generation_config = GenerationConfig {
         thinking_config: Some(ThinkingConfig {
             thinking_budget: None,
@@ -54,7 +56,7 @@ async fn example_streaming_prompt() {
         ..Default::default()
     };
     let params = AdditionalParameters::default().with_config(generation_config);
-    let agent = gemini::Client::from_env()
+    let agent = gemini::Client::from_env()?
         .agent(gemini::completion::GEMINI_3_FLASH_PREVIEW)
         .preamble("Be precise and concise.")
         .temperature(0.5)
@@ -69,4 +71,5 @@ async fn example_streaming_prompt() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

@@ -3,6 +3,7 @@
 //! Run only these cases with:
 //! `cargo test -p rig-core --test openrouter openrouter::reasoning_tool_roundtrip::streaming -- --ignored --nocapture`
 
+use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -15,9 +16,9 @@ use crate::reasoning::{self, WeatherTool};
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn streaming() {
+async fn streaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = openrouter::Client::from_env();
+    let client = openrouter::Client::from_env()?;
     let agent = client
         .agent("openai/gpt-5.2")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -36,13 +37,14 @@ async fn streaming() {
 
     let stats = reasoning::collect_stream_stats(stream, "openrouter").await;
     reasoning::assert_universal(&stats, &call_count, "openrouter");
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn nonstreaming() {
+async fn nonstreaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = openrouter::Client::from_env();
+    let client = openrouter::Client::from_env()?;
     let agent = client
         .agent("openai/gpt-5.2")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -60,4 +62,5 @@ async fn nonstreaming() {
         .expect("[openrouter] Non-streaming chat failed - likely 400 from dropped reasoning");
 
     reasoning::assert_nonstreaming_universal(&result, &call_count, "openrouter");
+    Ok(())
 }

@@ -346,7 +346,11 @@ impl RawChoiceAccumulator {
                 if options.errors_on_terminal_response() =>
             {
                 let error_message = response_chunk_error_message(&kind, &response, provider_name)
-                    .expect("terminal response should have an error message");
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{provider_name} returned a terminal response without an error message"
+                        )
+                    });
                 Err(CompletionError::ProviderError(error_message))
             }
             _ => Ok(()),
@@ -511,7 +515,11 @@ pub(crate) fn raw_choices_from_sse_body(
                         Some("response.completed") => ResponseChunkKind::ResponseCompleted,
                         Some("response.failed") => ResponseChunkKind::ResponseFailed,
                         Some("response.incomplete") => ResponseChunkKind::ResponseIncomplete,
-                        _ => unreachable!("filtered above"),
+                        _ => {
+                            return Err(CompletionError::ResponseError(
+                                "unexpected OpenAI Responses terminal event type".into(),
+                            ));
+                        }
                     };
                     accumulator.record_response_chunk(kind, response, provider_name, options)?;
                 }
@@ -649,7 +657,12 @@ where
                     let data = serde_json::from_str::<StreamingCompletionChunk>(&evt.data);
 
                     let Ok(data) = data else {
-                        debug!("Couldn't deserialize SSE data as StreamingCompletionChunk: {:?}", data.unwrap_err());
+                        if let Err(error) = data {
+                            debug!(
+                                "Couldn't deserialize SSE data as StreamingCompletionChunk: {:?}",
+                                error
+                            );
+                        }
                         continue;
                     };
 

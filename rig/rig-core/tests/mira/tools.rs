@@ -1,5 +1,6 @@
 //! Mira tools smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::{anthropic, mira};
@@ -10,8 +11,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires MIRA_API_KEY"]
-async fn tools_smoke() {
-    let client = mira::Client::from_env();
+async fn tools_smoke() -> Result<()> {
+    let client = mira::Client::from_env()?;
     let agent = client
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
         .preamble(TOOLS_PREAMBLE)
@@ -25,4 +26,5 @@ async fn tools_smoke() {
         .expect("tool prompt should succeed");
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

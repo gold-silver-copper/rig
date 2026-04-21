@@ -98,7 +98,7 @@ impl SSEDecoder {
         let (field_name, value) = match parts.as_slice() {
             [field] => (*field, ""),
             [field, value] => (*field, *value),
-            _ => unreachable!(),
+            _ => return None,
         };
 
         // Trim leading space from value as per SSE spec

@@ -1,5 +1,6 @@
 //! Gemini extractor coverage, including the migrated example path.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::gemini;
 use rig::providers::gemini::completion::gemini_api_types::{
@@ -19,11 +20,11 @@ struct Person {
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn extractor_smoke() {
+async fn extractor_smoke() -> Result<()> {
     let additional_params =
         AdditionalParameters::default().with_config(GenerationConfig::default());
 
-    let client = gemini::Client::from_env();
+    let client = gemini::Client::from_env()?;
     let extractor = client
         .extractor::<SmokePerson>(gemini::completion::GEMINI_2_5_FLASH)
         .additional_params(
@@ -50,13 +51,14 @@ async fn extractor_smoke() {
     assert_nonempty_response(first_name);
     assert_nonempty_response(last_name);
     assert_nonempty_response(job);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn extractor_with_additional_params() {
+async fn extractor_with_additional_params() -> Result<()> {
     let params = AdditionalParameters::default().with_config(GenerationConfig::default());
-    let client = gemini::Client::from_env();
+    let client = gemini::Client::from_env()?;
     let extractor = client
         .extractor::<Person>(gemini::completion::GEMINI_2_5_FLASH)
         .additional_params(serde_json::to_value(params).expect("params should serialize"))
@@ -70,4 +72,5 @@ async fn extractor_with_additional_params() {
     assert_eq!(person.first_name.as_deref(), Some("John"));
     assert_eq!(person.last_name.as_deref(), Some("Doe"));
     assert_nonempty_response(person.job.as_deref().unwrap_or_default());
+    Ok(())
 }

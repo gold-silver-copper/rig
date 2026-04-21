@@ -35,9 +35,11 @@ impl TryFrom<ImageGenerationResponse>
     fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
         let b64_json = value.data[0].b64_json.clone();
 
-        let bytes = BASE64_STANDARD
-            .decode(&b64_json)
-            .expect("Failed to decode b64");
+        let bytes = BASE64_STANDARD.decode(&b64_json).map_err(|error| {
+            ImageGenerationError::ResponseError(format!(
+                "Failed to decode OpenAI image payload: {error}"
+            ))
+        })?;
 
         Ok(image_generation::ImageGenerationResponse {
             image: bytes,

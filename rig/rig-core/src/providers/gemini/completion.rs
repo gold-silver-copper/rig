@@ -2892,7 +2892,8 @@ mod tests {
     /// and verifies that Gemini can interpret the image in the tool result.
     #[tokio::test]
     #[ignore = "requires GEMINI_API_KEY environment variable"]
-    async fn test_gemini_agent_with_image_tool_result_e2e() {
+    async fn test_gemini_agent_with_image_tool_result_e2e() -> Result<(), Box<dyn std::error::Error>>
+    {
         use crate::completion::{Prompt, ToolDefinition};
         use crate::prelude::*;
         use crate::providers::gemini;
@@ -2937,7 +2938,7 @@ mod tests {
             }
         }
 
-        let client = gemini::Client::from_env();
+        let client = gemini::Client::from_env()?;
 
         let agent = client
             .agent("gemini-3-flash-preview")
@@ -2958,9 +2959,10 @@ mod tests {
             response.err()
         );
 
-        let response_text = response.unwrap();
+        let response_text = response?;
         println!("Response: {response_text}");
         // Gemini should have been able to see the image and potentially describe its color
         assert!(!response_text.is_empty(), "Response should not be empty");
+        Ok(())
     }
 }

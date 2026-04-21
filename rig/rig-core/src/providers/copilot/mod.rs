@@ -202,7 +202,7 @@ impl ProviderBuilder for CopilotBuilder {
 impl ProviderClient for Client {
     type Input = CopilotAuth;
 
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let mut builder = Self::builder();
         fn get(name: &str) -> Option<String> {
             std::env::var(name).ok()
@@ -213,16 +213,16 @@ impl ProviderClient for Client {
         }
 
         if let Some(api_key) = env_api_key(&get) {
-            builder.api_key(api_key).build().unwrap()
+            builder.api_key(api_key).build()
         } else if let Some(access_token) = env_github_access_token(&get) {
-            builder.github_access_token(access_token).build().unwrap()
+            builder.github_access_token(access_token).build()
         } else {
-            builder.oauth().build().unwrap()
+            builder.oauth().build()
         }
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::builder().api_key(input).build().unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(input).build()
     }
 }
 

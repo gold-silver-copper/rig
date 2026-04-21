@@ -1,5 +1,6 @@
 //! Moonshot required-tool-choice smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::message::ToolChoice;
@@ -11,8 +12,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires MOONSHOT_API_KEY"]
-async fn required_tool_choice_agent_roundtrip() {
-    let agent = moonshot::Client::from_env()
+async fn required_tool_choice_agent_roundtrip() -> Result<()> {
+    let agent = moonshot::Client::from_env()?
         .agent(moonshot::KIMI_K2_5)
         .preamble(TOOLS_PREAMBLE)
         .tool_choice(ToolChoice::Required)
@@ -27,4 +28,5 @@ async fn required_tool_choice_agent_roundtrip() {
         .expect("required-tool-choice prompt should succeed");
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

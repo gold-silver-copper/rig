@@ -163,14 +163,19 @@ impl ProviderClient for Client {
 
     /// Create a new Huggingface client from the `HUGGINGFACE_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY is not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("HUGGINGFACE_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "HUGGINGFACE_API_KEY",
+                source,
+            }
+        })?;
 
-        Self::new(&api_key).unwrap()
+        Self::new(&api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(&input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(&input)
     }
 }
 

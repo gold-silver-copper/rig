@@ -1,5 +1,6 @@
 //! Migrated from `examples/ollama_structured_output.rs`.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::ollama;
@@ -18,8 +19,8 @@ struct Character {
 
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]
-async fn structured_output_prompt() {
-    let client = ollama::Client::from_env();
+async fn structured_output_prompt() -> Result<()> {
+    let client = ollama::Client::from_env()?;
     let agent = client
         .agent("qwen3:4b")
         .preamble("You are a creative fiction writer. Create detailed characters.")
@@ -44,4 +45,5 @@ async fn structured_output_prompt() {
             .all(|trait_name| !trait_name.trim().is_empty()),
         "traits should not contain empty entries"
     );
+    Ok(())
 }

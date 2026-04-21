@@ -1,5 +1,6 @@
 //! Groq streaming tools smoke test.
 
+use anyhow::Result;
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
@@ -24,8 +25,8 @@ use super::{
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn raw_stream_emits_required_zero_arg_tool_call() {
-    let client = groq::Client::from_env();
+async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let model = client.completion_model(STREAMING_TOOLS_RAW_MODEL);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
@@ -35,12 +36,13 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let stream = model.stream(request).await.expect("stream should start");
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
-    let client = groq::Client::from_env();
+async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let model = client.completion_model(STREAMING_TOOLS_RAW_MODEL);
     let request = model
         .completion_request(TWO_TOOL_STREAM_PROMPT)
@@ -61,12 +63,13 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
         &observation,
         &["lookup_harbor_label", "lookup_orchard_label"],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() {
-    let client = groq::Client::from_env();
+async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let agent = client
         .agent(STREAMING_TOOLS_MULTI_MODEL)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
@@ -85,12 +88,13 @@ async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() {
         &["lookup_harbor_label", "lookup_orchard_label"],
         &[ALPHA_SIGNAL_OUTPUT, BETA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn streaming_tools_emit_tool_call_before_later_text() {
-    let client = groq::Client::from_env();
+async fn streaming_tools_emit_tool_call_before_later_text() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let agent = client
         .agent(STREAMING_TOOLS_ORDERED_MODEL)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
@@ -108,12 +112,13 @@ async fn streaming_tools_emit_tool_call_before_later_text() {
         "lookup_harbor_label",
         &[ALPHA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn raw_followup_uses_tool_result_without_new_tool_calls() {
-    let client = groq::Client::from_env();
+async fn raw_followup_uses_tool_result_without_new_tool_calls() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let model = client.completion_model(STREAMING_TOOLS_RAW_MODEL);
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
@@ -170,4 +175,5 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
             .collect::<Vec<_>>()
     );
     assert_raw_stream_text_contains(&second_turn, &[ALPHA_SIGNAL_OUTPUT]);
+    Ok(())
 }

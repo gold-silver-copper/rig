@@ -1,5 +1,6 @@
 //! Migrated from `examples/image.rs`.
 
+use anyhow::Result;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
@@ -15,8 +16,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
-async fn image_prompt_from_fixture() {
-    let client = anthropic::Client::from_env();
+async fn image_prompt_from_fixture() -> Result<()> {
+    let client = anthropic::Client::from_env()?;
     let agent = client
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
         .preamble("You are an image describer.")
@@ -39,4 +40,5 @@ async fn image_prompt_from_fixture() {
 
     assert_nonempty_response(&response);
     assert_contains_any_case_insensitive(&response, &["ant", "insect"]);
+    Ok(())
 }

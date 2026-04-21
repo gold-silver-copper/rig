@@ -3,13 +3,14 @@
 //! Run with:
 //! `cargo test -p rig-core --test openrouter openrouter::models::list_models_smoke -- --ignored --nocapture`
 
+use anyhow::Result;
 use rig::client::{ModelListingClient, ProviderClient};
 use rig::providers::openrouter;
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn list_models_smoke() {
-    let client = openrouter::Client::from_env();
+async fn list_models_smoke() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let models = match client.list_models().await {
         Ok(models) => models,
         Err(error) => {
@@ -23,4 +24,5 @@ async fn list_models_smoke() {
     );
 
     println!("OpenRouter returned {} models", models.len());
+    Ok(())
 }

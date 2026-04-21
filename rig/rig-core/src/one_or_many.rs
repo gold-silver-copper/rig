@@ -112,6 +112,20 @@ impl<T: Clone> OneOrMany<T> {
         })
     }
 
+    /// Create a `OneOrMany` from a known-non-empty iterator without forcing callers to invent a
+    /// panic path when the invariant is already checked elsewhere.
+    pub(crate) fn from_non_empty_iter<I>(items: I) -> Option<Self>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let mut iter = items.into_iter();
+        let first = iter.next()?;
+        Some(Self {
+            first,
+            rest: iter.collect(),
+        })
+    }
+
     /// Merge a list of OneOrMany items into a single OneOrMany item.
     pub fn merge<I>(one_or_many_items: I) -> Result<Self, EmptyListError>
     where

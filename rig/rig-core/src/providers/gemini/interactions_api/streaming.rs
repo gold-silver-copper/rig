@@ -190,7 +190,10 @@ where
 
                     let data = serde_json::from_str::<InteractionSseEvent>(&message.data);
                     let Ok(data) = data else {
-                        let err = data.unwrap_err();
+                        let err = match data {
+                            Ok(_) => continue,
+                            Err(err) => err,
+                        };
                         tracing::debug!("Failed to deserialize interactions SSE event: {err}");
                         continue;
                     };

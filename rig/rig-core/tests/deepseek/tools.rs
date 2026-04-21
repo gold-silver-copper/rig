@@ -1,5 +1,6 @@
 //! DeepSeek tools smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::deepseek;
@@ -10,8 +11,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn tools_smoke() {
-    let client = deepseek::Client::from_env();
+async fn tools_smoke() -> Result<()> {
+    let client = deepseek::Client::from_env()?;
     let agent = client
         .agent(deepseek::DEEPSEEK_CHAT)
         .preamble(TOOLS_PREAMBLE)
@@ -25,4 +26,5 @@ async fn tools_smoke() {
         .expect("tool prompt should succeed");
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

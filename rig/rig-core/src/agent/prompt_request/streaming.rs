@@ -188,6 +188,8 @@ pub enum StreamingError {
     Prompt(#[from] Box<PromptError>),
     #[error("ToolSetError: {0}")]
     Tool(#[from] ToolSetError),
+    #[error("InvariantError: {0}")]
+    InvariantError(&'static str),
 }
 
 const UNKNOWN_AGENT_NAME: &str = "Unnamed Agent";
@@ -407,10 +409,12 @@ where
         // See also: https://github.com/rust-lang/rust-clippy/issues/8722
         let stream = async_stream::stream! {
             'outer: loop {
-                let current_prompt = new_messages
-                    .last()
-                    .cloned()
-                    .expect("streaming loop should always have a pending prompt");
+                let Some(current_prompt) = new_messages.last().cloned() else {
+                    yield Err(StreamingError::InvariantError(
+                        "streaming loop lost the pending prompt message",
+                    ));
+                    break 'outer;
+                };
 
                 if current_max_turns > self.max_turns + 1 {
                     last_prompt_error = current_prompt.rag_text().unwrap_or_default();
@@ -680,9 +684,15 @@ where
                     content_items.extend(tool_calls.clone());
 
                     if !content_items.is_empty() {
+                        let Some(content) = OneOrMany::from_non_empty_iter(content_items) else {
+                            yield Err(StreamingError::InvariantError(
+                                "assistant turn produced no content after non-empty guard",
+                            ));
+                            break 'outer;
+                        };
                         new_messages.push(Message::Assistant {
                             id: stream.message_id.clone(),
-                            content: OneOrMany::many(content_items).expect("Should have at least one item"),
+                            content,
                         });
                     }
                 }
@@ -763,14 +773,14 @@ pub async fn stream_to_stdout<R>(
                 Text { text },
             ))) => {
                 print!("{text}");
-                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                std::io::Write::flush(&mut std::io::stdout())?;
             }
             Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(
                 reasoning,
             ))) => {
                 let reasoning = reasoning.display_text();
                 print!("{reasoning}");
-                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                std::io::Write::flush(&mut std::io::stdout())?;
             }
             Ok(MultiTurnStreamItem::FinalResponse(res)) => {
                 final_res = res;
@@ -1260,7 +1270,7 @@ mod tests {
     /// making the span leak deterministic (it only occurs when tasks share a thread).
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "This requires an API key"]
-    async fn test_span_context_isolation() {
+    async fn test_span_context_isolation() -> Result<(), Box<dyn std::error::Error>> {
         let stop = Arc::new(AtomicBool::new(false));
         let leak_count = Arc::new(AtomicU32::new(0));
 
@@ -1276,7 +1286,7 @@ mod tests {
 
         // Make streaming request WITHOUT an outer span so rig creates its own invoke_agent span
         // (rig reuses current span if one exists, so we need to ensure there's no current span)
-        let client = anthropic::Client::from_env();
+        let client = anthropic::Client::from_env()?;
         let agent = client
             .agent(anthropic::completion::CLAUDE_HAIKU_4_5)
             .preamble("You are a helpful assistant.")
@@ -1311,7 +1321,7 @@ mod tests {
 
         // Stop background logger
         stop.store(true, Ordering::Relaxed);
-        bg_handle.await.unwrap();
+        bg_handle.await?;
 
         let leaks = leak_count.load(Ordering::Relaxed);
         assert_eq!(
@@ -1319,6 +1329,7 @@ mod tests {
             "SPAN LEAK DETECTED: Background logger was inside unexpected spans {leaks} times. \
              This indicates that span.enter() is being used inside async_stream instead of .instrument()"
         );
+        Ok(())
     }
 
     /// Test that FinalResponse contains the updated chat history when with_history is used.
@@ -1328,10 +1339,10 @@ mod tests {
     /// 2. The history contains both the user prompt and assistant response
     #[tokio::test]
     #[ignore = "This requires an API key"]
-    async fn test_chat_history_in_final_response() {
+    async fn test_chat_history_in_final_response() -> Result<(), Box<dyn std::error::Error>> {
         use crate::message::Message;
 
-        let client = anthropic::Client::from_env();
+        let client = anthropic::Client::from_env()?;
         let agent = client
             .agent(anthropic::completion::CLAUDE_HAIKU_4_5)
             .preamble("You are a helpful assistant. Keep responses brief.")
@@ -1361,7 +1372,7 @@ mod tests {
                     break;
                 }
                 Err(e) => {
-                    panic!("Streaming error: {:?}", e);
+                    return Err(format!("Streaming error: {e:?}").into());
                 }
                 _ => {}
             }
@@ -1389,5 +1400,6 @@ mod tests {
             history.len(),
             response_text
         );
+        Ok(())
     }
 }

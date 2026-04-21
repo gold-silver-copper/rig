@@ -1,5 +1,6 @@
 //! Groq streaming smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::groq;
 use rig::streaming::StreamingPrompt;
@@ -12,8 +13,8 @@ use super::STREAMING_MODEL;
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn streaming_smoke() {
-    let client = groq::Client::from_env();
+async fn streaming_smoke() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let agent = client
         .agent(STREAMING_MODEL)
         .preamble(STREAMING_PREAMBLE)
@@ -25,4 +26,5 @@ async fn streaming_smoke() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

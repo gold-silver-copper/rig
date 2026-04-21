@@ -1,5 +1,6 @@
 //! Groq loaders smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::loaders::FileLoader;
@@ -11,8 +12,8 @@ use super::LOADERS_MODEL;
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn loaders_smoke() {
-    let client = groq::Client::from_env();
+async fn loaders_smoke() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let examples = FileLoader::with_glob(LOADERS_GLOB)
         .expect("examples glob should parse")
         .read_with_path()
@@ -40,4 +41,5 @@ async fn loaders_smoke() {
         .expect("loader prompt should succeed");
 
     assert_loader_answer_is_relevant(&response);
+    Ok(())
 }

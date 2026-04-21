@@ -1,5 +1,6 @@
 //! OpenAI structured output coverage, including the migrated example path.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Prompt, TypedPrompt};
 use rig::providers::openai;
@@ -46,22 +47,20 @@ fn assert_weather_forecast(forecast: &WeatherForecast, expected_city: &[&str]) {
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn structured_output_smoke() {
-    let client = openai::Client::from_env();
+async fn structured_output_smoke() -> Result<()> {
+    let client = openai::Client::from_env()?;
     let agent = client.agent(openai::GPT_4O).build();
 
-    let response: SmokeStructuredOutput = agent
-        .prompt_typed(STRUCTURED_OUTPUT_PROMPT)
-        .await
-        .expect("structured output prompt should succeed");
+    let response: SmokeStructuredOutput = agent.prompt_typed(STRUCTURED_OUTPUT_PROMPT).await?;
 
     assert_smoke_structured_output(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn prompt_typed_and_output_schema() {
-    let client = openai::Client::from_env();
+async fn prompt_typed_and_output_schema() -> Result<()> {
+    let client = openai::Client::from_env()?;
     let agent = client
         .agent(openai::GPT_4O)
         .preamble("You are a helpful weather assistant. Respond with realistic weather data.")
@@ -69,15 +68,13 @@ async fn prompt_typed_and_output_schema() {
 
     let forecast: WeatherForecast = agent
         .prompt_typed("What's the weather forecast for New York City today?")
-        .await
-        .expect("prompt_typed should succeed");
+        .await?;
     assert_weather_forecast(&forecast, &["new york", "nyc"]);
 
     let extended = agent
         .prompt_typed::<WeatherForecast>("What's the weather forecast for Los Angeles?")
         .extended_details()
-        .await
-        .expect("extended prompt_typed should succeed");
+        .await?;
     assert_weather_forecast(&extended.output, &["los angeles", "la"]);
     assert!(extended.usage.total_tokens > 0, "usage should be populated");
 
@@ -88,9 +85,8 @@ async fn prompt_typed_and_output_schema() {
         .build();
     let response = agent_with_schema
         .prompt("What's the weather forecast for Chicago?")
-        .await
-        .expect("output schema prompt should succeed");
-    let parsed: WeatherForecast =
-        serde_json::from_str(&response).expect("schema response should deserialize");
+        .await?;
+    let parsed: WeatherForecast = serde_json::from_str(&response)?;
     assert_weather_forecast(&parsed, &["chicago"]);
+    Ok(())
 }

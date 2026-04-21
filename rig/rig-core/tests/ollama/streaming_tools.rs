@@ -1,5 +1,6 @@
 //! Migrated from `examples/ollama_streaming_with_tools.rs`.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::ollama;
 use rig::streaming::StreamingPrompt;
@@ -10,8 +11,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]
-async fn example_streaming_with_tools() {
-    let agent = ollama::Client::from_env()
+async fn example_streaming_with_tools() -> Result<()> {
+    let agent = ollama::Client::from_env()?
         .agent("llama3.2")
         .preamble(
             "You are a calculator here to help the user perform arithmetic operations. \
@@ -28,4 +29,5 @@ async fn example_streaming_with_tools() {
         .expect("streaming prompt should succeed");
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

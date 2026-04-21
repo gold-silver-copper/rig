@@ -1,5 +1,6 @@
 //! Mistral agent completion smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::mistral;
@@ -10,8 +11,8 @@ use super::DEFAULT_MODEL;
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn completion_smoke() {
-    let client = mistral::Client::from_env();
+async fn completion_smoke() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let agent = client.agent(DEFAULT_MODEL).preamble(BASIC_PREAMBLE).build();
 
     let response = agent
@@ -20,4 +21,5 @@ async fn completion_smoke() {
         .expect("completion should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

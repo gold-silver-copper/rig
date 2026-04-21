@@ -170,38 +170,48 @@ impl super::anthropic::completion::AnthropicCompatibleProvider for ZAiAnthropicE
 impl ProviderClient for Client {
     type Input = ZAiApiKey;
 
-    fn from_env() -> Self {
-        let api_key = std::env::var("ZAI_API_KEY").expect("ZAI_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("ZAI_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "ZAI_API_KEY",
+                source,
+            }
+        })?;
         let mut builder = Self::builder().api_key(api_key);
 
         if let Ok(base_url) = std::env::var("ZAI_API_BASE") {
             builder = builder.base_url(base_url);
         }
 
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 
 impl ProviderClient for AnthropicClient {
     type Input = String;
 
-    fn from_env() -> Self {
-        let api_key = std::env::var("ZAI_API_KEY").expect("ZAI_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("ZAI_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "ZAI_API_KEY",
+                source,
+            }
+        })?;
         let mut builder = Self::builder().api_key(api_key);
 
         if let Some(base_url) = anthropic_base_override("ZAI_ANTHROPIC_API_BASE", "ZAI_API_BASE") {
             builder = builder.base_url(base_url);
         }
 
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::builder().api_key(input).build().unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(input).build()
     }
 }
 

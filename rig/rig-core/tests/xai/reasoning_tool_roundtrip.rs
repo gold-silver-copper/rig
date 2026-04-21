@@ -3,6 +3,7 @@
 //! Run only these cases with:
 //! `cargo test -p rig-core --test xai xai::reasoning_tool_roundtrip::streaming -- --ignored --nocapture`
 
+use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -15,9 +16,9 @@ use crate::reasoning::{self, WeatherTool};
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY - validate with grok-4-0725 once key is available"]
-async fn streaming() {
+async fn streaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = xai::Client::from_env();
+    let client = xai::Client::from_env()?;
     let agent = client
         .agent(xai::GROK_3_MINI)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -32,13 +33,14 @@ async fn streaming() {
 
     let stats = reasoning::collect_stream_stats(stream, "xai").await;
     reasoning::assert_universal(&stats, &call_count, "xai");
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY - validate with grok-4-0725 once key is available"]
-async fn nonstreaming() {
+async fn nonstreaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = xai::Client::from_env();
+    let client = xai::Client::from_env()?;
     let agent = client
         .agent(xai::GROK_3_MINI)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -52,4 +54,5 @@ async fn nonstreaming() {
         .expect("[xai] Non-streaming chat failed - likely 400 from dropped reasoning");
 
     reasoning::assert_nonstreaming_universal(&result, &call_count, "xai");
+    Ok(())
 }

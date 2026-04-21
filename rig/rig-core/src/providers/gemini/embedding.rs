@@ -99,7 +99,8 @@ where
         tracing::trace!(
             target: "rig::embedding",
             "Sending embedding request to Gemini API {}",
-            serde_json::to_string_pretty(&request_body).unwrap()
+            serde_json::to_string_pretty(&request_body)
+                .unwrap_or_else(|error| format!("{{\"serialization_error\":\"{error}\"}}"))
         );
 
         let request_body = serde_json::to_vec(&request_body)?;

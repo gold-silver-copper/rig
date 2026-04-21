@@ -100,26 +100,26 @@ pub type ClientBuilder<H = reqwest::Client> = client::ClientBuilder<LlamafileBui
 impl Client {
     /// Create a client pointing at the given llamafile base URL
     /// (e.g. `http://localhost:8080`).
-    pub fn from_url(base_url: &str) -> Self {
-        Self::builder()
-            .api_key(Nothing)
-            .base_url(base_url)
-            .build()
-            .expect("Failed to build llamafile client")
+    pub fn from_url(base_url: &str) -> http_client::Result<Self> {
+        Self::builder().api_key(Nothing).base_url(base_url).build()
     }
 }
 
 impl ProviderClient for Client {
     type Input = Nothing;
 
-    fn from_env() -> Self {
-        let api_base =
-            std::env::var("LLAMAFILE_API_BASE_URL").expect("LLAMAFILE_API_BASE_URL not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_base = std::env::var("LLAMAFILE_API_BASE_URL").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "LLAMAFILE_API_BASE_URL",
+                source,
+            }
+        })?;
         Self::from_url(&api_base)
     }
 
-    fn from_val(_: Self::Input) -> Self {
-        Self::builder().api_key(Nothing).build().unwrap()
+    fn from_val(_: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(Nothing).build()
     }
 }
 

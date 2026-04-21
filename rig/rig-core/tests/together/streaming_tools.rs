@@ -1,5 +1,6 @@
 //! Together streaming tools smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::together;
 use rig::streaming::StreamingPrompt;
@@ -11,8 +12,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires TOGETHER_API_KEY"]
-async fn streaming_tools_smoke() {
-    let client = together::Client::from_env();
+async fn streaming_tools_smoke() -> Result<()> {
+    let client = together::Client::from_env()?;
     let agent = client
         .agent(together::LLAMA_2_70B_CHAT_TOGETHER)
         .preamble(STREAMING_TOOLS_PREAMBLE)
@@ -26,4 +27,5 @@ async fn streaming_tools_smoke() {
         .expect("streaming tool prompt should succeed");
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

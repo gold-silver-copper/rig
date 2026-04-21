@@ -1,5 +1,6 @@
 //! Migrated from `examples/multi_turn_streaming.rs`.
 
+use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -152,13 +153,13 @@ impl Tool for Divide {
 
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
-async fn multi_turn_streaming_tools() {
+async fn multi_turn_streaming_tools() -> Result<()> {
     let add_calls = Arc::new(AtomicUsize::new(0));
     let subtract_calls = Arc::new(AtomicUsize::new(0));
     let multiply_calls = Arc::new(AtomicUsize::new(0));
     let divide_calls = Arc::new(AtomicUsize::new(0));
 
-    let client = anthropic::Client::from_env();
+    let client = anthropic::Client::from_env()?;
     let agent = client
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
         .preamble("You must use tools for arithmetic.")
@@ -222,4 +223,5 @@ async fn multi_turn_streaming_tools() {
         .final_response_text
         .expect("stream should produce a final response string");
     assert_mentions_expected_number(&response, MULTI_TURN_STREAMING_EXPECTED_RESULT);
+    Ok(())
 }

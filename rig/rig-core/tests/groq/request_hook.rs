@@ -70,7 +70,7 @@ where
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
 async fn request_hook_records_prompt_and_response() -> Result<()> {
-    let agent = groq::Client::from_env()
+    let agent = groq::Client::from_env()?
         .agent(REQUEST_HOOK_MODEL)
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .build();

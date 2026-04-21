@@ -59,10 +59,13 @@ pub trait ProviderClient {
     type Input;
 
     /// Create a client from the process's environment.
-    /// Panics if an environment is improperly configured.
-    fn from_env() -> Self;
+    fn from_env() -> http_client::Result<Self>
+    where
+        Self: Sized;
 
-    fn from_val(input: Self::Input) -> Self;
+    fn from_val(input: Self::Input) -> http_client::Result<Self>
+    where
+        Self: Sized;
 }
 
 /// A trait for API keys. This determines whether the key is inserted into a [Client]'s default

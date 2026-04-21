@@ -251,9 +251,12 @@ where
                         if let Some(existing) = tool_calls.get(&incoming.index)
                             && profile.should_evict(existing, &incoming)
                         {
-                            let evicted = tool_calls
-                                .remove(&incoming.index)
-                                .expect("checked above");
+                            let Some(evicted) = tool_calls.remove(&incoming.index) else {
+                                yield Err(CompletionError::ResponseError(
+                                    "streaming tool call disappeared before eviction".into(),
+                                ));
+                                return;
+                            };
                             yield Ok(RawStreamingChoice::ToolCall(
                                 finalize_completed_streaming_tool_call(evicted),
                             ));

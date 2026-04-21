@@ -1,5 +1,6 @@
 //! Migrated from `examples/ollama_streaming.rs`.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::ollama;
 use rig::streaming::StreamingPrompt;
@@ -8,8 +9,8 @@ use crate::support::{assert_nonempty_response, collect_stream_final_response};
 
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]
-async fn example_streaming_prompt() {
-    let agent = ollama::Client::from_env()
+async fn example_streaming_prompt() -> Result<()> {
+    let agent = ollama::Client::from_env()?
         .agent("llama3.2")
         .preamble("Be precise and concise.")
         .temperature(0.5)
@@ -23,4 +24,5 @@ async fn example_streaming_prompt() {
         .expect("streaming prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

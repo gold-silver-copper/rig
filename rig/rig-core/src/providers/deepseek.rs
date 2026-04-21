@@ -88,19 +88,24 @@ impl ProviderClient for Client {
     type Input = DeepSeekApiKey;
 
     // If you prefer the environment variable approach:
-    fn from_env() -> Self {
-        let api_key = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("DEEPSEEK_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "DEEPSEEK_API_KEY",
+                source,
+            }
+        })?;
         let mut client_builder = Self::builder();
         client_builder.headers_mut().insert(
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
         let client_builder = client_builder.api_key(&api_key);
-        client_builder.build().unwrap()
+        client_builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 

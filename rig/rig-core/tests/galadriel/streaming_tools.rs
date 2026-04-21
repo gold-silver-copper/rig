@@ -1,5 +1,6 @@
 //! Galadriel streaming tools smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
 use rig::message::ToolChoice;
@@ -12,8 +13,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires GALADRIEL_API_KEY"]
-async fn raw_stream_emits_required_zero_arg_tool_call() {
-    let client = galadriel::Client::from_env();
+async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
+    let client = galadriel::Client::from_env()?;
     let model = client.completion_model(galadriel::GPT_4O);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
@@ -23,4 +24,5 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let stream = model.stream(request).await.expect("stream should start");
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! Moonshot reasoning-history roundtrip smoke test.
 
+use anyhow::Result;
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
@@ -20,8 +21,8 @@ fn response_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
 
 #[tokio::test]
 #[ignore = "requires MOONSHOT_API_KEY"]
-async fn assistant_reasoning_content_roundtrips_in_history() {
-    let model = moonshot::Client::from_env().completion_model(moonshot::KIMI_K2_5);
+async fn assistant_reasoning_content_roundtrips_in_history() -> Result<()> {
+    let model = moonshot::Client::from_env()?.completion_model(moonshot::KIMI_K2_5);
     let assistant = Message::Assistant {
         id: None,
         content: OneOrMany::many(vec![
@@ -45,4 +46,5 @@ async fn assistant_reasoning_content_roundtrips_in_history() {
     let text = response_text(&response.choice);
     assert_nonempty_response(&text);
     assert_contains_any_case_insensitive(&text, &["teal"]);
+    Ok(())
 }

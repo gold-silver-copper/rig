@@ -210,7 +210,7 @@ impl ProviderBuilder for ChatGPTBuilder {
 impl ProviderClient for Client {
     type Input = ChatGPTAuth;
 
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let mut builder = Self::builder();
 
         if let Ok(base_url) =
@@ -227,14 +227,13 @@ impl ProviderClient for Client {
                     account_id,
                 })
                 .build()
-                .unwrap()
         } else {
-            builder.oauth().build().unwrap()
+            builder.oauth().build()
         }
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::builder().api_key(input).build().unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(input).build()
     }
 }
 

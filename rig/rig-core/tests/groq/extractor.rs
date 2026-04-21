@@ -1,5 +1,6 @@
 //! Groq extractor smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::groq;
 
@@ -9,8 +10,8 @@ use super::EXTRACTOR_MODEL;
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn extractor_smoke() {
-    let client = groq::Client::from_env();
+async fn extractor_smoke() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let extractor = client.extractor::<SmokePerson>(EXTRACTOR_MODEL).build();
 
     let response = extractor
@@ -34,4 +35,5 @@ async fn extractor_smoke() {
     assert_nonempty_response(last_name);
     assert_nonempty_response(job);
     assert!(response.usage.total_tokens > 0, "usage should be populated");
+    Ok(())
 }

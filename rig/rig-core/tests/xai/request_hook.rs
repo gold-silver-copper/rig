@@ -68,7 +68,7 @@ where
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
 async fn request_hook_records_prompt_and_response() -> Result<()> {
-    let agent = xai::Client::from_env()
+    let agent = xai::Client::from_env()?
         .agent(xai::GROK_3_MINI)
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .build();

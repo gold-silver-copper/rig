@@ -1020,7 +1020,11 @@ impl TryFrom<message::ToolChoice> for ToolChoice {
                 }
 
                 Self::Tool {
-                    name: function_names.first().unwrap().to_string(),
+                    name: function_names.first().cloned().ok_or_else(|| {
+                        CompletionError::ProviderError(
+                            "Claude tool choice requires exactly one function name".into(),
+                        )
+                    })?,
                 }
             }
         };

@@ -1,5 +1,6 @@
 //! MiniMax Anthropic-compatible completion smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::minimax;
@@ -8,8 +9,8 @@ use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires MINIMAX_API_KEY"]
-async fn anthropic_compatible_completion_smoke() {
-    let response = minimax::AnthropicClient::from_env()
+async fn anthropic_compatible_completion_smoke() -> Result<()> {
+    let response = minimax::AnthropicClient::from_env()?
         .agent(minimax::MINIMAX_M2)
         .preamble(BASIC_PREAMBLE)
         .build()
@@ -18,4 +19,5 @@ async fn anthropic_compatible_completion_smoke() {
         .expect("MiniMax Anthropic-compatible completion should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

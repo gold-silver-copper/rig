@@ -42,6 +42,18 @@ pub enum EmbeddingError {
     /// Error returned by the embedding model provider
     #[error("ProviderError: {0}")]
     ProviderError(String),
+
+    /// The embedding backend or local runtime could not be initialized.
+    #[error("InitializationError: {0}")]
+    InitializationError(String),
+
+    /// The embedding backend returned no embeddings for a request that should produce one.
+    #[error("EmptyResponse: embedding backend returned no embeddings")]
+    EmptyResponse,
+
+    /// The embedding backend omitted the embedding for a specific document.
+    #[error("MissingEmbeddingForDocument: backend omitted embedding for document index {index}")]
+    MissingEmbeddingForDocument { index: usize },
 }
 
 /// Trait for embedding models that can generate embeddings for documents.
@@ -68,11 +80,10 @@ pub trait EmbeddingModel: WasmCompatSend + WasmCompatSync {
         text: &str,
     ) -> impl std::future::Future<Output = Result<Embedding, EmbeddingError>> + WasmCompatSend {
         async {
-            Ok(self
-                .embed_texts(vec![text.to_string()])
+            self.embed_texts(vec![text.to_string()])
                 .await?
                 .pop()
-                .expect("There should be at least one embedding"))
+                .ok_or(EmbeddingError::EmptyResponse)
         }
     }
 }
@@ -97,11 +108,10 @@ pub trait ImageEmbeddingModel: Clone + WasmCompatSend + WasmCompatSync {
         bytes: &'a [u8],
     ) -> impl std::future::Future<Output = Result<Embedding, EmbeddingError>> + WasmCompatSend {
         async move {
-            Ok(self
-                .embed_images(vec![bytes.to_owned()])
+            self.embed_images(vec![bytes.to_owned()])
                 .await?
                 .pop()
-                .expect("There should be at least one embedding"))
+                .ok_or(EmbeddingError::EmptyResponse)
         }
     }
 }

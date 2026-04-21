@@ -1,5 +1,6 @@
 //! Gemini embeddings smoke test.
 
+use anyhow::Result;
 #[cfg(feature = "derive")]
 use rig::Embed;
 use rig::client::{EmbeddingsClient, ProviderClient};
@@ -17,8 +18,8 @@ struct Greetings {
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn embeddings_smoke() {
-    let client = gemini::Client::from_env();
+async fn embeddings_smoke() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let model = client.embedding_model(gemini::embedding::EMBEDDING_001);
 
     let embeddings = model
@@ -27,13 +28,14 @@ async fn embeddings_smoke() {
         .expect("embedding request should succeed");
 
     assert_embeddings_nonempty_and_consistent(&embeddings, EMBEDDING_INPUTS.len());
+    Ok(())
 }
 
 #[cfg(feature = "derive")]
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY and --features derive"]
-async fn derive_document_embeddings() {
-    let client = gemini::Client::from_env();
+async fn derive_document_embeddings() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let embeddings = client
         .embeddings(gemini::embedding::EMBEDDING_001)
         .document(Greetings {
@@ -63,4 +65,5 @@ async fn derive_document_embeddings() {
             }
         }
     }
+    Ok(())
 }

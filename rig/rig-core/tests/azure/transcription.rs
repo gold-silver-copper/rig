@@ -1,5 +1,6 @@
 //! Migrated from `examples/transcription.rs`.
 
+use anyhow::Result;
 use rig::client::ProviderClient;
 use rig::prelude::TranscriptionClient;
 use rig::providers::azure;
@@ -9,8 +10,8 @@ use crate::support::{AUDIO_FIXTURE_PATH, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires AZURE_OPENAI_API_KEY and related Azure env vars"]
-async fn transcription_smoke() {
-    let client = azure::Client::from_env();
+async fn transcription_smoke() -> Result<()> {
+    let client = azure::Client::from_env()?;
     let model = client.transcription_model("whisper");
     let response = model
         .transcription_request()
@@ -21,4 +22,5 @@ async fn transcription_smoke() {
         .expect("transcription should succeed");
 
     assert_nonempty_response(&response.text);
+    Ok(())
 }

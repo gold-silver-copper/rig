@@ -1,5 +1,6 @@
 //! xAI tools smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::xai;
@@ -10,8 +11,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
-async fn tools_smoke() {
-    let client = xai::Client::from_env();
+async fn tools_smoke() -> Result<()> {
+    let client = xai::Client::from_env()?;
     let agent = client
         .agent(xai::completion::GROK_3_MINI)
         .preamble(TOOLS_PREAMBLE)
@@ -25,4 +26,5 @@ async fn tools_smoke() {
         .expect("tool prompt should succeed");
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

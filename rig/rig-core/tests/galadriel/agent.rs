@@ -1,5 +1,6 @@
 //! Galadriel agent completion smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::galadriel;
@@ -8,8 +9,8 @@ use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 
 #[tokio::test]
 #[ignore = "requires GALADRIEL_API_KEY"]
-async fn completion_smoke() {
-    let client = galadriel::Client::from_env();
+async fn completion_smoke() -> Result<()> {
+    let client = galadriel::Client::from_env()?;
     let agent = client
         .agent(galadriel::GPT_4O)
         .preamble(BASIC_PREAMBLE)
@@ -21,11 +22,12 @@ async fn completion_smoke() {
         .expect("completion should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GALADRIEL_API_KEY"]
-async fn builder_completion_smoke() {
+async fn builder_completion_smoke() -> Result<()> {
     let api_key = std::env::var("GALADRIEL_API_KEY").expect("GALADRIEL_API_KEY must be set");
     let fine_tune_api_key = std::env::var("GALADRIEL_FINE_TUNE_API_KEY").ok();
 
@@ -46,4 +48,5 @@ async fn builder_completion_smoke() {
         .expect("prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

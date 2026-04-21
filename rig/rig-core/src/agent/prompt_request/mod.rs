@@ -344,10 +344,11 @@ where
         // We need to do at least 2 loops for 1 roundtrip (user expects normal message)
         let last_prompt = loop {
             // Get the last message (the current prompt)
-            let prompt = new_messages
-                .last()
-                .expect("there should always be at least one message")
-                .clone();
+            let Some(prompt) = new_messages.last().cloned() else {
+                return Err(PromptError::InvariantError(
+                    "prompt loop lost the pending prompt message",
+                ));
+            };
 
             if current_max_turns > self.max_turns + 1 {
                 break prompt;
@@ -528,98 +529,96 @@ where
                     let cloned_history_for_error = full_history_for_errors.clone();
 
                     async move {
-                        if let AssistantContent::ToolCall(tool_call) = choice {
-                            let tool_name = &tool_call.function.name;
-                            let args =
-                                json_utils::value_to_json_string(&tool_call.function.arguments);
-                            let internal_call_id = nanoid::nanoid!();
-                            let tool_span = tracing::Span::current();
-                            tool_span.record("gen_ai.tool.name", tool_name);
-                            tool_span.record("gen_ai.tool.call.id", &tool_call.id);
-                            tool_span.record("gen_ai.tool.call.arguments", &args);
-                            if let Some(hook) = hook1 {
-                                let action = hook
-                                    .on_tool_call(
-                                        tool_name,
-                                        tool_call.call_id.clone(),
-                                        &internal_call_id,
-                                        &args,
-                                    )
-                                    .await;
+                        let AssistantContent::ToolCall(tool_call) = choice else {
+                            return Err(PromptError::InvariantError(
+                                "tool execution queue contained non-tool assistant content",
+                            ));
+                        };
 
-                                if let ToolCallHookAction::Terminate { reason } = action {
-                                    return Err(PromptError::prompt_cancelled(
-                                        cloned_history_for_error,
-                                        reason,
-                                    ));
-                                }
+                        let tool_name = &tool_call.function.name;
+                        let args = json_utils::value_to_json_string(&tool_call.function.arguments);
+                        let internal_call_id = nanoid::nanoid!();
+                        let tool_span = tracing::Span::current();
+                        tool_span.record("gen_ai.tool.name", tool_name);
+                        tool_span.record("gen_ai.tool.call.id", &tool_call.id);
+                        tool_span.record("gen_ai.tool.call.arguments", &args);
+                        if let Some(hook) = hook1 {
+                            let action = hook
+                                .on_tool_call(
+                                    tool_name,
+                                    tool_call.call_id.clone(),
+                                    &internal_call_id,
+                                    &args,
+                                )
+                                .await;
 
-                                if let ToolCallHookAction::Skip { reason } = action {
-                                    // Tool execution rejected, return rejection message as tool result
-                                    tracing::info!(
-                                        tool_name = tool_name,
-                                        reason = reason,
-                                        "Tool call rejected"
-                                    );
-                                    if let Some(call_id) = tool_call.call_id.clone() {
-                                        return Ok(UserContent::tool_result_with_call_id(
-                                            tool_call.id.clone(),
-                                            call_id,
-                                            OneOrMany::one(reason.into()),
-                                        ));
-                                    } else {
-                                        return Ok(UserContent::tool_result(
-                                            tool_call.id.clone(),
-                                            OneOrMany::one(reason.into()),
-                                        ));
-                                    }
-                                }
-                            }
-                            let output = match tool_server_handle.call_tool(tool_name, &args).await
-                            {
-                                Ok(res) => res,
-                                Err(e) => {
-                                    tracing::warn!("Error while executing tool: {e}");
-                                    e.to_string()
-                                }
-                            };
-                            if let Some(hook) = hook2
-                                && let HookAction::Terminate { reason } = hook
-                                    .on_tool_result(
-                                        tool_name,
-                                        tool_call.call_id.clone(),
-                                        &internal_call_id,
-                                        &args,
-                                        &output.to_string(),
-                                    )
-                                    .await
-                            {
+                            if let ToolCallHookAction::Terminate { reason } = action {
                                 return Err(PromptError::prompt_cancelled(
                                     cloned_history_for_error,
                                     reason,
                                 ));
                             }
 
-                            tool_span.record("gen_ai.tool.call.result", &output);
-                            tracing::info!(
-                                "executed tool {tool_name} with args {args}. result: {output}"
-                            );
-                            if let Some(call_id) = tool_call.call_id.clone() {
-                                Ok(UserContent::tool_result_with_call_id(
-                                    tool_call.id.clone(),
-                                    call_id,
-                                    ToolResultContent::from_tool_output(output),
-                                ))
-                            } else {
-                                Ok(UserContent::tool_result(
-                                    tool_call.id.clone(),
-                                    ToolResultContent::from_tool_output(output),
-                                ))
+                            if let ToolCallHookAction::Skip { reason } = action {
+                                // Tool execution rejected, return rejection message as tool result
+                                tracing::info!(
+                                    tool_name = tool_name,
+                                    reason = reason,
+                                    "Tool call rejected"
+                                );
+                                if let Some(call_id) = tool_call.call_id.clone() {
+                                    return Ok(UserContent::tool_result_with_call_id(
+                                        tool_call.id.clone(),
+                                        call_id,
+                                        OneOrMany::one(reason.into()),
+                                    ));
+                                } else {
+                                    return Ok(UserContent::tool_result(
+                                        tool_call.id.clone(),
+                                        OneOrMany::one(reason.into()),
+                                    ));
+                                }
                             }
+                        }
+                        let output = match tool_server_handle.call_tool(tool_name, &args).await {
+                            Ok(res) => res,
+                            Err(e) => {
+                                tracing::warn!("Error while executing tool: {e}");
+                                e.to_string()
+                            }
+                        };
+                        if let Some(hook) = hook2
+                            && let HookAction::Terminate { reason } = hook
+                                .on_tool_result(
+                                    tool_name,
+                                    tool_call.call_id.clone(),
+                                    &internal_call_id,
+                                    &args,
+                                    &output.to_string(),
+                                )
+                                .await
+                        {
+                            return Err(PromptError::prompt_cancelled(
+                                cloned_history_for_error,
+                                reason,
+                            ));
+                        }
+
+                        tool_span.record("gen_ai.tool.call.result", &output);
+                        tracing::info!(
+                            "executed tool {tool_name} with args {args}. result: {output}"
+                        );
+                        if let Some(call_id) = tool_call.call_id.clone() {
+                            Ok(UserContent::tool_result_with_call_id(
+                                tool_call.id.clone(),
+                                call_id,
+                                ToolResultContent::from_tool_output(output),
+                            ))
                         } else {
-                            unreachable!(
-                                "This should never happen as we already filtered for `ToolCall`"
-                            )
+                            Ok(UserContent::tool_result(
+                                tool_call.id.clone(),
+                                ToolResultContent::from_tool_output(output),
+                            ))
                         }
                     }
                     .instrument(tool_span)
@@ -630,9 +629,11 @@ where
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()?;
 
-            new_messages.push(Message::User {
-                content: OneOrMany::many(tool_content).expect("There is at least one tool call"),
-            });
+            let content = OneOrMany::from_non_empty_iter(tool_content).ok_or(
+                PromptError::InvariantError("tool execution completed without tool results"),
+            )?;
+
+            new_messages.push(Message::User { content });
         };
 
         // If we reach here, we exceeded max turns without a final response

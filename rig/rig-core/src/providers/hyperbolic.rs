@@ -82,13 +82,18 @@ impl ProviderClient for Client {
 
     /// Create a new Hyperbolic client from the `HYPERBOLIC_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("HYPERBOLIC_API_KEY").expect("HYPERBOLIC_API_KEY not set");
-        Self::new(&api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("HYPERBOLIC_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "HYPERBOLIC_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(&api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 
@@ -539,7 +544,11 @@ mod image_generation {
         fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
             let data = BASE64_STANDARD
                 .decode(&value.images[0].image)
-                .expect("Could not decode image.");
+                .map_err(|error| {
+                    ImageGenerationError::ResponseError(format!(
+                        "Failed to decode Hyperbolic image payload: {error}"
+                    ))
+                })?;
 
             Ok(Self {
                 image: data,
@@ -642,9 +651,11 @@ mod audio_generation {
         type Error = AudioGenerationError;
 
         fn try_from(value: AudioGenerationResponse) -> Result<Self, Self::Error> {
-            let data = BASE64_STANDARD
-                .decode(&value.audio)
-                .expect("Could not decode audio.");
+            let data = BASE64_STANDARD.decode(&value.audio).map_err(|error| {
+                AudioGenerationError::ResponseError(format!(
+                    "Failed to decode Hyperbolic audio payload: {error}"
+                ))
+            })?;
 
             Ok(Self {
                 audio: data,

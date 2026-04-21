@@ -145,12 +145,12 @@ where
         Ok(docs
             .into_iter()
             .map(|(i, doc)| {
-                (
-                    doc,
-                    embeddings.remove(&i).expect("Document should be present"),
-                )
+                let embeddings = embeddings
+                    .remove(&i)
+                    .ok_or(EmbeddingError::MissingEmbeddingForDocument { index: i })?;
+                Ok((doc, embeddings))
             })
-            .collect())
+            .collect::<Result<Vec<_>, EmbeddingError>>()?)
     }
 }
 

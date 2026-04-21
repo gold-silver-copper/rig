@@ -68,19 +68,24 @@ impl ProviderBuilder for CohereBuilder {
 impl ProviderClient for Client {
     type Input = CohereApiKey;
 
-    fn from_env() -> Self
+    fn from_env() -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        let key = std::env::var("COHERE_API_KEY").expect("COHERE_API_KEY not set");
-        Self::new(key).unwrap()
+        let key = std::env::var("COHERE_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "COHERE_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(key)
     }
 
-    fn from_val(input: Self::Input) -> Self
+    fn from_val(input: Self::Input) -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        Self::new(input).unwrap()
+        Self::new(input)
     }
 }
 

@@ -84,10 +84,14 @@ where
         }
 
         if let Some(ref additional_params) = request.additional_params {
-            for (key, value) in additional_params
-                .as_object()
-                .expect("Additional Parameters to OpenAI Transcription should be a map")
-            {
+            let additional_params = additional_params.as_object().ok_or_else(|| {
+                transcription::TranscriptionError::RequestError(
+                    "Additional parameters for OpenAI transcription must be a JSON object"
+                        .to_string()
+                        .into(),
+                )
+            })?;
+            for (key, value) in additional_params {
                 body = body.text(key.to_owned(), value.to_string());
             }
         }
@@ -96,9 +100,9 @@ where
             .client
             .post("/audio/transcriptions")?
             .body(body)
-            .unwrap();
+            .map_err(|error| transcription::TranscriptionError::HttpError(error.into()))?;
 
-        let response = self.client.send_multipart::<Bytes>(req).await.unwrap();
+        let response = self.client.send_multipart::<Bytes>(req).await?;
 
         let status = response.status();
         let response_body = response.into_body().into_future().await?.to_vec();

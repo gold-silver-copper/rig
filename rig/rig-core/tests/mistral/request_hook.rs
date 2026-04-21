@@ -70,7 +70,7 @@ where
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
 async fn request_hook_records_prompt_and_response() -> Result<()> {
-    let agent = mistral::Client::from_env()
+    let agent = mistral::Client::from_env()?
         .agent(DEFAULT_MODEL)
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .build();

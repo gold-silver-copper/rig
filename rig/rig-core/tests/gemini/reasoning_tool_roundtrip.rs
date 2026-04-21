@@ -3,6 +3,7 @@
 //! Run only these cases with:
 //! `cargo test -p rig-core --test gemini gemini::reasoning_tool_roundtrip::streaming -- --ignored --nocapture`
 
+use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -15,9 +16,9 @@ use crate::reasoning::{self, WeatherTool};
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn streaming() {
+async fn streaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = gemini::Client::from_env();
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent("gemini-2.5-flash")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -37,13 +38,14 @@ async fn streaming() {
 
     let stats = reasoning::collect_stream_stats(stream, "gemini").await;
     reasoning::assert_universal(&stats, &call_count, "gemini");
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn nonstreaming() {
+async fn nonstreaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = gemini::Client::from_env();
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent("gemini-2.5-flash")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -62,4 +64,5 @@ async fn nonstreaming() {
         .expect("[gemini] Non-streaming chat failed - likely 400 from dropped reasoning");
 
     reasoning::assert_nonstreaming_universal(&result, &call_count, "gemini");
+    Ok(())
 }

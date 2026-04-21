@@ -210,9 +210,14 @@ impl ProviderClient for Client {
 
     /// Create a new OpenAI Responses API client from the `OPENAI_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let base_url: Option<String> = std::env::var("OPENAI_BASE_URL").ok();
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+        let api_key = std::env::var("OPENAI_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "OPENAI_API_KEY",
+                source,
+            }
+        })?;
 
         let mut builder = Client::builder().api_key(&api_key);
 
@@ -220,11 +225,11 @@ impl ProviderClient for Client {
             builder = builder.base_url(&base);
         }
 
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 
@@ -233,9 +238,14 @@ impl ProviderClient for CompletionsClient {
 
     /// Create a new OpenAI Completions API client from the `OPENAI_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let base_url: Option<String> = std::env::var("OPENAI_BASE_URL").ok();
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+        let api_key = std::env::var("OPENAI_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "OPENAI_API_KEY",
+                source,
+            }
+        })?;
 
         let mut builder = CompletionsClient::builder().api_key(&api_key);
 
@@ -243,11 +253,11 @@ impl ProviderClient for CompletionsClient {
             builder = builder.base_url(&base);
         }
 
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 

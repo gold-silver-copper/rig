@@ -1,5 +1,6 @@
 //! Migrated from `examples/openrouter_multimodal.rs`.
 
+use anyhow::Result;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
@@ -34,8 +35,8 @@ fn pdf_document() -> Document {
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn image_analysis_prompt() {
-    let client = openrouter::Client::from_env();
+async fn image_analysis_prompt() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let agent = client
         .agent(VISION_MODEL)
         .preamble("You are a helpful assistant that describes images in detail.")
@@ -53,12 +54,13 @@ async fn image_analysis_prompt() {
         .expect("image prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn pdf_analysis_prompt() {
-    let client = openrouter::Client::from_env();
+async fn pdf_analysis_prompt() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let agent = client
         .agent(VISION_MODEL)
         .preamble("You are a helpful assistant that summarizes documents.")
@@ -76,12 +78,13 @@ async fn pdf_analysis_prompt() {
         .expect("pdf prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn mixed_multimodal_prompt() {
-    let client = openrouter::Client::from_env();
+async fn mixed_multimodal_prompt() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let agent = client
         .agent(VISION_MODEL)
         .preamble("You are a helpful assistant.")
@@ -101,4 +104,5 @@ async fn mixed_multimodal_prompt() {
         .expect("mixed content prompt should succeed");
 
     assert_nonempty_response(&response);
+    Ok(())
 }

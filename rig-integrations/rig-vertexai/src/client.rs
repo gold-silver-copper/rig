@@ -120,7 +120,7 @@ pub struct Client {
     project: String,
     location: String,
     credentials: Credentials,
-    pub(crate) vertex_client: Arc<OnceCell<vertexai::client::PredictionService>>,
+    pub(crate) vertex_client: Arc<OnceCell<Result<vertexai::client::PredictionService, String>>>,
 }
 
 impl Client {
@@ -159,12 +159,8 @@ impl Client {
     /// - `GOOGLE_CLOUD_PROJECT` (required)
     /// - `GOOGLE_CLOUD_LOCATION` (optional, defaults to "global")
     /// - `GOOGLE_CLOUD_SERVICE_ACCOUNT` (optional, for service account impersonation)
-    ///
-    /// Panics if the environment is improperly configured. For error handling, use `Client::builder().build()`.
-    pub fn new() -> Self {
-        ClientBuilder::new()
-            .build()
-            .expect("Failed to build Vertex AI client. Make sure GOOGLE_CLOUD_PROJECT is set and credentials are configured (e.g., via 'gcloud auth application-default login')")
+    pub fn new() -> Result<Self, String> {
+        ClientBuilder::new().build()
     }
 
     /// Create a client using environment variables for project, location, and credentials.
@@ -174,7 +170,7 @@ impl Client {
     /// - `GOOGLE_CLOUD_PROJECT` (required)
     /// - `GOOGLE_CLOUD_LOCATION` (optional, defaults to "global")
     /// - `GOOGLE_CLOUD_SERVICE_ACCOUNT` (optional, for service account impersonation)
-    pub fn from_env() -> Self {
+    pub fn from_env() -> rig::http_client::Result<Self> {
         <Self as ProviderClient>::from_env()
     }
 
@@ -186,44 +182,49 @@ impl Client {
         &self.location
     }
 
-    pub async fn get_inner(&self) -> &vertexai::client::PredictionService {
+    pub async fn get_inner(&self) -> Result<&vertexai::client::PredictionService, String> {
         let credentials = self.credentials.clone();
-        self.vertex_client
+        let client = self
+            .vertex_client
             .get_or_init(|| async {
                 let mut builder = vertexai::client::PredictionService::builder();
                 builder = builder.with_credentials(credentials);
                 builder
                     .build()
                     .await
-                    .expect("Failed to build Vertex AI client. Make sure you have Google Cloud credentials configured (e.g., via 'gcloud auth application-default login')")
+                    .map_err(|error| {
+                        format!(
+                            "Failed to build Vertex AI prediction client after successful client construction: {error}"
+                        )
+                    })
             })
-            .await
-    }
-}
+            .await;
 
-impl Default for Client {
-    fn default() -> Self {
-        Client::new()
+        client.as_ref().map_err(Clone::clone)
     }
 }
 
 impl ProviderClient for Client {
     type Input = Nothing;
 
-    fn from_env() -> Self
+    fn from_env() -> rig::http_client::Result<Self>
     where
         Self: Sized,
     {
         Client::new()
+            .map_err(|error| rig::http_client::Error::Instance(std::io::Error::other(error).into()))
     }
 
-    fn from_val(_: Self::Input) -> Self
+    fn from_val(_: Self::Input) -> rig::http_client::Result<Self>
     where
         Self: Sized,
     {
-        panic!(
-            "Vertex AI uses Application Default Credentials (ADC). Use `Client::from_env()` for default credentials, or `Client::new().with_credentials(...).build()` for custom credentials."
-        );
+        Err(rig::http_client::Error::Instance(
+            std::io::Error::other(
+                "Vertex AI uses Application Default Credentials (ADC). Use `Client::from_env()` for default credentials, or `Client::builder().with_credentials(...).build()` for custom credentials.",
+            )
+            .into(),
+        ))
     }
 }
 

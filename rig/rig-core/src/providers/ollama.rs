@@ -156,7 +156,7 @@ pub type ClientBuilder<H = reqwest::Client> = client::ClientBuilder<OllamaBuilde
 impl ProviderClient for Client {
     type Input = OllamaApiKey;
 
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let api_base = std::env::var("OLLAMA_API_BASE_URL")
             .unwrap_or_else(|_| OLLAMA_API_BASE_URL.to_string());
 
@@ -164,18 +164,11 @@ impl ProviderClient for Client {
             .map(OllamaApiKey::from)
             .unwrap_or_default();
 
-        Self::builder()
-            .api_key(api_key)
-            .base_url(&api_base)
-            .build()
-            .expect("failed to build Ollama client from environment")
+        Self::builder().api_key(api_key).base_url(&api_base).build()
     }
 
-    fn from_val(api_key: Self::Input) -> Self {
-        Self::builder()
-            .api_key(api_key)
-            .build()
-            .expect("failed to build Ollama client")
+    fn from_val(api_key: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(api_key).build()
     }
 }
 
@@ -759,7 +752,10 @@ where
                             name: None,
                             tool_calls: tool_calls_final.clone()
                         };
-                        span.record("gen_ai.output.messages", serde_json::to_string(&vec![message]).unwrap());
+                        let output_messages = serde_json::to_string(&vec![message]).unwrap_or_else(
+                            |error| format!("[\"serialization_error: {error}\"]"),
+                        );
+                        span.record("gen_ai.output.messages", output_messages);
                         yield RawStreamingChoice::FinalResponse(
                             StreamingCompletionResponse {
                                 total_duration: response.total_duration,
@@ -968,7 +964,9 @@ impl TryFrom<crate::message::Message> for Vec<Message> {
                                     content: content_string,
                                 })
                             }
-                            _ => unreachable!(),
+                            _ => Err(crate::message::MessageError::ConversionError(
+                                "Ollama tool-result partition contained non-tool content".into(),
+                            )),
                         })
                         .collect::<Result<Vec<_>, _>>()
                 } else {
@@ -1088,7 +1086,9 @@ impl From<Message> for crate::completion::Message {
                 }
                 crate::completion::Message::Assistant {
                     id: None,
-                    content: OneOrMany::many(assistant_contents).unwrap(),
+                    content: OneOrMany::many(assistant_contents).unwrap_or_else(|_| {
+                        OneOrMany::one(crate::completion::message::AssistantContent::text(""))
+                    }),
                 }
             }
             // System and ToolResult are converted to User message as needed.
