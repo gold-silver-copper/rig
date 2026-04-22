@@ -26,63 +26,39 @@ pub enum TranscriptionResponseError {
 }
 
 impl TranscriptionResponseError {
-    pub fn from_message(message: impl Into<String>) -> Self {
-        let message = message.into();
-
-        match message.as_str() {
-            "No response candidates in response" => Self::MissingCandidates,
-            "Response content contains no text" => Self::MissingText,
-            "Response content was not text" => Self::NonTextResponse,
-            _ => Self::Message { message },
-        }
-    }
-}
-
-impl From<String> for TranscriptionResponseError {
-    fn from(message: String) -> Self {
-        Self::from_message(message)
-    }
-}
-
-impl From<&str> for TranscriptionResponseError {
-    fn from(message: &str) -> Self {
-        Self::from_message(message)
-    }
-}
-
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum TranscriptionProviderError {
-    #[error("ProviderError: transcription endpoint is not supported yet for {provider}")]
-    UnsupportedEndpoint { provider: String },
-
-    #[error("ProviderError: request failed with status {status}: {body}")]
-    Status { status: StatusCode, body: String },
-
-    #[error("ProviderError: {message}")]
-    Message { message: String },
-}
-
-impl TranscriptionProviderError {
-    pub fn from_message(message: impl Into<String>) -> Self {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
         }
     }
 }
 
-impl From<String> for TranscriptionProviderError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TranscriptionTransportError {
+    #[error("TransportError: request failed with status {status}: {body}")]
+    Status { status: StatusCode, body: String },
+
+    #[error("TransportError: {message}")]
+    Message { message: String },
+}
+
+impl TranscriptionTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
     }
 }
 
-impl From<&str> for TranscriptionProviderError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
-        }
-    }
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TranscriptionConfigurationError {
+    #[error("ConfigurationError: transcription endpoint is not supported yet for {provider}")]
+    UnsupportedEndpoint { provider: String },
+
+    #[error("ConfigurationError: {message}")]
+    Message { message: String },
 }
 
 // Errors
@@ -111,14 +87,22 @@ pub enum TranscriptionError {
     #[error(transparent)]
     ResponseError(TranscriptionResponseError),
 
-    /// Error returned by the transcription model provider
+    /// Error returned while talking to the transcription model provider.
     #[error(transparent)]
-    ProviderError(TranscriptionProviderError),
+    TransportError(TranscriptionTransportError),
+
+    /// Error caused by local transcription model configuration or initialization.
+    #[error(transparent)]
+    ConfigurationError(TranscriptionConfigurationError),
 }
 
 impl TranscriptionError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
     pub fn response(message: impl Into<String>) -> Self {
-        Self::ResponseError(TranscriptionResponseError::from_message(message))
+        Self::ResponseError(TranscriptionResponseError::message(message))
     }
 
     pub fn missing_candidates() -> Self {
@@ -133,20 +117,26 @@ impl TranscriptionError {
         Self::ResponseError(TranscriptionResponseError::NonTextResponse)
     }
 
-    pub fn provider(message: impl Into<String>) -> Self {
-        Self::ProviderError(TranscriptionProviderError::from_message(message))
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(TranscriptionTransportError::message(message))
     }
 
-    pub fn provider_status(status: StatusCode, body: impl Into<String>) -> Self {
-        Self::ProviderError(TranscriptionProviderError::Status {
+    pub fn transport_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::TransportError(TranscriptionTransportError::Status {
             status,
             body: body.into(),
         })
     }
 
     pub fn unsupported_endpoint(provider: impl Into<String>) -> Self {
-        Self::ProviderError(TranscriptionProviderError::UnsupportedEndpoint {
+        Self::ConfigurationError(TranscriptionConfigurationError::UnsupportedEndpoint {
             provider: provider.into(),
+        })
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(TranscriptionConfigurationError::Message {
+            message: message.into(),
         })
     }
 }
@@ -402,37 +392,58 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{TranscriptionError, TranscriptionProviderError, TranscriptionResponseError};
+    use super::{
+        TranscriptionConfigurationError, TranscriptionError, TranscriptionResponseError,
+        TranscriptionTransportError,
+    };
     use http::StatusCode;
 
     #[test]
-    fn transcription_response_error_maps_known_messages() {
+    fn transcription_response_error_builders_preserve_structure() {
         assert!(matches!(
-            TranscriptionError::response("No response candidates in response"),
+            TranscriptionError::request("unsupported audio input"),
+            TranscriptionError::RequestError(_)
+        ));
+        assert!(matches!(
+            TranscriptionError::response("malformed provider payload"),
+            TranscriptionError::ResponseError(TranscriptionResponseError::Message { message })
+                if message == "malformed provider payload"
+        ));
+        assert!(matches!(
+            TranscriptionError::missing_candidates(),
             TranscriptionError::ResponseError(TranscriptionResponseError::MissingCandidates)
         ));
         assert!(matches!(
-            TranscriptionError::response("Response content contains no text"),
+            TranscriptionError::missing_text(),
             TranscriptionError::ResponseError(TranscriptionResponseError::MissingText)
         ));
         assert!(matches!(
-            TranscriptionError::response("Response content was not text"),
+            TranscriptionError::non_text_response(),
             TranscriptionError::ResponseError(TranscriptionResponseError::NonTextResponse)
         ));
     }
 
     #[test]
-    fn transcription_provider_error_captures_status_and_unsupported_endpoint() {
+    fn transcription_error_taxonomy_is_explicit() {
         assert!(matches!(
-            TranscriptionError::provider_status(StatusCode::BAD_GATEWAY, "upstream failed"),
-            TranscriptionError::ProviderError(TranscriptionProviderError::Status { status, body })
+            TranscriptionError::transport_status(StatusCode::BAD_GATEWAY, "upstream failed"),
+            TranscriptionError::TransportError(TranscriptionTransportError::Status {
+                status,
+                body
+            })
                 if status == StatusCode::BAD_GATEWAY && body == "upstream failed"
         ));
         assert!(matches!(
             TranscriptionError::unsupported_endpoint("custom-subprovider"),
-            TranscriptionError::ProviderError(
-                TranscriptionProviderError::UnsupportedEndpoint { provider }
+            TranscriptionError::ConfigurationError(
+                TranscriptionConfigurationError::UnsupportedEndpoint { provider }
             ) if provider == "custom-subprovider"
+        ));
+        assert!(matches!(
+            TranscriptionError::configuration("missing local credentials"),
+            TranscriptionError::ConfigurationError(
+                TranscriptionConfigurationError::Message { message }
+            ) if message == "missing local credentials"
         ));
     }
 }

@@ -171,7 +171,7 @@ where
                 )
                 .into_owned();
 
-                Err(CompletionError::provider(text))
+                Err(CompletionError::transport(text))
             }
         }
         .instrument(span)
@@ -387,7 +387,7 @@ impl TryFrom<Vec<completion::ToolDefinition>> for Tool {
                                 "Tool '{}' could not be converted to a schema: {:?}",
                                 tool.name, e,
                             );
-                            return Err(CompletionError::provider(emsg));
+                            return Err(CompletionError::transport(emsg));
                         }
                     }
                 };

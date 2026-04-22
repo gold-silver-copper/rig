@@ -20,7 +20,7 @@ impl TryFrom<RigImage> for aws_bedrock::ImageBlock {
                 ImageMediaType::PNG => Ok(aws_bedrock::ImageFormat::Png),
                 ImageMediaType::GIF => Ok(aws_bedrock::ImageFormat::Gif),
                 ImageMediaType::WEBP => Ok(aws_bedrock::ImageFormat::Webp),
-                e => Err(CompletionError::provider(format!(
+                e => Err(CompletionError::request(format!(
                     "Unsupported format {}",
                     e.to_mime_type()
                 ))),
@@ -40,13 +40,13 @@ impl TryFrom<RigImage> for aws_bedrock::ImageBlock {
 
         let img_data = BASE64_STANDARD
             .decode(data)
-            .map_err(|e| CompletionError::provider(e.to_string()))?;
+            .map_err(|e| CompletionError::request(e.to_string()))?;
         let blob = aws_smithy_types::Blob::new(img_data);
         let result = aws_bedrock::ImageBlock::builder()
             .set_format(format)
             .source(aws_bedrock::ImageSource::Bytes(blob))
             .build()
-            .map_err(|e| CompletionError::provider(e.to_string()))?;
+            .map_err(|e| CompletionError::request(e.to_string()))?;
         Ok(result)
     }
 }
@@ -60,7 +60,7 @@ impl TryFrom<aws_bedrock::ImageBlock> for RigImage {
             aws_bedrock::ImageFormat::Jpeg => Ok(ImageMediaType::JPEG),
             aws_bedrock::ImageFormat::Png => Ok(ImageMediaType::PNG),
             aws_bedrock::ImageFormat::Webp => Ok(ImageMediaType::WEBP),
-            e => Err(CompletionError::provider(format!("Unsupported format {e}"))),
+            e => Err(CompletionError::response(format!("Unsupported format {e}"))),
         }?;
 
         let data = match image.source {
@@ -68,7 +68,7 @@ impl TryFrom<aws_bedrock::ImageBlock> for RigImage {
                 let encoded_img = BASE64_STANDARD.encode(blob.into_inner());
                 Ok(encoded_img)
             }
-            _ => Err(CompletionError::provider("Image source is missing")),
+            _ => Err(CompletionError::response("Image source is missing")),
         }?;
         Ok(RigImage(Image {
             data: DocumentSourceKind::Base64(data),
@@ -129,7 +129,7 @@ mod tests {
         let aws_image: Result<aws_bedrock::ImageBlock, _> = rig_image.clone().try_into();
         assert_eq!(
             aws_image.err().unwrap().to_string(),
-            CompletionError::ProviderError("Unsupported format image/heic".into()).to_string()
+            CompletionError::request("Unsupported format image/heic").to_string()
         )
     }
 }

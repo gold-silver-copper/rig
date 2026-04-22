@@ -434,7 +434,7 @@ fn moonshot_assistant_message_value(
                 }
             }
             message::AssistantContent::Image(_) => {
-                return Err(CompletionError::provider(
+                return Err(CompletionError::transport(
                     "Moonshot does not support assistant image content in chat history",
                 ));
             }
@@ -568,10 +568,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::provider(err.error.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.error.message)),
                 }
             } else {
-                Err(CompletionError::provider(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -647,7 +647,7 @@ impl TryFrom<message::ToolChoice> for ToolChoice {
             message::ToolChoice::None => Self::None,
             message::ToolChoice::Auto => Self::Auto,
             choice => {
-                return Err(CompletionError::provider(format!(
+                return Err(CompletionError::transport(format!(
                     "Unsupported tool choice type: {choice:?}"
                 )));
             }

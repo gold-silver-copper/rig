@@ -305,7 +305,7 @@ impl TryFrom<crate::completion::Message> for Vec<InputItem> {
                                     text,
                                 }) = tool_result_content
                                 else {
-                                    return Err(CompletionError::provider(
+                                    return Err(CompletionError::transport(
                                         "This thing only supports text!".to_string(),
                                     ));
                                 };
@@ -406,7 +406,7 @@ impl TryFrom<crate::completion::Message> for Vec<InputItem> {
                             });
                         }
                         message => {
-                            return Err(CompletionError::provider(format!(
+                            return Err(CompletionError::transport(format!(
                                 "Unsupported message: {message:?}"
                             )));
                         }
@@ -454,14 +454,14 @@ impl TryFrom<crate::completion::Message> for Vec<InputItem> {
                         }
                         crate::message::AssistantContent::Reasoning(reasoning) => {
                             let openai_reasoning = openai_reasoning_from_core(&reasoning)
-                                .map_err(|err| CompletionError::provider(err.to_string()))?;
+                                .map_err(|err| CompletionError::transport(err.to_string()))?;
                             reasoning_items.push(InputItem {
                                 role: None,
                                 input: InputContent::Reasoning(openai_reasoning),
                             });
                         }
                         crate::message::AssistantContent::Image(_) => {
-                            return Err(CompletionError::provider(
+                            return Err(CompletionError::transport(
                                 "Assistant image content is not supported in OpenAI Responses API"
                                     .to_string(),
                             ));
@@ -1419,7 +1419,7 @@ where
                 response.try_into()
             } else {
                 let text = http_client::text(response).await?;
-                Err(CompletionError::provider(text))
+                Err(CompletionError::transport(text))
             }
         }
         .instrument(span)

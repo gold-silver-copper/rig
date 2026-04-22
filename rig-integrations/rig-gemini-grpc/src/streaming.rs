@@ -25,12 +25,12 @@ pub(crate) async fn stream(
 
     let mut grpc_client = client
         .grpc_client()
-        .map_err(|e| CompletionError::provider(e.to_string()))?;
+        .map_err(|e| CompletionError::transport(e.to_string()))?;
 
     let mut response_stream = grpc_client
         .stream_generate_content(request)
         .await
-        .map_err(|e| CompletionError::provider(e.to_string()))?
+        .map_err(|e| CompletionError::transport(e.to_string()))?
         .into_inner();
 
     let stream = stream! {
@@ -101,7 +101,7 @@ pub(crate) async fn stream(
                     }
                 }
                 Err(status) => {
-                    yield Err(CompletionError::provider(status.to_string()));
+                    yield Err(CompletionError::transport(status.to_string()));
                     return;
                 }
             }

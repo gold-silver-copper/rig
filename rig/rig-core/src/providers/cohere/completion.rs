@@ -689,7 +689,7 @@ where
                     json_response.try_into()?;
                 Ok(completion)
             } else {
-                Err(CompletionError::provider(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&body).to_string(),
                 ))
             }

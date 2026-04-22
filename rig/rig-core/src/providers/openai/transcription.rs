@@ -110,12 +110,12 @@ where
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
                 ApiResponse::Err(api_error_response) => {
-                    Err(TranscriptionError::provider(api_error_response.message))
+                    Err(TranscriptionError::transport(api_error_response.message))
                 }
             }
         } else {
             let body = String::from_utf8_lossy(&response_body).into_owned();
-            Err(TranscriptionError::provider_status(status, body))
+            Err(TranscriptionError::transport_status(status, body))
         }
     }
 }

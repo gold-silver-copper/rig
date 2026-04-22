@@ -262,10 +262,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Error(error) => Err(CompletionError::provider(error.message())),
+                    ApiResponse::Error(error) => Err(CompletionError::transport(error.message())),
                 }
             } else {
-                Err(CompletionError::provider(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

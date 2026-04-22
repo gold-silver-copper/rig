@@ -161,7 +161,7 @@ where
             )?)
         } else {
             let text = String::from_utf8_lossy(&response.into_body().await?).into_owned();
-            Err(TranscriptionError::provider_status(status, text))
+            Err(TranscriptionError::transport_status(status, text))
         }
     }
 }

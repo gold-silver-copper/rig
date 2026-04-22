@@ -420,7 +420,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::provider(err.to_string()))?;
+            .map_err(|err| CompletionError::transport(err.to_string()))?;
 
         let req = self
             .add_auth_headers(self.client.post("/responses")?, &auth)
@@ -551,7 +551,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::provider(err.to_string()))?;
+            .map_err(|err| CompletionError::transport(err.to_string()))?;
 
         let req = self
             .add_auth_headers(self.client.post("/responses")?, &auth)

@@ -197,7 +197,7 @@ where
                 )
                 .into_owned();
 
-                Err(CompletionError::provider(text))
+                Err(CompletionError::transport(text))
             }
         }
         .instrument(span)
@@ -447,7 +447,7 @@ where
         )
         .into_owned();
 
-        Err(CompletionError::provider(text))
+        Err(CompletionError::transport(text))
     }
 }
 

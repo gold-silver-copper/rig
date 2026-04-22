@@ -63,7 +63,7 @@ where
 
             let text = String::from_utf8_lossy(&as_slice).into_owned();
 
-            return Err(AudioGenerationError::provider_status(status, text));
+            return Err(AudioGenerationError::transport_status(status, text));
         }
 
         let bytes: Bytes = response.into_body().await?;

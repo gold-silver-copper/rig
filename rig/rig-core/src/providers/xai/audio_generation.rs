@@ -73,7 +73,7 @@ where
             let status = response.status();
             let text = http_client::text(response).await?;
 
-            return Err(AudioGenerationError::provider_status(status, text));
+            return Err(AudioGenerationError::transport_status(status, text));
         }
 
         let bytes: Bytes = response.into_body().await?.into();

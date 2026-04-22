@@ -16,7 +16,7 @@ impl TryFrom<RigMessage> for aws_bedrock::Message {
     fn try_from(value: RigMessage) -> Result<Self, Self::Error> {
         let result = match value.0 {
             Message::System { .. } => {
-                return Err(CompletionError::provider(
+                return Err(CompletionError::request(
                     "System messages must be sent via Bedrock system blocks",
                 ));
             }
@@ -83,7 +83,7 @@ impl TryFrom<aws_bedrock::Message> for RigMessage {
                     .map_err(|e| CompletionError::RequestError(Box::new(e)))?;
                 Ok(RigMessage(Message::User { content }))
             }
-            _ => Err(CompletionError::provider(
+            _ => Err(CompletionError::response(
                 "AWS Bedrock returned unsupported ConversationRole",
             )),
         }
@@ -94,8 +94,9 @@ impl TryFrom<super::converse_output::Message> for RigMessage {
     type Error = CompletionError;
 
     fn try_from(message: super::converse_output::Message) -> Result<Self, Self::Error> {
-        let message = aws_bedrock::Message::try_from(message)
-            .map_err(|x| CompletionError::provider(format!("Type conversion error: {x}")))?;
+        let message = aws_bedrock::Message::try_from(message).map_err(|x| {
+            CompletionError::response_with_context("bedrock message conversion", x.to_string())
+        })?;
 
         Self::try_from(message)
     }

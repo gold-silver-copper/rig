@@ -151,7 +151,7 @@ pub struct ApiErrorResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::provider(err.message)
+        EmbeddingError::transport(err.message)
     }
 }
 
@@ -166,7 +166,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
         }
     }
 }
@@ -254,10 +254,10 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
-            Err(EmbeddingError::provider(
+            Err(EmbeddingError::transport(
                 String::from_utf8_lossy(&response_body).to_string(),
             ))
         }

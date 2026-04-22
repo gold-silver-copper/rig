@@ -24,51 +24,29 @@ pub enum ImageGenerationResponseError {
 }
 
 #[derive(Debug, Error)]
-pub enum ImageGenerationProviderError {
-    #[error("ProviderError: image generation endpoint is not supported yet for {provider}")]
-    UnsupportedEndpoint { provider: String },
-
-    #[error("ProviderError: request failed with status {status}: {body}")]
+pub enum ImageGenerationTransportError {
+    #[error("TransportError: request failed with status {status}: {body}")]
     Status { status: StatusCode, body: String },
 
-    #[error("ProviderError: {message}")]
+    #[error("TransportError: {message}")]
     Message { message: String },
 }
 
-impl ImageGenerationProviderError {
-    pub fn from_message(message: impl Into<String>) -> Self {
+impl ImageGenerationTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
         }
     }
 }
 
-impl From<String> for ImageGenerationResponseError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
-    }
-}
+#[derive(Debug, Error)]
+pub enum ImageGenerationConfigurationError {
+    #[error("ConfigurationError: image generation endpoint is not supported yet for {provider}")]
+    UnsupportedEndpoint { provider: String },
 
-impl From<&str> for ImageGenerationResponseError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
-        }
-    }
-}
-
-impl From<String> for ImageGenerationProviderError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
-    }
-}
-
-impl From<&str> for ImageGenerationProviderError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
-        }
-    }
+    #[error("ConfigurationError: {message}")]
+    Message { message: String },
 }
 
 #[derive(Debug, Error)]
@@ -95,12 +73,20 @@ pub enum ImageGenerationError {
     #[error(transparent)]
     ResponseError(ImageGenerationResponseError),
 
-    /// Error returned by the transcription model provider
+    /// Error returned while talking to the image generation provider.
     #[error(transparent)]
-    ProviderError(ImageGenerationProviderError),
+    TransportError(ImageGenerationTransportError),
+
+    /// Error caused by local image generation configuration or initialization.
+    #[error(transparent)]
+    ConfigurationError(ImageGenerationConfigurationError),
 }
 
 impl ImageGenerationError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
     pub fn missing_images(provider: &'static str) -> Self {
         Self::ResponseError(ImageGenerationResponseError::MissingImages { provider })
     }
@@ -115,20 +101,26 @@ impl ImageGenerationError {
         })
     }
 
-    pub fn provider(message: impl Into<String>) -> Self {
-        Self::ProviderError(ImageGenerationProviderError::from_message(message))
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(ImageGenerationTransportError::message(message))
     }
 
-    pub fn provider_status(status: StatusCode, body: impl Into<String>) -> Self {
-        Self::ProviderError(ImageGenerationProviderError::Status {
+    pub fn transport_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::TransportError(ImageGenerationTransportError::Status {
             status,
             body: body.into(),
         })
     }
 
     pub fn unsupported_endpoint(provider: impl Into<String>) -> Self {
-        Self::ProviderError(ImageGenerationProviderError::UnsupportedEndpoint {
+        Self::ConfigurationError(ImageGenerationConfigurationError::UnsupportedEndpoint {
             provider: provider.into(),
+        })
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(ImageGenerationConfigurationError::Message {
+            message: message.into(),
         })
     }
 }
@@ -272,7 +264,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageGenerationError, ImageGenerationProviderError, ImageGenerationResponseError};
+    use super::{
+        ImageGenerationConfigurationError, ImageGenerationError, ImageGenerationResponseError,
+        ImageGenerationTransportError,
+    };
     use http::StatusCode;
 
     #[test]
@@ -284,17 +279,23 @@ mod tests {
             })
         ));
         assert!(matches!(
-            ImageGenerationError::provider_status(StatusCode::BAD_GATEWAY, "bad gateway"),
-            ImageGenerationError::ProviderError(ImageGenerationProviderError::Status {
+            ImageGenerationError::transport_status(StatusCode::BAD_GATEWAY, "bad gateway"),
+            ImageGenerationError::TransportError(ImageGenerationTransportError::Status {
                 status,
                 body,
             }) if status == StatusCode::BAD_GATEWAY && body == "bad gateway"
         ));
         assert!(matches!(
             ImageGenerationError::unsupported_endpoint("custom-subprovider"),
-            ImageGenerationError::ProviderError(
-                ImageGenerationProviderError::UnsupportedEndpoint { provider }
+            ImageGenerationError::ConfigurationError(
+                ImageGenerationConfigurationError::UnsupportedEndpoint { provider }
             ) if provider == "custom-subprovider"
+        ));
+        assert!(matches!(
+            ImageGenerationError::configuration("missing image backend"),
+            ImageGenerationError::ConfigurationError(
+                ImageGenerationConfigurationError::Message { message }
+            ) if message == "missing image backend"
         ));
     }
 }

@@ -344,7 +344,7 @@ where
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
                     terminated_with_error = true;
-                    yield Err(CompletionError::provider(error.to_string()));
+                    yield Err(CompletionError::transport(error.to_string()));
                     break;
                 }
             }
@@ -678,7 +678,7 @@ mod tests {
                     CompatibleFinishReason::Other,
                     vec![tool_call_chunk(0, Some("call_123"), Some("ping"), Some(""))],
                 )))),
-                "bad" => Err(CompletionError::provider("normalize failed".to_owned())),
+                "bad" => Err(CompletionError::transport("normalize failed".to_owned())),
                 _ => Ok(None),
             }
         }

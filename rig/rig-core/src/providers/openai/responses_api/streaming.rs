@@ -245,7 +245,7 @@ pub(crate) fn parse_sse_completion_body(
     }
 
     completed.ok_or_else(|| {
-        CompletionError::provider(
+        CompletionError::transport(
             provider_error.unwrap_or_else(|| {
                 format!("{provider_name} stream did not yield response.completed")
             }),
@@ -371,7 +371,7 @@ impl RawChoiceAccumulator {
                             "{provider_name} returned a terminal response without an error message"
                         )
                     });
-                Err(CompletionError::provider(error_message))
+                Err(CompletionError::transport(error_message))
             }
             _ => Ok(Vec::new()),
         }
@@ -578,7 +578,7 @@ pub(crate) fn raw_choices_from_sse_body(
                     .and_then(|error| error.get("message"))
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(data);
-                return Err(CompletionError::provider(message.to_owned()));
+                return Err(CompletionError::transport(message.to_owned()));
             }
             _ => {}
         }
@@ -754,7 +754,7 @@ where
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
                     terminated_with_error = true;
-                    yield Err(CompletionError::provider(error.to_string()));
+                    yield Err(CompletionError::transport(error.to_string()));
                     break;
                 }
             }

@@ -90,7 +90,7 @@ impl EmbeddingModel {
             TextEmbedding::try_new(
                 InitOptions::new(model.to_owned()).with_show_download_progress(true),
             )
-            .map_err(|error| EmbeddingError::initialization(error.to_string()))?,
+            .map_err(|error| EmbeddingError::configuration(error.to_string()))?,
         );
 
         Ok(Self {
@@ -109,7 +109,7 @@ impl EmbeddingModel {
             user_defined_model,
             InitOptionsUserDefined::default(),
         )
-        .map_err(|error| EmbeddingError::initialization(error.to_string()))?;
+        .map_err(|error| EmbeddingError::configuration(error.to_string()))?;
 
         let embedder = Arc::new(fastembed_embedding_model);
 
@@ -124,7 +124,7 @@ impl EmbeddingModel {
 fn embedding_dimensions(model: &FastembedModel) -> Result<usize, EmbeddingError> {
     TextEmbedding::get_model_info(model)
         .map(|info| info.dim)
-        .map_err(|error| EmbeddingError::initialization(error.to_string()))
+        .map_err(|error| EmbeddingError::configuration(error.to_string()))
 }
 
 impl embeddings::EmbeddingModel for EmbeddingModel {
@@ -139,7 +139,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
     ) -> Result<Self, EmbeddingError> {
         let requested_model = model.into();
         let model = FastembedModel::try_from(requested_model.clone()).map_err(|error| {
-            EmbeddingError::initialization(format!(
+            EmbeddingError::configuration(format!(
                 "FastEmbed model `{requested_model}` is unavailable: {error}"
             ))
         })?;
@@ -156,7 +156,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
         #[cfg(not(feature = "hf-hub"))]
         {
             let _ = ndims;
-            Err(EmbeddingError::initialization(
+            Err(EmbeddingError::configuration(
                 "FastEmbed support requires the `hf-hub` feature",
             ))
         }
@@ -175,7 +175,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
         let documents_as_vec = self
             .embedder
             .embed(documents_as_strings.clone(), None)
-            .map_err(|err| EmbeddingError::provider(err.to_string()))?;
+            .map_err(|err| EmbeddingError::transport(err.to_string()))?;
 
         let docs = documents_as_strings
             .into_iter()
@@ -205,7 +205,7 @@ mod tests {
         .err()
         .expect("invalid model should fail during construction");
 
-        assert!(matches!(error, EmbeddingError::InitializationError(_)));
+        assert!(matches!(error, EmbeddingError::ConfigurationError(_)));
     }
 
     #[test]
@@ -218,6 +218,6 @@ mod tests {
         .err()
         .expect("explicit dims must not bypass model validation");
 
-        assert!(matches!(error, EmbeddingError::InitializationError(_)));
+        assert!(matches!(error, EmbeddingError::ConfigurationError(_)));
     }
 }

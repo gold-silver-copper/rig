@@ -1014,14 +1014,14 @@ impl TryFrom<message::ToolChoice> for ToolChoice {
             message::ToolChoice::Required => Self::Any,
             message::ToolChoice::Specific { function_names } => {
                 if function_names.len() != 1 {
-                    return Err(CompletionError::provider(
+                    return Err(CompletionError::transport(
                         "Only one tool may be specified to be used by Claude",
                     ));
                 }
 
                 Self::Tool {
                     name: function_names.first().cloned().ok_or_else(|| {
-                        CompletionError::provider(
+                        CompletionError::transport(
                             "Claude tool choice requires exactly one function name",
                         )
                     })?,
@@ -1464,7 +1464,7 @@ where
                         .map_err(CompletionError::HttpError)?,
                 )
                 .into();
-                Err(CompletionError::provider(text))
+                Err(CompletionError::transport(text))
             }
         }
         .instrument(span)

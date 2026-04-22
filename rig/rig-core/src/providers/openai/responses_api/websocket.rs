@@ -338,7 +338,7 @@ where
         self.ensure_open()?;
 
         if self.in_flight {
-            return Err(CompletionError::provider(
+            return Err(CompletionError::transport(
                 "An OpenAI websocket response is already in flight on this session".to_string(),
             ));
         }
@@ -372,7 +372,7 @@ where
         self.ensure_open()?;
 
         if !self.in_flight {
-            return Err(CompletionError::provider(
+            return Err(CompletionError::transport(
                 "No OpenAI websocket response is currently in flight on this session".to_string(),
             ));
         }
@@ -385,7 +385,7 @@ where
 
             let Some(message) = message else {
                 self.mark_closed();
-                return Err(CompletionError::provider(
+                return Err(CompletionError::transport(
                     "The OpenAI websocket connection closed before the turn finished".to_string(),
                 ));
             };
@@ -504,10 +504,10 @@ where
                             .to_string()
                     };
 
-                    return Err(CompletionError::provider(message));
+                    return Err(CompletionError::transport(message));
                 }
                 ResponsesWebSocketEvent::Error(error) => {
-                    return Err(CompletionError::provider(error.to_string()));
+                    return Err(CompletionError::transport(error.to_string()));
                 }
                 ResponsesWebSocketEvent::Item(_) => {}
             }
@@ -575,7 +575,7 @@ where
 
     fn ensure_open(&self) -> Result<(), CompletionError> {
         if self.closed || self.failed {
-            return Err(CompletionError::provider(
+            return Err(CompletionError::transport(
                 "The OpenAI websocket session is closed".to_string(),
             ));
         }
@@ -619,7 +619,7 @@ fn terminal_response_result(
 ) -> Result<CompletionResponse, CompletionError> {
     match response.status {
         ResponseStatus::Completed => Ok(response),
-        ResponseStatus::Failed => Err(CompletionError::provider(response_error_message(
+        ResponseStatus::Failed => Err(CompletionError::transport(response_error_message(
             response.error.as_ref(),
             "failed response",
         ))),
@@ -629,11 +629,11 @@ fn terminal_response_result(
                 .as_ref()
                 .map(|details| details.reason.as_str())
                 .unwrap_or("unknown reason");
-            Err(CompletionError::provider(format!(
+            Err(CompletionError::transport(format!(
                 "OpenAI websocket response was incomplete: {reason}"
             )))
         }
-        status => Err(CompletionError::provider(format!(
+        status => Err(CompletionError::transport(format!(
             "OpenAI websocket response ended with status {:?}",
             status
         ))),
@@ -721,7 +721,7 @@ fn websocket_message_to_text(message: Message) -> Result<Option<String>, Complet
                 .map(|frame| frame.reason.to_string())
                 .filter(|reason| !reason.is_empty())
                 .unwrap_or_else(|| "without a close reason".to_string());
-            Err(CompletionError::provider(format!(
+            Err(CompletionError::transport(format!(
                 "The OpenAI websocket connection closed {reason}"
             )))
         }
@@ -733,16 +733,16 @@ fn websocket_url(base_url: &str) -> Result<String, CompletionError> {
     match url.scheme() {
         "https" => {
             url.set_scheme("wss").map_err(|_| {
-                CompletionError::provider("Failed to convert https URL to wss".to_string())
+                CompletionError::transport("Failed to convert https URL to wss".to_string())
             })?;
         }
         "http" => {
             url.set_scheme("ws").map_err(|_| {
-                CompletionError::provider("Failed to convert http URL to ws".to_string())
+                CompletionError::transport("Failed to convert http URL to ws".to_string())
             })?;
         }
         scheme => {
-            return Err(CompletionError::provider(format!(
+            return Err(CompletionError::transport(format!(
                 "Unsupported base URL scheme for OpenAI websocket mode: {scheme}"
             )));
         }
@@ -758,7 +758,7 @@ fn websocket_request(
     headers: &http::HeaderMap,
 ) -> Result<http::Request<()>, CompletionError> {
     let mut request = url.into_client_request().map_err(|error| {
-        CompletionError::provider(format!("Failed to build OpenAI websocket request: {error}"))
+        CompletionError::transport(format!("Failed to build OpenAI websocket request: {error}"))
     })?;
 
     for (name, value) in headers {
@@ -788,19 +788,19 @@ async fn connect_websocket(
 }
 
 fn connect_timeout_error(timeout: Duration) -> CompletionError {
-    CompletionError::provider(format!(
+    CompletionError::transport(format!(
         "Timed out connecting to the OpenAI websocket after {timeout:?}"
     ))
 }
 
 fn event_timeout_error(timeout: Duration) -> CompletionError {
-    CompletionError::provider(format!(
+    CompletionError::transport(format!(
         "Timed out waiting for the next OpenAI websocket event after {timeout:?}"
     ))
 }
 
 fn websocket_provider_error(error: tungstenite::Error) -> CompletionError {
-    CompletionError::provider(error.to_string())
+    CompletionError::transport(error.to_string())
 }
 
 #[cfg(test)]

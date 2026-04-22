@@ -44,8 +44,8 @@ impl TryFrom<aws_bedrock::ToolResultContentBlock> for RigToolResultContent {
             aws_bedrock::ToolResultContentBlock::Text(text) => {
                 Ok(RigToolResultContent(ToolResultContent::Text(Text { text })))
             }
-            _ => Err(CompletionError::ProviderError(
-                "ToolResultContentBlock contains unsupported variant".into(),
+            _ => Err(CompletionError::response(
+                "ToolResultContentBlock contains unsupported variant",
             )),
         }
     }
@@ -116,10 +116,8 @@ mod tests {
         assert!(tool.is_err());
         assert_eq!(
             tool.err().unwrap().to_string(),
-            CompletionError::ProviderError(
-                "ToolResultContentBlock contains unsupported variant".into()
-            )
-            .to_string()
+            CompletionError::response("ToolResultContentBlock contains unsupported variant")
+                .to_string()
         )
     }
 }

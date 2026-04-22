@@ -91,7 +91,7 @@ where
             let text: Vec<u8> = response.into_body().await?;
             let text = String::from_utf8_lossy(&text).into_owned();
 
-            return Err(ImageGenerationError::provider_status(status, text));
+            return Err(ImageGenerationError::transport_status(status, text));
         }
 
         let data: Vec<u8> = response.into_body().await?;

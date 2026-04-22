@@ -429,10 +429,10 @@ where
                         }
                         Ok(response.try_into()?)
                     }
-                    ApiResponse::Err(error) => Err(CompletionError::provider(error.message)),
+                    ApiResponse::Err(error) => Err(CompletionError::transport(error.message)),
                 }
             } else {
-                Err(CompletionError::provider(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

@@ -92,13 +92,13 @@ where
             let body: ApiResponse<TranscriptionResponse> = serde_json::from_slice(&body)?;
             match body {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(TranscriptionError::provider(err.to_string())),
+                ApiResponse::Err(err) => Err(TranscriptionError::transport(err.to_string())),
             }
         } else {
             let text: Vec<u8> = response.into_body().await?;
             let text = String::from_utf8_lossy(&text).into_owned();
 
-            Err(TranscriptionError::provider_status(status, text))
+            Err(TranscriptionError::transport_status(status, text))
         }
     }
 }

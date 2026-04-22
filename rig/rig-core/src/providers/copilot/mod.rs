@@ -623,7 +623,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::provider(err.to_string()))
+            .map_err(|err| CompletionError::transport(err.to_string()))
     }
 
     fn chat_request(
@@ -715,12 +715,12 @@ where
                         })
                     }
                     ChatApiResponse::Err(err) => {
-                        Err(CompletionError::provider(err.error_message().to_string()))
+                        Err(CompletionError::transport(err.error_message().to_string()))
                     }
                 }
             } else {
                 let body = http_client::text(response).await?;
-                Err(CompletionError::provider(body))
+                Err(CompletionError::transport(body))
             }
         }
         .instrument(span)
@@ -792,7 +792,7 @@ where
                 })
             } else {
                 let body = http_client::text(response).await?;
-                Err(CompletionError::provider(body))
+                Err(CompletionError::transport(body))
             }
         }
         .instrument(span)
@@ -1006,7 +1006,7 @@ where
                                             .map(|err| err.message.clone())
                                             .unwrap_or_else(|| "Copilot response stream failed".into());
                                         terminated_with_error = true;
-                                        yield Err(CompletionError::provider(error));
+                                        yield Err(CompletionError::transport(error));
                                         break;
                                     }
                                     _ => continue,
@@ -1018,7 +1018,7 @@ where
                         }
                         Err(error) => {
                             terminated_with_error = true;
-                            yield Err(CompletionError::provider(error.to_string()));
+                            yield Err(CompletionError::transport(error.to_string()));
                             break;
                         }
                     }
@@ -1164,7 +1164,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| EmbeddingError::provider(err.to_string()))?;
+            .map_err(|err| EmbeddingError::transport(err.to_string()))?;
 
         let headers = default_headers(&auth.api_key, "user", false);
         let mut body = json!({
@@ -1211,7 +1211,7 @@ where
                 Ok(parsed) => parsed,
                 Err(parse_error) => {
                     if let Ok(err) = serde_json::from_slice::<NestedApiError>(&body) {
-                        return Err(EmbeddingError::provider(err.error.message));
+                        return Err(EmbeddingError::transport(err.error.message));
                     }
 
                     let preview = String::from_utf8_lossy(&body);
@@ -1221,7 +1221,7 @@ where
                         preview.into_owned()
                     };
 
-                    return Err(EmbeddingError::provider(format!(
+                    return Err(EmbeddingError::transport(format!(
                         "Failed to parse Copilot embeddings response: {parse_error}; body: {preview}"
                     )));
                 }
@@ -1242,7 +1242,7 @@ where
                 .collect())
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::provider(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }

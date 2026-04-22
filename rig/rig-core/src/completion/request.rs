@@ -117,16 +117,16 @@ impl CompletionResponseError {
 }
 
 #[derive(Debug, Error)]
-pub enum CompletionProviderError {
-    #[error("ProviderError: request was aborted")]
+pub enum CompletionTransportError {
+    #[error("TransportError: request was aborted")]
     Aborted,
 
-    #[error("ProviderError: {message}")]
+    #[error("TransportError: {message}")]
     Message { message: String },
 }
 
-impl CompletionProviderError {
-    pub fn from_message(message: impl Into<String>) -> Self {
+impl CompletionTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
         }
@@ -137,21 +137,6 @@ impl CompletionProviderError {
     }
 }
 
-impl From<String> for CompletionProviderError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
-    }
-}
-
-impl From<&str> for CompletionProviderError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
-        }
-    }
-}
-
-// Errors
 #[derive(Debug, Error)]
 pub enum CompletionError {
     /// Http error (e.g.: connection error, timeout, etc.)
@@ -180,12 +165,20 @@ pub enum CompletionError {
     #[error(transparent)]
     ResponseError(CompletionResponseError),
 
-    /// Error returned by the completion model provider
+    /// Error returned while talking to the completion model provider.
     #[error(transparent)]
-    ProviderError(CompletionProviderError),
+    TransportError(CompletionTransportError),
+
+    /// Error caused by local completion model configuration or initialization.
+    #[error("ConfigurationError: {message}")]
+    ConfigurationError { message: String },
 }
 
 impl CompletionError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
     pub fn response(message: impl Into<String>) -> Self {
         Self::response_with_context("invalid response", message)
     }
@@ -218,18 +211,22 @@ impl CompletionError {
         Self::ResponseError(CompletionResponseError::context(context, details))
     }
 
-    pub fn provider(message: impl Into<String>) -> Self {
-        Self::ProviderError(CompletionProviderError::Message {
-            message: message.into(),
-        })
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(CompletionTransportError::message(message))
     }
 
     pub fn aborted() -> Self {
-        Self::ProviderError(CompletionProviderError::Aborted)
+        Self::TransportError(CompletionTransportError::Aborted)
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError {
+            message: message.into(),
+        }
     }
 
     pub fn is_aborted(&self) -> bool {
-        matches!(self, Self::ProviderError(provider_error) if provider_error.is_aborted())
+        matches!(self, Self::TransportError(transport_error) if transport_error.is_aborted())
     }
 
     pub fn is_stream_ended_without_assistant_content(&self) -> bool {
@@ -1106,7 +1103,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::provider(
+            Err(CompletionError::transport(
                 "dummy completion model".to_string(),
             ))
         }
@@ -1115,7 +1112,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-            Err(CompletionError::provider(
+            Err(CompletionError::transport(
                 "dummy completion model".to_string(),
             ))
         }
@@ -1260,6 +1257,14 @@ mod tests {
     }
 
     #[test]
+    fn completion_request_errors_are_explicit() {
+        assert_eq!(
+            CompletionError::request("unsupported input").to_string(),
+            "RequestError: unsupported input"
+        );
+    }
+
+    #[test]
     fn completion_error_typed_response_constructors_are_structured() {
         assert!(matches!(
             CompletionError::missing_choices(),
@@ -1290,17 +1295,26 @@ mod tests {
     }
 
     #[test]
-    fn completion_provider_error_classifies_abort_messages() {
+    fn completion_transport_error_classifies_abort_messages() {
         assert!(matches!(
             CompletionError::aborted(),
-            CompletionError::ProviderError(CompletionProviderError::Aborted)
+            CompletionError::TransportError(CompletionTransportError::Aborted)
         ));
         assert!(CompletionError::aborted().is_aborted());
         assert!(matches!(
-            CompletionError::provider("provider unavailable"),
-            CompletionError::ProviderError(CompletionProviderError::Message { message })
+            CompletionError::transport("provider unavailable"),
+            CompletionError::TransportError(CompletionTransportError::Message { message })
                 if message == "provider unavailable"
         ));
-        assert!(!CompletionError::provider("provider unavailable").is_aborted());
+        assert!(!CompletionError::transport("provider unavailable").is_aborted());
+    }
+
+    #[test]
+    fn completion_configuration_errors_are_explicit() {
+        assert!(matches!(
+            CompletionError::configuration("missing provider configuration"),
+            CompletionError::ConfigurationError { message }
+                if message == "missing provider configuration"
+        ));
     }
 }

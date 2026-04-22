@@ -23,48 +23,26 @@ pub enum AudioGenerationResponseError {
 }
 
 #[derive(Debug, Error)]
-pub enum AudioGenerationProviderError {
-    #[error("ProviderError: request failed with status {status}: {body}")]
+pub enum AudioGenerationTransportError {
+    #[error("TransportError: request failed with status {status}: {body}")]
     Status { status: StatusCode, body: String },
 
-    #[error("ProviderError: {message}")]
+    #[error("TransportError: {message}")]
     Message { message: String },
 }
 
-impl AudioGenerationProviderError {
-    pub fn from_message(message: impl Into<String>) -> Self {
+impl AudioGenerationTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
         }
     }
 }
 
-impl From<String> for AudioGenerationResponseError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
-    }
-}
-
-impl From<&str> for AudioGenerationResponseError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
-        }
-    }
-}
-
-impl From<String> for AudioGenerationProviderError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
-    }
-}
-
-impl From<&str> for AudioGenerationProviderError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
-        }
-    }
+#[derive(Debug, Error)]
+pub enum AudioGenerationConfigurationError {
+    #[error("ConfigurationError: {message}")]
+    Message { message: String },
 }
 
 #[derive(Debug, Error)]
@@ -91,12 +69,20 @@ pub enum AudioGenerationError {
     #[error(transparent)]
     ResponseError(AudioGenerationResponseError),
 
-    /// Error returned by the transcription model provider
+    /// Error returned while talking to the audio generation provider.
     #[error(transparent)]
-    ProviderError(AudioGenerationProviderError),
+    TransportError(AudioGenerationTransportError),
+
+    /// Error caused by local audio generation configuration or initialization.
+    #[error(transparent)]
+    ConfigurationError(AudioGenerationConfigurationError),
 }
 
 impl AudioGenerationError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
     pub fn decode_payload(provider: &'static str, source: base64::DecodeError) -> Self {
         Self::ResponseError(AudioGenerationResponseError::Base64Decode { provider, source })
     }
@@ -107,14 +93,20 @@ impl AudioGenerationError {
         })
     }
 
-    pub fn provider(message: impl Into<String>) -> Self {
-        Self::ProviderError(AudioGenerationProviderError::from_message(message))
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(AudioGenerationTransportError::message(message))
     }
 
-    pub fn provider_status(status: StatusCode, body: impl Into<String>) -> Self {
-        Self::ProviderError(AudioGenerationProviderError::Status {
+    pub fn transport_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::TransportError(AudioGenerationTransportError::Status {
             status,
             body: body.into(),
+        })
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(AudioGenerationConfigurationError::Message {
+            message: message.into(),
         })
     }
 }
@@ -261,17 +253,25 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioGenerationError, AudioGenerationProviderError};
+    use super::{
+        AudioGenerationConfigurationError, AudioGenerationError, AudioGenerationTransportError,
+    };
     use http::StatusCode;
 
     #[test]
-    fn audio_generation_provider_status_preserves_http_context() {
+    fn audio_generation_error_taxonomy_is_explicit() {
         assert!(matches!(
-            AudioGenerationError::provider_status(StatusCode::BAD_GATEWAY, "bad gateway"),
-            AudioGenerationError::ProviderError(AudioGenerationProviderError::Status {
+            AudioGenerationError::transport_status(StatusCode::BAD_GATEWAY, "bad gateway"),
+            AudioGenerationError::TransportError(AudioGenerationTransportError::Status {
                 status,
                 body,
             }) if status == StatusCode::BAD_GATEWAY && body == "bad gateway"
+        ));
+        assert!(matches!(
+            AudioGenerationError::configuration("missing audio backend"),
+            AudioGenerationError::ConfigurationError(
+                AudioGenerationConfigurationError::Message { message }
+            ) if message == "missing audio backend"
         ));
     }
 }

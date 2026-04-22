@@ -109,11 +109,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::provider(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }

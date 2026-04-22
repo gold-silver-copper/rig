@@ -366,7 +366,7 @@ where
                         }
                     },
                     Err(e) => {
-                        yield Err(CompletionError::provider(format!("SSE Error: {e}")));
+                        yield Err(CompletionError::transport(format!("SSE Error: {e}")));
                         break;
                     }
                 }

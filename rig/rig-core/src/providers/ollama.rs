@@ -213,7 +213,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::provider(err.message)
+        EmbeddingError::transport(err.message)
     }
 }
 
@@ -221,7 +221,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
         }
     }
 }
@@ -297,7 +297,7 @@ where
 
         if !response.status().is_success() {
             let text = http_client::text(response).await?;
-            return Err(EmbeddingError::provider(text));
+            return Err(EmbeddingError::transport(text));
         }
 
         let bytes: Vec<u8> = response.into_body().await?;
@@ -617,7 +617,7 @@ where
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(CompletionError::provider(
+                return Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ));
             }
@@ -698,7 +698,7 @@ where
         let mut byte_stream = response.into_body();
 
         if !status.is_success() {
-            return Err(CompletionError::provider(format!(
+            return Err(CompletionError::transport(format!(
                 "Got error status code trying to send a request to Ollama: {status}"
             )));
         }

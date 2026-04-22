@@ -385,7 +385,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::provider(err.message)
+        EmbeddingError::transport(err.message)
     }
 }
 
@@ -393,7 +393,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
         }
     }
 }
@@ -514,11 +514,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::provider(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::provider(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }
@@ -766,10 +766,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::provider(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -912,12 +912,12 @@ where
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
                 ApiResponse::Err(api_error_response) => {
-                    Err(TranscriptionError::provider(api_error_response.message))
+                    Err(TranscriptionError::transport(api_error_response.message))
                 }
             }
         } else {
             let body = String::from_utf8_lossy(&response_body).into_owned();
-            Err(TranscriptionError::provider_status(status, body))
+            Err(TranscriptionError::transport_status(status, body))
         }
     }
 }
@@ -986,12 +986,12 @@ mod image_generation {
 
             if !status.is_success() {
                 let body = String::from_utf8_lossy(&response_body).into_owned();
-                return Err(ImageGenerationError::provider_status(status, body));
+                return Err(ImageGenerationError::transport_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<ImageGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(ImageGenerationError::provider(err.message)),
+                ApiResponse::Err(err) => Err(ImageGenerationError::transport(err.message)),
             }
         }
     }
@@ -1066,7 +1066,7 @@ mod audio_generation {
 
             if !status.is_success() {
                 let body = String::from_utf8_lossy(&response_body).into_owned();
-                return Err(AudioGenerationError::provider_status(status, body));
+                return Err(AudioGenerationError::transport_status(status, body));
             }
 
             Ok(AudioGenerationResponse {

@@ -55,7 +55,7 @@ impl TryFrom<RigDocument> for aws_bedrock::DocumentBlock {
             .name(document_name)
             .set_format(document_media_type)
             .build()
-            .map_err(|e| CompletionError::provider(e.to_string()))?;
+            .map_err(|e| CompletionError::request(e.to_string()))?;
         Ok(result)
     }
 }
@@ -73,9 +73,10 @@ impl TryFrom<aws_bedrock::DocumentBlock> for RigDocument {
                 Ok(DocumentSourceKind::Base64(encoded_data))
             }
             Some(aws_bedrock::DocumentSource::Text(str)) => Ok(DocumentSourceKind::String(str)),
-            doc => Err(CompletionError::provider(format!(
-                "Unsupported document type: {doc:?}"
-            ))),
+            doc => Err(CompletionError::response_with_context(
+                "bedrock document source",
+                format!("unsupported document type: {doc:?}"),
+            )),
         }?;
 
         Ok(RigDocument(Document {
@@ -166,10 +167,7 @@ mod tests {
         let aws_document: Result<aws_bedrock::DocumentBlock, _> = rig_document.clone().try_into();
         assert_eq!(
             aws_document.err().unwrap().to_string(),
-            CompletionError::ProviderError(
-                "Unsupported media type application/x-javascript".into()
-            )
-            .to_string()
+            CompletionError::request("Unsupported media type application/x-javascript").to_string()
         )
     }
 
@@ -203,7 +201,7 @@ mod tests {
         assert!(rig_document.is_err());
         assert_eq!(
             rig_document.err().unwrap().to_string(),
-            CompletionError::ProviderError("Unsupported media type xlsx".into()).to_string()
+            CompletionError::response("Unsupported media type xlsx").to_string()
         )
     }
 }

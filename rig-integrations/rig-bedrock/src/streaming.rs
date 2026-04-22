@@ -94,7 +94,11 @@ impl CompletionModel {
             while let Ok(Some(output)) = stream.recv().await {
                 match output {
                     aws_bedrock::ConverseStreamOutput::ContentBlockDelta(event) => {
-                        let delta = event.delta.ok_or(CompletionError::ProviderError("The delta for a content block is missing".into()))?;
+                        let delta = event
+                            .delta
+                            .ok_or(CompletionError::transport(
+                                "The delta for a content block is missing",
+                            ))?;
                         match delta {
                             aws_bedrock::ContentBlockDelta::Text(text) => {
                                 if current_tool_call.is_none() {
@@ -148,7 +152,12 @@ impl CompletionModel {
                         }
                     },
                     aws_bedrock::ConverseStreamOutput::ContentBlockStart(event) => {
-                        match event.start.ok_or(CompletionError::ProviderError("ContentBlockStart has no data".into()))? {
+                        match event
+                            .start
+                            .ok_or(CompletionError::transport(
+                                "ContentBlockStart has no data",
+                            ))?
+                        {
                             aws_bedrock::ContentBlockStart::ToolUse(tool_use) => {
                                 let internal_call_id = nanoid::nanoid!();
                                 current_tool_call = Some(ToolCallState {
@@ -163,7 +172,7 @@ impl CompletionModel {
                                     content: ToolCallDeltaContent::Name(tool_use.name),
                                 });
                             },
-                            _ => yield Err(CompletionError::ProviderError("Stream is empty".into()))
+                            _ => yield Err(CompletionError::transport("Stream is empty"))
                         }
                     },
                     aws_bedrock::ConverseStreamOutput::ContentBlockStop(_event) => {
@@ -193,11 +202,11 @@ impl CompletionModel {
                                             .with_internal_call_id(tool_call.internal_call_id)
                                     ));
                                 } else {
-                                    yield Err(CompletionError::ProviderError("Failed to call tool".into()))
+                                    yield Err(CompletionError::transport("Failed to call tool"))
                                 }
                             }
                             aws_bedrock::StopReason::MaxTokens => {
-                                yield Err(CompletionError::ProviderError("Exceeded max tokens".into()))
+                                yield Err(CompletionError::transport("Exceeded max tokens"))
                             }
                             _ => {}
                         }

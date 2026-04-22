@@ -1068,7 +1068,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::provider(
+            Err(CompletionError::transport(
                 "completion is unused in this streaming test".to_string(),
             ))
         }
@@ -1095,7 +1095,7 @@ mod tests {
                     ));
                     yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(4)));
                 } else if let Some(error) = validation_error {
-                    yield Err(CompletionError::provider(error));
+                    yield Err(CompletionError::transport(error));
                 } else {
                     yield Ok(RawStreamingChoice::Message("done".to_string()));
                     yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(6)));
@@ -1191,7 +1191,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::provider(
+            Err(CompletionError::transport(
                 "completion is unused in this streaming test".to_string(),
             ))
         }
@@ -1219,7 +1219,7 @@ mod tests {
                     ));
                     yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(4)));
                 } else if let Some(error) = validation_error {
-                    yield Err(CompletionError::provider(error));
+                    yield Err(CompletionError::transport(error));
                 } else {
                     yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(6)));
                 }
@@ -1317,7 +1317,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::provider(
+            Err(CompletionError::transport(
                 "completion is unused in this streaming test".to_string(),
             ))
         }

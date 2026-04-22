@@ -105,14 +105,14 @@ where
             let status = response.status();
             let text = http_client::text(response).await?;
 
-            return Err(ImageGenerationError::provider_status(status, text));
+            return Err(ImageGenerationError::transport_status(status, text));
         }
 
         let text = http_client::text(response).await?;
 
         match serde_json::from_str::<ApiResponse<ImageGenerationResponse>>(&text)? {
             ApiResponse::Ok(response) => response.try_into(),
-            ApiResponse::Error(err) => Err(ImageGenerationError::provider(err.message())),
+            ApiResponse::Error(err) => Err(ImageGenerationError::transport(err.message())),
         }
     }
 }

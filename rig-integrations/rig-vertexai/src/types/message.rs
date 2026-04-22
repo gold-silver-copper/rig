@@ -9,7 +9,7 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
 
     fn try_from(value: RigMessage) -> Result<Self, Self::Error> {
         match value.0 {
-            Message::System { .. } => Err(CompletionError::provider(
+            Message::System { .. } => Err(CompletionError::request(
                 "System messages must be sent via Vertex AI system_instruction",
             )),
             Message::User { content } => {
@@ -53,7 +53,7 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
                             Ok(vertexai::model::Part::new()
                                 .set_function_response(function_response))
                         }
-                        _ => Err(CompletionError::provider(format!(
+                        _ => Err(CompletionError::request(format!(
                             "Unsupported user content type: {:?}",
                             user_content
                         ))),
@@ -76,7 +76,7 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
                             let struct_val = match tool_call.function.arguments {
                                 serde_json::Value::Object(map) => map,
                                 _ => {
-                                    return Err(CompletionError::provider(
+                                    return Err(CompletionError::request(
                                         "Expected JSON object for Struct conversion",
                                     ));
                                 }
@@ -88,7 +88,7 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
 
                             Ok(vertexai::model::Part::new().set_function_call(function_call))
                         }
-                        _ => Err(CompletionError::provider(format!(
+                        _ => Err(CompletionError::request(format!(
                             "Unsupported assistant content type: {:?}",
                             assistant_content
                         ))),

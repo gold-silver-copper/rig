@@ -966,7 +966,7 @@ mod tests {
     async fn test_stream_preserves_partial_choice_before_provider_error() {
         let stream = stream! {
             yield Ok(RawStreamingChoice::Message("partial".to_string()));
-            yield Err(CompletionError::provider("provider blew up"));
+            yield Err(CompletionError::transport("provider blew up"));
         };
         let mut stream = StreamingCompletionResponse::stream(to_stream_result(stream));
 
@@ -976,7 +976,7 @@ mod tests {
         ));
         assert!(matches!(
             stream.next().await,
-            Some(Err(CompletionError::ProviderError(_)))
+            Some(Err(CompletionError::TransportError(_)))
         ));
         assert!(stream.next().await.is_none());
 

@@ -794,14 +794,14 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::provider(err.to_string())),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.to_string())),
                 }
             } else {
                 let status = response.status();
                 let text: Vec<u8> = response.into_body().await?;
                 let text: String = String::from_utf8_lossy(&text).into();
 
-                Err(CompletionError::provider(format!("{}: {}", status, text)))
+                Err(CompletionError::transport(format!("{}: {}", status, text)))
             }
         }
         .instrument(span)

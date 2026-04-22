@@ -125,7 +125,7 @@ pub const GPT_4_1: &str = "gpt-4.1";
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::provider(err.message)
+        CompletionError::transport(err.message)
     }
 }
 
@@ -391,7 +391,7 @@ impl TryFrom<crate::message::ToolChoice> for ToolChoice {
     fn try_from(value: crate::message::ToolChoice) -> Result<Self, Self::Error> {
         let res = match value {
             message::ToolChoice::Specific { .. } => {
-                return Err(CompletionError::provider(
+                return Err(CompletionError::transport(
                     "Provider doesn't support only using specific tools".to_string(),
                 ));
             }
@@ -1319,11 +1319,11 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
                 let text = http_client::text(response).await?;
-                Err(CompletionError::provider(text))
+                Err(CompletionError::transport(text))
             }
         }
         .instrument(span)

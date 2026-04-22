@@ -54,7 +54,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
         let mut grpc_client = self
             .client
             .grpc_client()
-            .map_err(|e| EmbeddingError::provider(e.to_string()))?;
+            .map_err(|e| EmbeddingError::transport(e.to_string()))?;
 
         for doc in documents_vec {
             let request = EmbedContentRequest {
@@ -76,7 +76,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
             let response = grpc_client
                 .embed_content(request)
                 .await
-                .map_err(|e| EmbeddingError::provider(e.to_string()))?
+                .map_err(|e| EmbeddingError::transport(e.to_string()))?
                 .into_inner();
 
             if let Some(embedding) = response.embedding {

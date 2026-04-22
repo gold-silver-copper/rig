@@ -138,7 +138,7 @@ where
                                 final_interaction = Some(interaction);
                             }
                             InteractionSseEvent::Error { error, .. } => {
-                                yield Err(CompletionError::provider(error.message));
+                                yield Err(CompletionError::transport(error.message));
                                 break;
                             }
                             _ => continue,
@@ -149,7 +149,7 @@ where
                     }
                     Err(error) => {
                         tracing::error!(?error, "SSE error");
-                        yield Err(CompletionError::provider(error.to_string()));
+                        yield Err(CompletionError::transport(error.to_string()));
                         break;
                     }
                 }
@@ -203,7 +203,7 @@ where
                 Err(crate::http_client::Error::StreamEnded) => break,
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
-                    yield Err(CompletionError::provider(error.to_string()));
+                    yield Err(CompletionError::transport(error.to_string()));
                     break;
                 }
             }

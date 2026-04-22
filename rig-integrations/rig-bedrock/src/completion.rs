@@ -272,7 +272,7 @@ impl completion::CompletionModel for CompletionModel {
 
             let response: InternalConverseOutput = response
                 .try_into()
-                .map_err(|x| CompletionError::provider(format!("Type conversion error: {x}")))?;
+                .map_err(|x| CompletionError::transport(format!("Type conversion error: {x}")))?;
 
             let aws_output = AwsConverseOutput(response);
 

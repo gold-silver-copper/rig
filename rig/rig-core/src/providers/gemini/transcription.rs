@@ -130,7 +130,7 @@ where
             Ok(transcription::TranscriptionResponse::try_from(body)?)
         } else {
             let text = String::from_utf8_lossy(&response.into_body().await?).into_owned();
-            Err(TranscriptionError::provider(text))
+            Err(TranscriptionError::transport(text))
         }
     }
 }

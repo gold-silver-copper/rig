@@ -584,7 +584,7 @@ pub struct CompletionResponse {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::provider(err.message)
+        CompletionError::transport(err.message)
     }
 }
 
@@ -1770,10 +1770,10 @@ where
                             "OpenRouter response: {response:?}");
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::provider(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

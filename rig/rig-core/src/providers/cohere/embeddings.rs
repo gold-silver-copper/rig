@@ -152,11 +152,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(error) => Err(EmbeddingError::provider(error.message)),
+                ApiResponse::Err(error) => Err(EmbeddingError::transport(error.message)),
             }
         } else {
             let text = String::from_utf8_lossy(&response.into_body().await?).into_owned();
-            Err(EmbeddingError::provider(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }

@@ -30,57 +30,29 @@ impl EmbeddingResponseError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EmbeddingProviderError {
-    #[error("ProviderError: {message}")]
+pub enum EmbeddingTransportError {
+    #[error("TransportError: {message}")]
     Message { message: String },
 }
 
-impl EmbeddingProviderError {
-    pub fn from_message(message: impl Into<String>) -> Self {
+impl EmbeddingTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
-        }
-    }
-}
-
-impl From<String> for EmbeddingProviderError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
-    }
-}
-
-impl From<&str> for EmbeddingProviderError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EmbeddingInitializationError {
-    #[error("InitializationError: {message}")]
+pub enum EmbeddingConfigurationError {
+    #[error("ConfigurationError: {message}")]
     Message { message: String },
 }
 
-impl EmbeddingInitializationError {
-    pub fn from_message(message: impl Into<String>) -> Self {
+impl EmbeddingConfigurationError {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
-        }
-    }
-}
-
-impl From<String> for EmbeddingInitializationError {
-    fn from(message: String) -> Self {
-        Self::Message { message }
-    }
-}
-
-impl From<&str> for EmbeddingInitializationError {
-    fn from(message: &str) -> Self {
-        Self::Message {
-            message: message.to_owned(),
         }
     }
 }
@@ -122,13 +94,13 @@ pub enum EmbeddingError {
     #[error(transparent)]
     ResponseError(EmbeddingResponseError),
 
-    /// Error returned by the embedding model provider
+    /// Error returned while talking to the embedding model provider.
     #[error(transparent)]
-    ProviderError(EmbeddingProviderError),
+    TransportError(EmbeddingTransportError),
 
-    /// The embedding backend or local runtime could not be initialized.
+    /// The embedding backend or local runtime could not be configured or initialized.
     #[error(transparent)]
-    InitializationError(EmbeddingInitializationError),
+    ConfigurationError(EmbeddingConfigurationError),
 
     /// The embedding backend returned no embeddings for a request that should produce one.
     #[error("EmptyResponse: embedding backend returned no embeddings")]
@@ -140,6 +112,10 @@ pub enum EmbeddingError {
 }
 
 impl EmbeddingError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
     pub fn response(message: impl Into<String>) -> Self {
         Self::ResponseError(EmbeddingResponseError::message(message))
     }
@@ -148,12 +124,12 @@ impl EmbeddingError {
         Self::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
     }
 
-    pub fn provider(message: impl Into<String>) -> Self {
-        Self::ProviderError(EmbeddingProviderError::from_message(message))
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(EmbeddingTransportError::message(message))
     }
 
-    pub fn initialization(message: impl Into<String>) -> Self {
-        Self::InitializationError(EmbeddingInitializationError::from_message(message))
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(EmbeddingConfigurationError::message(message))
     }
 }
 
@@ -243,12 +219,16 @@ impl Eq for Embedding {}
 #[cfg(test)]
 mod tests {
     use super::{
-        EmbeddingError, EmbeddingInitializationError, EmbeddingProviderError,
-        EmbeddingResponseError,
+        EmbeddingConfigurationError, EmbeddingError, EmbeddingResponseError,
+        EmbeddingTransportError,
     };
 
     #[test]
     fn embedding_error_typed_response_constructors_are_structured() {
+        assert!(matches!(
+            EmbeddingError::request("unsupported input"),
+            EmbeddingError::RequestError(_)
+        ));
         assert!(matches!(
             EmbeddingError::mismatched_embedding_count(),
             EmbeddingError::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
@@ -263,13 +243,13 @@ mod tests {
                 if message == "embedding payload missing vector"
         ));
         assert!(matches!(
-            EmbeddingError::provider("provider throttled request"),
-            EmbeddingError::ProviderError(EmbeddingProviderError::Message { message })
+            EmbeddingError::transport("provider throttled request"),
+            EmbeddingError::TransportError(EmbeddingTransportError::Message { message })
                 if message == "provider throttled request"
         ));
         assert!(matches!(
-            EmbeddingError::initialization("tokenizer failed to load"),
-            EmbeddingError::InitializationError(EmbeddingInitializationError::Message {
+            EmbeddingError::configuration("tokenizer failed to load"),
+            EmbeddingError::ConfigurationError(EmbeddingConfigurationError::Message {
                 message
             }) if message == "tokenizer failed to load"
         ));

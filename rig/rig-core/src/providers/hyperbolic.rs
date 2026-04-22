@@ -176,7 +176,7 @@ pub struct CompletionResponse {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::provider(err.message)
+        CompletionError::transport(err.message)
     }
 }
 
@@ -411,10 +411,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::provider(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::provider(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -601,12 +601,12 @@ mod image_generation {
 
             if !status.is_success() {
                 let body = String::from_utf8_lossy(&response_body).into_owned();
-                return Err(ImageGenerationError::provider_status(status, body));
+                return Err(ImageGenerationError::transport_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<ImageGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(ImageGenerationError::provider(err.message)),
+                ApiResponse::Err(err) => Err(ImageGenerationError::transport(err.message)),
             }
         }
     }
@@ -722,12 +722,12 @@ mod audio_generation {
 
             if !status.is_success() {
                 let body = String::from_utf8_lossy(&response_body).into_owned();
-                return Err(AudioGenerationError::provider_status(status, body));
+                return Err(AudioGenerationError::transport_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<AudioGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(AudioGenerationError::provider(err.message)),
+                ApiResponse::Err(err) => Err(AudioGenerationError::transport(err.message)),
             }
         }
     }

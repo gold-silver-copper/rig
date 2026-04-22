@@ -397,7 +397,7 @@ where
                 .client
                 .send::<_, bytes::Bytes>(req)
                 .await
-                .map_err(|e| CompletionError::provider(e.to_string()))?;
+                .map_err(|e| CompletionError::transport(e.to_string()))?;
 
             let status = response.status();
             let response_body = response.into_body().into_future().await?.to_vec();
@@ -405,7 +405,7 @@ where
             if !status.is_success() {
                 let status = status.as_u16();
                 let error_text = String::from_utf8_lossy(&response_body).to_string();
-                return Err(CompletionError::provider(format!(
+                return Err(CompletionError::transport(format!(
                     "API error: {status} - {error_text}"
                 )));
             }
@@ -506,7 +506,7 @@ where
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::provider(err.message)
+        CompletionError::transport(err.message)
     }
 }
 

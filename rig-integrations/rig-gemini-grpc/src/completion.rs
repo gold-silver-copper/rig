@@ -56,12 +56,12 @@ impl completion::CompletionModel for CompletionModel {
         let mut grpc_client = self
             .client
             .grpc_client()
-            .map_err(|e| CompletionError::provider(e.to_string()))?;
+            .map_err(|e| CompletionError::transport(e.to_string()))?;
 
         let response = grpc_client
             .generate_content(request)
             .await
-            .map_err(|e| CompletionError::provider(e.to_string()))?
+            .map_err(|e| CompletionError::transport(e.to_string()))?
             .into_inner();
 
         response.try_into()
