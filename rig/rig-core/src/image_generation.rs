@@ -2,6 +2,7 @@
 //! Rig allows calling a number of different providers (that support image generation) using the [ImageGenerationModel] trait.
 use crate::http_client;
 use crate::markers::{Missing, Provided};
+use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use http::StatusCode;
 use serde_json::Value;
 use thiserror::Error;
@@ -38,6 +39,34 @@ impl ImageGenerationProviderError {
     pub fn from_message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
+        }
+    }
+}
+
+impl From<String> for ImageGenerationResponseError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for ImageGenerationResponseError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
+        }
+    }
+}
+
+impl From<String> for ImageGenerationProviderError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for ImageGenerationProviderError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
         }
     }
 }
@@ -115,7 +144,7 @@ where
         size: &(u32, u32),
     ) -> impl std::future::Future<
         Output = Result<ImageGenerationRequestBuilder<M, Provided<String>>, ImageGenerationError>,
-    > + Send;
+    > + WasmCompatSend;
 }
 
 /// A unified response for a model image generation, returning both the image and the raw response.
@@ -125,8 +154,8 @@ pub struct ImageGenerationResponse<T> {
     pub response: T,
 }
 
-pub trait ImageGenerationModel: Clone + Send + Sync {
-    type Response: Send + Sync;
+pub trait ImageGenerationModel: Clone + WasmCompatSend + WasmCompatSync {
+    type Response: WasmCompatSend + WasmCompatSync;
 
     type Client;
 
@@ -137,7 +166,7 @@ pub trait ImageGenerationModel: Clone + Send + Sync {
         request: ImageGenerationRequest,
     ) -> impl std::future::Future<
         Output = Result<ImageGenerationResponse<Self::Response>, ImageGenerationError>,
-    > + Send;
+    > + WasmCompatSend;
 
     fn image_generation_request(&self) -> ImageGenerationRequestBuilder<Self, Missing> {
         ImageGenerationRequestBuilder::new(self.clone())

@@ -9,8 +9,8 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
 
     fn try_from(value: RigMessage) -> Result<Self, Self::Error> {
         match value.0 {
-            Message::System { .. } => Err(CompletionError::ProviderError(
-                "System messages must be sent via Vertex AI system_instruction".to_string(),
+            Message::System { .. } => Err(CompletionError::provider(
+                "System messages must be sent via Vertex AI system_instruction",
             )),
             Message::User { content } => {
                 let parts: Result<Vec<vertexai::model::Part>, _> = content
@@ -53,7 +53,7 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
                             Ok(vertexai::model::Part::new()
                                 .set_function_response(function_response))
                         }
-                        _ => Err(CompletionError::ProviderError(format!(
+                        _ => Err(CompletionError::provider(format!(
                             "Unsupported user content type: {:?}",
                             user_content
                         ))),
@@ -76,8 +76,8 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
                             let struct_val = match tool_call.function.arguments {
                                 serde_json::Value::Object(map) => map,
                                 _ => {
-                                    return Err(CompletionError::ProviderError(
-                                        "Expected JSON object for Struct conversion".to_string(),
+                                    return Err(CompletionError::provider(
+                                        "Expected JSON object for Struct conversion",
                                     ));
                                 }
                             };
@@ -88,7 +88,7 @@ impl TryFrom<RigMessage> for vertexai::model::Content {
 
                             Ok(vertexai::model::Part::new().set_function_call(function_call))
                         }
-                        _ => Err(CompletionError::ProviderError(format!(
+                        _ => Err(CompletionError::provider(format!(
                             "Unsupported assistant content type: {:?}",
                             assistant_content
                         ))),

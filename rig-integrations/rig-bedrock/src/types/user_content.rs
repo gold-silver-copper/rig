@@ -29,7 +29,7 @@ impl TryFrom<aws_bedrock::ContentBlock> for RigUserContent {
                     .collect::<Vec<ToolResultContent>>();
 
                 let tool_results = OneOrMany::many(tool_result_contents).map_err(|_| {
-                    CompletionError::ProviderError("ToolResult returned invalid response".into())
+                    CompletionError::provider("ToolResult returned invalid response")
                 })?;
                 Ok(RigUserContent(UserContent::ToolResult(ToolResult {
                     id: tool_result.tool_use_id,
@@ -45,8 +45,8 @@ impl TryFrom<aws_bedrock::ContentBlock> for RigUserContent {
                 let image: RigImage = image.try_into()?;
                 Ok(RigUserContent(UserContent::Image(image.0)))
             }
-            _ => Err(CompletionError::ProviderError(
-                "ToolResultContentBlock contains unsupported variant".into(),
+            _ => Err(CompletionError::provider(
+                "ToolResultContentBlock contains unsupported variant",
             )),
         }
     }
@@ -69,7 +69,7 @@ impl TryFrom<RigUserContent> for Vec<aws_bedrock::ContentBlock> {
                             .collect::<Result<Vec<aws_bedrock::ToolResultContentBlock>, _>>()?,
                     ))
                     .build()
-                    .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+                    .map_err(|e| CompletionError::provider(e.to_string()))?;
                 Ok(vec![aws_bedrock::ContentBlock::ToolResult(builder)])
             }
             UserContent::Image(image) => {
@@ -85,12 +85,8 @@ impl TryFrom<RigUserContent> for Vec<aws_bedrock::ContentBlock> {
                     aws_bedrock::ContentBlock::Document(doc),
                 ])
             }
-            UserContent::Audio(_) => Err(CompletionError::ProviderError(
-                "Audio is not supported".into(),
-            )),
-            UserContent::Video(_) => Err(CompletionError::ProviderError(
-                "Video is not supported".into(),
-            )),
+            UserContent::Audio(_) => Err(CompletionError::provider("Audio is not supported")),
+            UserContent::Video(_) => Err(CompletionError::provider("Video is not supported")),
         }
     }
 }

@@ -35,6 +35,18 @@ impl EmbeddingResponseError {
     }
 }
 
+impl From<String> for EmbeddingResponseError {
+    fn from(message: String) -> Self {
+        Self::from_message(message)
+    }
+}
+
+impl From<&str> for EmbeddingResponseError {
+    fn from(message: &str) -> Self {
+        Self::from_message(message)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EmbeddingProviderError {
     #[error("ProviderError: {message}")]
@@ -49,6 +61,20 @@ impl EmbeddingProviderError {
     }
 }
 
+impl From<String> for EmbeddingProviderError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for EmbeddingProviderError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EmbeddingInitializationError {
     #[error("InitializationError: {message}")]
@@ -59,6 +85,20 @@ impl EmbeddingInitializationError {
     pub fn from_message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
+        }
+    }
+}
+
+impl From<String> for EmbeddingInitializationError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for EmbeddingInitializationError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
         }
     }
 }

@@ -56,12 +56,12 @@ impl completion::CompletionModel for CompletionModel {
         let mut grpc_client = self
             .client
             .grpc_client()
-            .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+            .map_err(|e| CompletionError::provider(e.to_string()))?;
 
         let response = grpc_client
             .generate_content(request)
             .await
-            .map_err(|e| CompletionError::ProviderError(e.to_string()))?
+            .map_err(|e| CompletionError::provider(e.to_string()))?
             .into_inner();
 
         response.try_into()
@@ -372,11 +372,11 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
 
     fn try_from(response: GenerateContentResponse) -> Result<Self, Self::Error> {
         let candidate = response.candidates.first().ok_or_else(|| {
-            CompletionError::ResponseError("No response candidates in response".into())
+            CompletionError::response("No response candidates in response")
         })?;
 
         let content_ref = candidate.content.as_ref().ok_or_else(|| {
-            CompletionError::ResponseError(format!(
+            CompletionError::response(format!(
                 "Gemini candidate missing content (finish_reason={})",
                 candidate.finish_reason
             ))
@@ -409,7 +409,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                             )
                         }
                         _ => {
-                            return Err(CompletionError::ResponseError(format!(
+                            return Err(CompletionError::response(format!(
                                 "Unsupported media type {mime_type:?}"
                             )));
                         }
@@ -441,8 +441,8 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                     completion::AssistantContent::ToolCall(tool_call)
                 }
                 _ => {
-                    return Err(CompletionError::ResponseError(
-                        "Response did not contain a message or tool call".into(),
+                    return Err(CompletionError::response(
+                        "Response did not contain a message or tool call",
                     ));
                 }
             };
@@ -451,9 +451,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
         }
 
         let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
+            CompletionError::response("Response contained no message or tool call (empty)")
         })?;
 
         let usage = response

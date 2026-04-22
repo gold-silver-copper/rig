@@ -38,6 +38,18 @@ impl TranscriptionResponseError {
     }
 }
 
+impl From<String> for TranscriptionResponseError {
+    fn from(message: String) -> Self {
+        Self::from_message(message)
+    }
+}
+
+impl From<&str> for TranscriptionResponseError {
+    fn from(message: &str) -> Self {
+        Self::from_message(message)
+    }
+}
+
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TranscriptionProviderError {
@@ -55,6 +67,20 @@ impl TranscriptionProviderError {
     pub fn from_message(message: impl Into<String>) -> Self {
         Self::Message {
             message: message.into(),
+        }
+    }
+}
+
+impl From<String> for TranscriptionProviderError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for TranscriptionProviderError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
         }
     }
 }

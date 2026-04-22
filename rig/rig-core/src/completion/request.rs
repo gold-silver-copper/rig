@@ -135,6 +135,18 @@ impl CompletionResponseError {
     }
 }
 
+impl From<String> for CompletionResponseError {
+    fn from(message: String) -> Self {
+        Self::from_message(message)
+    }
+}
+
+impl From<&str> for CompletionResponseError {
+    fn from(message: &str) -> Self {
+        Self::from_message(message)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CompletionProviderError {
     #[error("ProviderError: request was aborted")]
@@ -146,17 +158,27 @@ pub enum CompletionProviderError {
 
 impl CompletionProviderError {
     pub fn from_message(message: impl Into<String>) -> Self {
-        let message = message.into();
-
-        if message.to_ascii_lowercase().contains("aborted") {
-            Self::Aborted
-        } else {
-            Self::Message { message }
+        Self::Message {
+            message: message.into(),
         }
     }
 
     pub fn is_aborted(&self) -> bool {
         matches!(self, Self::Aborted)
+    }
+}
+
+impl From<String> for CompletionProviderError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for CompletionProviderError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
+        }
     }
 }
 
@@ -205,6 +227,10 @@ impl CompletionError {
 
     pub fn provider(message: impl Into<String>) -> Self {
         Self::ProviderError(CompletionProviderError::from_message(message))
+    }
+
+    pub fn aborted() -> Self {
+        Self::ProviderError(CompletionProviderError::Aborted)
     }
 }
 
@@ -1252,7 +1278,7 @@ mod tests {
     #[test]
     fn completion_provider_error_classifies_abort_messages() {
         assert!(matches!(
-            CompletionError::provider("request aborted by caller"),
+            CompletionError::aborted(),
             CompletionError::ProviderError(CompletionProviderError::Aborted)
         ));
         assert!(matches!(

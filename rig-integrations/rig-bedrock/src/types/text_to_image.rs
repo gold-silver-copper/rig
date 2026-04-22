@@ -108,20 +108,22 @@ impl TryFrom<TextToImageResponse>
 
     fn try_from(value: TextToImageResponse) -> Result<Self, Self::Error> {
         if let Some(error) = value.error {
-            return Err(ImageGenerationError::ResponseError(error));
+            return Err(ImageGenerationError::response_message(error));
         }
 
         if let Some(images) = value.to_owned().images {
             let encoded = images.first().ok_or_else(|| {
-                ImageGenerationError::ResponseError(
-                    "Malformed response from model: no images returned".to_string(),
+                ImageGenerationError::response_message(
+                    "Malformed response from model: no images returned",
                 )
             })?;
-            let data = BASE64_STANDARD.decode(encoded).map_err(|error| {
-                ImageGenerationError::ResponseError(format!(
-                    "Malformed response from model: could not decode image: {error}"
-                ))
-            })?;
+            let data = BASE64_STANDARD
+                .decode(encoded)
+                .map_err(|error| {
+                    ImageGenerationError::response_message(format!(
+                        "Malformed response from model: could not decode image: {error}"
+                    ))
+                })?;
 
             return Ok(Self {
                 image: data,
@@ -129,8 +131,8 @@ impl TryFrom<TextToImageResponse>
             });
         }
 
-        Err(ImageGenerationError::ResponseError(
-            "Malformed response from model".to_string(),
+        Err(ImageGenerationError::response_message(
+            "Malformed response from model",
         ))
     }
 }

@@ -14,13 +14,13 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
         let response = &value.0;
 
         let candidate = response.candidates.first().ok_or_else(|| {
-            CompletionError::ProviderError("No candidates in response".to_string())
+            CompletionError::provider("No candidates in response")
         })?;
 
         let content = candidate
             .content
             .as_ref()
-            .ok_or_else(|| CompletionError::ProviderError("No content in candidate".to_string()))?;
+            .ok_or_else(|| CompletionError::provider("No content in candidate"))?;
 
         let mut assistant_contents = Vec::new();
 
@@ -44,13 +44,13 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
         }
 
         if assistant_contents.is_empty() {
-            return Err(CompletionError::ProviderError(
-                "No text or tool call content found in response".to_string(),
+            return Err(CompletionError::provider(
+                "No text or tool call content found in response",
             ));
         }
 
         let choice = OneOrMany::many(assistant_contents).map_err(|e| {
-            CompletionError::ProviderError(format!("Failed to create OneOrMany: {e}"))
+            CompletionError::provider(format!("Failed to create OneOrMany: {e}"))
         })?;
 
         let usage = response

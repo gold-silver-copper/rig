@@ -55,7 +55,7 @@ impl TryFrom<RigDocument> for aws_bedrock::DocumentBlock {
             .name(document_name)
             .set_format(document_media_type)
             .build()
-            .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+            .map_err(|e| CompletionError::provider(e.to_string()))?;
         Ok(result)
     }
 }
@@ -73,7 +73,7 @@ impl TryFrom<aws_bedrock::DocumentBlock> for RigDocument {
                 Ok(DocumentSourceKind::Base64(encoded_data))
             }
             Some(aws_bedrock::DocumentSource::Text(str)) => Ok(DocumentSourceKind::String(str)),
-            doc => Err(CompletionError::ProviderError(format!(
+            doc => Err(CompletionError::provider(format!(
                 "Unsupported document type: {doc:?}"
             ))),
         }?;

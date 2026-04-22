@@ -100,7 +100,7 @@ impl CompletionModelTrait for CompletionModel {
             .client
             .get_inner()
             .await
-            .map_err(CompletionError::ProviderError)?
+            .map_err(CompletionError::provider)?
             .generate_content()
             .set_model(&model_path)
             .set_contents(contents);
@@ -124,7 +124,7 @@ impl CompletionModelTrait for CompletionModel {
         let response = request_builder
             .send()
             .await
-            .map_err(|e| CompletionError::ProviderError(format!("Vertex AI API error: {e}")))?;
+            .map_err(|e| CompletionError::provider(format!("Vertex AI API error: {e}")))?;
 
         tracing::debug!(
             target: "rig::vertexai",
@@ -141,8 +141,8 @@ impl CompletionModelTrait for CompletionModel {
         &self,
         _request: CompletionRequest,
     ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        Err(CompletionError::ProviderError(
-            "Streaming is not supported for Vertex AI in this integration".to_string(),
+        Err(CompletionError::provider(
+            "Streaming is not supported for Vertex AI in this integration",
         ))
     }
 }

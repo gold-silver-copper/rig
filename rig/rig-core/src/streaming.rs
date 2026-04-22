@@ -206,6 +206,7 @@ where
     pub(crate) inner: Abortable<StreamingResult<R>>,
     pub(crate) abort_handle: AbortHandle,
     pub(crate) pause_control: PauseControl,
+    cancelled: AtomicBool,
     assistant_items: Vec<AssistantContent>,
     text_item_index: Option<usize>,
     reasoning_item_index: Option<usize>,
@@ -233,6 +234,7 @@ where
             inner: abortable_stream,
             abort_handle,
             pause_control,
+            cancelled: AtomicBool::new(false),
             assistant_items: vec![],
             text_item_index: None,
             reasoning_item_index: None,
@@ -245,6 +247,8 @@ where
     }
 
     pub fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.abort_handle.abort();
     }
 
@@ -337,6 +341,11 @@ where
             Poll::Ready(None) => {
                 // This is run at the end of the inner stream to collect all tokens into
                 // a single unified `Message`.
+                if stream.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    stream.finished = true;
+                    return Poll::Ready(None);
+                }
+
                 if stream.assistant_items.is_empty() {
                     stream.finished = true;
                     return Poll::Ready(Some(Err(CompletionError::response(
@@ -352,10 +361,6 @@ where
                 Poll::Ready(None)
             }
             Poll::Ready(Some(Err(err))) => {
-                if matches!(err, CompletionError::ProviderError(ref e) if e.is_aborted()) {
-                    stream.finished = true;
-                    return Poll::Ready(None); // Treat cancellation as stream termination
-                }
                 stream.finished = true;
                 Poll::Ready(Some(Err(err)))
             }
@@ -409,19 +414,24 @@ where
                     })))
                 }
                 RawStreamingChoice::FinalResponse(response) => {
-                    if stream
-                        .final_response_yielded
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                    {
+                    // A terminal response without any assistant content is invalid; defer
+                    // surfacing it until EOF so callers cannot observe success first.
+                    stream.response = Some(response.clone());
+                    if stream.assistant_items.is_empty() {
                         stream.poll_next_unpin(cx)
                     } else {
-                        // Set the final response field and return the next item in the stream
-                        stream.response = Some(response.clone());
-                        stream
+                        if stream
                             .final_response_yielded
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
-                        let final_response = StreamedAssistantContent::final_response(response);
-                        Poll::Ready(Some(Ok(final_response)))
+                            .load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            stream.poll_next_unpin(cx)
+                        } else {
+                            stream
+                                .final_response_yielded
+                                .store(true, std::sync::atomic::Ordering::SeqCst);
+                            let final_response = StreamedAssistantContent::final_response(response);
+                            Poll::Ready(Some(Ok(final_response)))
+                        }
                     }
                 }
                 RawStreamingChoice::MessageId(id) => {
@@ -866,12 +876,6 @@ mod tests {
     async fn test_stream_errors_when_provider_finishes_without_assistant_content() {
         let mut stream = create_final_only_stream();
 
-        assert!(matches!(
-            stream.next().await,
-            Some(Ok(StreamedAssistantContent::Final(MockResponse {
-                token_count: 1
-            })))
-        ));
         assert!(matches!(
             stream.next().await,
             Some(Err(CompletionError::ResponseError(

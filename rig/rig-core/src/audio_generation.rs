@@ -39,6 +39,34 @@ impl AudioGenerationProviderError {
     }
 }
 
+impl From<String> for AudioGenerationResponseError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for AudioGenerationResponseError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
+        }
+    }
+}
+
+impl From<String> for AudioGenerationProviderError {
+    fn from(message: String) -> Self {
+        Self::Message { message }
+    }
+}
+
+impl From<&str> for AudioGenerationProviderError {
+    fn from(message: &str) -> Self {
+        Self::Message {
+            message: message.to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AudioGenerationError {
     /// Http error (e.g.: connection error, timeout, etc.)
@@ -105,7 +133,7 @@ where
             AudioGenerationRequestBuilder<M, Provided<String>, Provided<String>>,
             AudioGenerationError,
         >,
-    > + Send;
+    > + WasmCompatSend;
 }
 
 pub struct AudioGenerationResponse<T> {
@@ -125,7 +153,7 @@ pub trait AudioGenerationModel: Sized + Clone + WasmCompatSend + WasmCompatSync 
         request: AudioGenerationRequest,
     ) -> impl std::future::Future<
         Output = Result<AudioGenerationResponse<Self::Response>, AudioGenerationError>,
-    > + Send;
+    > + WasmCompatSend;
 
     fn audio_generation_request(&self) -> AudioGenerationRequestBuilder<Self, Missing, Missing> {
         AudioGenerationRequestBuilder::new(self.clone())

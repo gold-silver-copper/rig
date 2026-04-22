@@ -16,7 +16,7 @@ impl TryFrom<RigDocumentMediaType> for DocumentFormat {
             DocumentMediaType::HTML => Ok(DocumentFormat::Html),
             DocumentMediaType::MARKDOWN => Ok(DocumentFormat::Md),
             DocumentMediaType::CSV => Ok(DocumentFormat::Csv),
-            e => Err(CompletionError::ProviderError(format!(
+            e => Err(CompletionError::provider(format!(
                 "Unsupported media type {}",
                 e.to_mime_type()
             ))),
@@ -34,7 +34,7 @@ impl TryFrom<DocumentFormat> for RigDocumentMediaType {
             DocumentFormat::Md => Ok(RigDocumentMediaType(DocumentMediaType::MARKDOWN)),
             DocumentFormat::Pdf => Ok(RigDocumentMediaType(DocumentMediaType::PDF)),
             DocumentFormat::Txt => Ok(RigDocumentMediaType(DocumentMediaType::TXT)),
-            e => Err(CompletionError::ProviderError(format!(
+            e => Err(CompletionError::provider(format!(
                 "Unsupported media type {e}"
             ))),
         }

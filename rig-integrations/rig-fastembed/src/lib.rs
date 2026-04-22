@@ -58,7 +58,7 @@ impl Client {
     ) -> Result<EmbeddingModel, EmbeddingError> {
         let ndims = TextEmbedding::get_model_info(model)
             .map(|info| info.dim)
-            .map_err(|error| EmbeddingError::InitializationError(error.to_string()))?;
+            .map_err(|error| EmbeddingError::initialization(error.to_string()))?;
 
         EmbeddingModel::new(model, ndims)
     }
@@ -140,7 +140,7 @@ impl EmbeddingModel {
         match &self.embedder {
             EmbedderState::Ready(embedder) => Ok(embedder),
             EmbedderState::InitializationError(error) => {
-                Err(EmbeddingError::InitializationError(format!(
+                Err(EmbeddingError::initialization(format!(
                     "FastEmbed model `{}` is unavailable: {error}",
                     self.requested_model
                 )))
@@ -154,7 +154,7 @@ impl EmbeddingModel {
             TextEmbedding::try_new(
                 InitOptions::new(model.to_owned()).with_show_download_progress(true),
             )
-            .map_err(|error| EmbeddingError::InitializationError(error.to_string()))?,
+            .map_err(|error| EmbeddingError::initialization(error.to_string()))?,
         );
 
         Ok(Self {
@@ -174,7 +174,7 @@ impl EmbeddingModel {
             user_defined_model,
             InitOptionsUserDefined::default(),
         )
-        .map_err(|error| EmbeddingError::InitializationError(error.to_string()))?;
+        .map_err(|error| EmbeddingError::initialization(error.to_string()))?;
 
         let embedder = Arc::new(fastembed_embedding_model);
 
@@ -246,7 +246,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
 
         let documents_as_vec = embedder
             .embed(documents_as_strings.clone(), None)
-            .map_err(|err| EmbeddingError::ProviderError(err.to_string()))?;
+            .map_err(|err| EmbeddingError::provider(err.to_string()))?;
 
         let docs = documents_as_strings
             .into_iter()

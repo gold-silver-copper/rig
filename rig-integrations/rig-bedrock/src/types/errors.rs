@@ -32,13 +32,13 @@ impl AwsSdkInvokeModelError {
 
 impl From<AwsSdkInvokeModelError> for ImageGenerationError {
     fn from(value: AwsSdkInvokeModelError) -> Self {
-        ImageGenerationError::ProviderError(value.into_service_error())
+        ImageGenerationError::provider(value.into_service_error())
     }
 }
 
 impl From<AwsSdkInvokeModelError> for EmbeddingError {
     fn from(value: AwsSdkInvokeModelError) -> Self {
-        EmbeddingError::ProviderError(value.into_service_error())
+        EmbeddingError::provider(value.into_service_error())
     }
 }
 
@@ -58,7 +58,7 @@ impl From<AwsSdkConverseError> for CompletionError {
             ConverseError::ModelErrorException(e) => e.message.unwrap_or("The request failed due to an error while processing the model.".into()),
             _ => String::from("An unexpected error occurred. Verify Internet connection or AWS keys")
         };
-        CompletionError::ProviderError(error)
+        CompletionError::provider(error)
     }
 }
 
@@ -98,7 +98,7 @@ impl From<AwsSdkConverseStreamError> for CompletionError {
             ),
             _ => "An unexpected error occurred. Verify Internet connection or AWS keys".into(),
         };
-        CompletionError::ProviderError(error)
+        CompletionError::provider(error)
     }
 }
 

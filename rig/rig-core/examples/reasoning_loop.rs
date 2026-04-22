@@ -37,7 +37,7 @@ impl<M: CompletionModel + 'static> Prompt for ReasoningAgent<M> {
             .await
             .map_err(|e| {
                 tracing::error!("Extraction error: {:?}", e);
-                CompletionError::ProviderError("".into())
+                CompletionError::provider("")
             })?;
         if extracted.steps.is_empty() {
             return Ok("No reasoning steps provided.".into());

@@ -34,8 +34,9 @@ fn assistant_reasoning_without_id_returns_error() {
     let items: Result<Vec<InputItem>, CompletionError> = message.try_into();
     assert!(matches!(
         items,
-        Err(CompletionError::ProviderError(message))
-            if message.contains("OpenAI-generated ID is required")
+        Err(CompletionError::ProviderError(
+            rig::completion::CompletionProviderError::Message { message }
+        )) if message.contains("OpenAI-generated ID is required")
     ));
 }
 
@@ -291,8 +292,9 @@ fn openai_responses_request_reasoning_without_id_returns_error_without_panicking
     let conversion = panic_result.expect("request conversion should not panic");
     assert!(matches!(
         conversion,
-        Err(CompletionError::ProviderError(message))
-            if message.contains("OpenAI-generated ID is required")
+        Err(CompletionError::ProviderError(
+            rig::completion::CompletionProviderError::Message { message }
+        )) if message.contains("OpenAI-generated ID is required")
     ));
 }
 
