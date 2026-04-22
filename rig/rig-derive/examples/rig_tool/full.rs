@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Tool definition:");
     println!(
         "STRINGPROCESSOR: {}",
-        serde_json::to_string_pretty(&StringProcessor.definition(String::default()).await).unwrap()
+        serde_json::to_string_pretty(&StringProcessor.definition(String::default()).await)?
     );
 
     for prompt in [
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Perform an invalid operation on 'hello world'",
     ] {
         println!("User: {prompt}");
-        println!("Agent: {}", string_agent.prompt(prompt).await.unwrap());
+        println!("Agent: {}", string_agent.prompt(prompt).await?);
     }
 
     Ok(())

@@ -88,7 +88,24 @@ impl Tool for Subtract {
                 "required": ["x", "y"],
             }
         }))
-        .expect("Tool Definition")
+        .unwrap_or_else(|_| ToolDefinition {
+            name: "subtract".to_string(),
+            description: "Subtract y from x (i.e.: x - y)".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "number",
+                        "description": "The number to subtract from"
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "The number to subtract"
+                    }
+                },
+                "required": ["x", "y"],
+            }),
+        })
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {

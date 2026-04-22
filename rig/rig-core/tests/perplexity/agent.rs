@@ -23,8 +23,7 @@ async fn completion_smoke() -> Result<()> {
 
     let response = agent
         .prompt("When and where and what type is the next solar eclipse?")
-        .await
-        .expect("prompt should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
     Ok(())

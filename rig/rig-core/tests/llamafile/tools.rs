@@ -1,5 +1,6 @@
 //! Llamafile tools smoke test.
 
+use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
 
@@ -9,12 +10,12 @@ use super::support;
 
 #[tokio::test]
 #[ignore = "requires a local llamafile server at http://localhost:8080"]
-async fn tools_smoke() {
+async fn tools_smoke() -> Result<()> {
     if support::skip_if_server_unavailable() {
-        return;
+        return Ok(());
     }
 
-    let client = support::client();
+    let client = support::client()?;
     let agent = client
         .agent(support::model_name())
         .preamble(
@@ -28,8 +29,8 @@ async fn tools_smoke() {
     let response = agent
         .prompt("Calculate 2 - 5. Call `subtract` exactly once, then answer with just the result.")
         .max_turns(3)
-        .await
-        .expect("tool prompt should succeed");
+        .await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

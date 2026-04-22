@@ -1,6 +1,6 @@
 //! xAI live coverage for batch multi-extract pipelines.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::pipeline::{self, TryOp, agent_ops};
 use rig::providers::xai;
@@ -117,34 +117,37 @@ async fn batch_multi_extract_chain() -> Result<()> {
         .await?;
 
     assert_eq!(responses.len(), 3);
+    let first = responses.first().context("missing first response")?;
+    let second = responses.get(1).context("missing second response")?;
+    let third = responses.get(2).context("missing third response")?;
 
     assert_contains_any(
-        &responses[0].names,
+        &first.names,
         &["ada", "lovelace", "charles", "babbage"],
         "names",
     );
     assert_contains_any(
-        &responses[0].topics,
+        &first.topics,
         &["analytical", "engine", "programming"],
         "topics",
     );
-    assert_sentiment_shape(&responses[0]);
+    assert_sentiment_shape(first);
 
-    assert_contains_any(&responses[1].names, &["grace"], "names");
+    assert_contains_any(&second.names, &["grace"], "names");
     assert_contains_any(
-        &responses[1].topics,
+        &second.topics,
         &["dog", "rain", "weather", "park"],
         "topics",
     );
-    assert_sentiment_shape(&responses[1]);
+    assert_sentiment_shape(second);
 
-    assert_contains_any(&responses[2].names, &["linus"], "names");
+    assert_contains_any(&third.names, &["linus"], "names");
     assert_contains_any(
-        &responses[2].topics,
+        &third.topics,
         &["store", "milk", "bread", "dinner"],
         "topics",
     );
-    assert_sentiment_shape(&responses[2]);
+    assert_sentiment_shape(third);
 
     Ok(())
 }

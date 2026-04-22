@@ -1,3 +1,4 @@
+use anyhow::{Context, bail};
 use rig::client::{EmbeddingsClient, ProviderClient};
 use rig::providers::openai;
 use rig::vector_store::request::VectorSearchRequest;
@@ -71,14 +72,17 @@ async fn main() -> Result<(), anyhow::Error> {
     let results = vector_store.top_n::<TopicDefinition>(req).await?;
 
     assert_eq!(results.len(), 3);
-    assert_eq!(results[0].2.topic, "pasta carbonara");
+    let [top_result, second_result, ..] = results.as_slice() else {
+        bail!("expected at least two vector search results");
+    };
+    assert_eq!(top_result.2.topic, "pasta carbonara");
 
     println!("{} results for query: {}", results.len(), query);
     for (distance, _id, doc) in results.iter() {
         println!("Result distance {distance} for topic: {doc}");
     }
 
-    let midpoint = (results[0].0 + results[1].0) / 2.0;
+    let midpoint = (top_result.0 + second_result.0) / 2.0;
 
     println!(
         "Attempting vector search with cosine similarity threshold of {midpoint} and query: {query}"
@@ -93,7 +97,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     println!("{} results for query: {}", results.len(), query);
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].2.topic, "pasta carbonara");
+    let top_result = results
+        .first()
+        .context("expected one vector search result after applying threshold")?;
+    assert_eq!(top_result.2.topic, "pasta carbonara");
 
     for (distance, _id, doc) in results.iter() {
         println!("Result distance {distance} for topic: {doc}");

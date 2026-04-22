@@ -1,5 +1,6 @@
 //! Llamafile loaders smoke test.
 
+use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
 use rig::loaders::FileLoader;
@@ -10,14 +11,13 @@ use super::support;
 
 #[tokio::test]
 #[ignore = "requires a local llamafile server at http://localhost:8080"]
-async fn loaders_smoke() {
+async fn loaders_smoke() -> Result<()> {
     if support::skip_if_server_unavailable() {
-        return;
+        return Ok(());
     }
 
-    let client = support::client();
-    let examples = FileLoader::with_glob(LOADERS_GLOB)
-        .expect("examples glob should parse")
+    let client = support::client()?;
+    let examples = FileLoader::with_glob(LOADERS_GLOB)?
         .read_with_path()
         .ignore_errors()
         .into_iter();
@@ -39,8 +39,8 @@ async fn loaders_smoke() {
                 "{LOADERS_PROMPT} Choose only from these exact file names: agent_with_loaders.rs, streaming.rs, tools.rs. Reply with just the exact file name."
             ),
         )
-        .await
-        .expect("loader prompt should succeed");
+        .await?;
 
     assert_loader_answer_is_relevant(&response);
+    Ok(())
 }

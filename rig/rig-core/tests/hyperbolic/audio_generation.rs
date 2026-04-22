@@ -19,8 +19,7 @@ async fn audio_generation_smoke() -> Result<()> {
         .text(AUDIO_TEXT)
         .voice("EN-US")
         .send()
-        .await
-        .expect("audio generation should succeed");
+        .await?;
 
     assert_nonempty_bytes(&response.audio);
     Ok(())

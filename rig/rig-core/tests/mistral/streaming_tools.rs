@@ -28,9 +28,7 @@ async fn streaming_tools_smoke() -> Result<()> {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
     Ok(())
@@ -52,9 +50,7 @@ async fn example_streaming_with_tools() -> Result<()> {
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tools prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
     Ok(())

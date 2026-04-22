@@ -11,6 +11,7 @@ mod request_hook;
 mod streaming;
 mod streaming_tools;
 
+use anyhow::Result;
 use rig::providers::chatgpt::{self, ChatGPTAuth};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -47,8 +48,8 @@ pub(crate) fn live_builder() -> chatgpt::ClientBuilder {
     }
 }
 
-pub(crate) fn live_client() -> chatgpt::Client {
-    live_builder().build().expect("ChatGPT client should build")
+pub(crate) fn live_client() -> Result<chatgpt::Client> {
+    Ok(live_builder().build()?)
 }
 
 fn has_usable_oauth_cache() -> bool {
@@ -79,10 +80,10 @@ fn has_unexpired_access_token(record: &CachedAuthRecord) -> bool {
 }
 
 fn current_unix_timestamp() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock should be after the unix epoch")
-        .as_secs() as i64
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs().min(i64::MAX as u64) as i64,
+        Err(_) => 0,
+    }
 }
 
 fn default_auth_file() -> Option<PathBuf> {

@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Tool definition:");
     println!(
         "CALCULATOR: {}",
-        serde_json::to_string_pretty(&CALCULATOR.definition(String::default()).await).unwrap()
+        serde_json::to_string_pretty(&CALCULATOR.definition(String::default()).await)?
     );
 
     for prompt in [
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "What is 10 / 0?",
     ] {
         println!("User: {prompt}");
-        println!("Agent: {}", calculator_agent.prompt(prompt).await.unwrap());
+        println!("Agent: {}", calculator_agent.prompt(prompt).await?);
     }
 
     Ok(())

@@ -53,7 +53,7 @@ async fn provider_selection_scenarios() -> Result<()> {
             .preamble("You are a helpful assistant.")
             .additional_params(params)
             .build();
-        let response = agent.prompt(prompt).await.expect("prompt should succeed");
+        let response = agent.prompt(prompt).await?;
         assert_nonempty_response(&response);
     }
     Ok(())

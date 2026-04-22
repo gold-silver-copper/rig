@@ -15,6 +15,7 @@
 //! cargo test --package rig-vectorize --test integration_tests
 //! ```
 
+use anyhow::{Result, anyhow};
 use rig::embeddings::{EmbedError, Embedding, EmbeddingModel, TextEmbedder};
 use rig::vector_store::request::{SearchFilter, VectorSearchRequest};
 use rig::vector_store::{InsertDocuments, VectorStoreIndex};
@@ -28,214 +29,221 @@ const EVENTUAL_CONSISTENCY_DELAY: Duration = Duration::from_secs(5);
 
 #[tokio::test]
 async fn test_insert_documents() {
-    clear_test_index().await;
+    assert_ok(
+        async {
+            clear_test_index().await;
 
-    let Some(vector_store) = create_vector_store() else {
-        eprintln!("Skipping test: Required environment variables not set");
-        return;
-    };
+            let Some(vector_store) = create_vector_store() else {
+                eprintln!("Skipping test: Required environment variables not set");
+                return Ok(());
+            };
 
-    let model = MockEmbeddingModel::new(1536);
+            let model = MockEmbeddingModel::new(1536);
 
-    let docs = vec![
-        TestDocument {
-            id: "doc-1".to_string(),
-            content: "Rust is a systems programming language".to_string(),
-            category: "programming".to_string(),
-        },
-        TestDocument {
-            id: "doc-3".to_string(),
-            content: "Cloudflare Vectorize is a globally distributed vector database".to_string(),
-            category: "database".to_string(),
-        },
-    ];
+            let docs = vec![
+                TestDocument {
+                    id: "doc-1".to_string(),
+                    content: "Rust is a systems programming language".to_string(),
+                    category: "programming".to_string(),
+                },
+                TestDocument {
+                    id: "doc-3".to_string(),
+                    content: "Cloudflare Vectorize is a globally distributed vector database"
+                        .to_string(),
+                    category: "database".to_string(),
+                },
+            ];
 
-    let embeddings = model
-        .embed_texts(docs.iter().map(|d| d.content.clone()))
-        .await
-        .expect("Failed to generate embeddings");
+            let embeddings = model
+                .embed_texts(docs.iter().map(|d| d.content.clone()))
+                .await?;
 
-    let documents_with_embeddings: Vec<(TestDocument, OneOrMany<Embedding>)> = docs
-        .into_iter()
-        .zip(embeddings.into_iter())
-        .map(|(doc, emb)| (doc, OneOrMany::one(emb)))
-        .collect();
+            let documents_with_embeddings: Vec<(TestDocument, OneOrMany<Embedding>)> = docs
+                .into_iter()
+                .zip(embeddings.into_iter())
+                .map(|(doc, emb)| (doc, OneOrMany::one(emb)))
+                .collect();
 
-    vector_store
-        .insert_documents(documents_with_embeddings)
-        .await
-        .expect("Insert should succeed");
+            vector_store
+                .insert_documents(documents_with_embeddings)
+                .await?;
+
+            Ok(())
+        }
+        .await,
+    );
 }
 
 #[tokio::test]
 async fn test_insert_and_query() {
-    clear_test_index().await;
+    assert_ok(
+        async {
+            clear_test_index().await;
 
-    let Some(vector_store) = create_vector_store() else {
-        eprintln!("Skipping test: Required environment variables not set");
-        return;
-    };
+            let Some(vector_store) = create_vector_store() else {
+                eprintln!("Skipping test: Required environment variables not set");
+                return Ok(());
+            };
 
-    let model = MockEmbeddingModel::new(1536);
+            let model = MockEmbeddingModel::new(1536);
 
-    let doc = TestDocument {
-        id: "test-doc".to_string(),
-        content: "Rig is a Rust library for building AI applications".to_string(),
-        category: "ai".to_string(),
-    };
+            let doc = TestDocument {
+                id: "test-doc".to_string(),
+                content: "Rig is a Rust library for building AI applications".to_string(),
+                category: "ai".to_string(),
+            };
 
-    let embeddings = model
-        .embed_texts(vec![doc.content.clone()])
-        .await
-        .expect("Failed to generate embeddings");
+            let embeddings = model.embed_texts(vec![doc.content.clone()]).await?;
 
-    let documents_with_embeddings = vec![(
-        doc.clone(),
-        OneOrMany::one(embeddings.into_iter().next().unwrap()),
-    )];
+            let documents_with_embeddings =
+                vec![(doc.clone(), OneOrMany::one(single_embedding(embeddings)?))];
 
-    vector_store
-        .insert_documents(documents_with_embeddings)
-        .await
-        .expect("Failed to insert document");
+            vector_store
+                .insert_documents(documents_with_embeddings)
+                .await?;
 
-    // Wait for eventual consistency
-    tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
+            // Wait for eventual consistency
+            tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
 
-    let request = VectorSearchRequest::builder()
-        .query(&doc.content)
-        .samples(5)
-        .build();
+            let request = VectorSearchRequest::builder()
+                .query(&doc.content)
+                .samples(5)
+                .build();
 
-    let results = vector_store
-        .top_n_ids(request)
-        .await
-        .expect("Query should succeed");
+            let results = vector_store.top_n_ids(request).await?;
 
-    assert!(!results.is_empty(), "Should return at least one result");
+            assert!(!results.is_empty(), "Should return at least one result");
+
+            Ok(())
+        }
+        .await,
+    );
 }
 
 #[tokio::test]
 async fn test_top_n_returns_full_documents() {
-    clear_test_index().await;
+    assert_ok(
+        async {
+            clear_test_index().await;
 
-    let Some(vector_store) = create_vector_store() else {
-        eprintln!("Skipping test: Required environment variables not set");
-        return;
-    };
+            let Some(vector_store) = create_vector_store() else {
+                eprintln!("Skipping test: Required environment variables not set");
+                return Ok(());
+            };
 
-    let model = MockEmbeddingModel::new(1536);
-    let doc = TestDocument {
-        id: "doc-rust".to_string(),
-        content: "Rust is a systems programming language".to_string(),
-        category: "programming".to_string(),
-    };
+            let model = MockEmbeddingModel::new(1536);
+            let doc = TestDocument {
+                id: "doc-rust".to_string(),
+                content: "Rust is a systems programming language".to_string(),
+                category: "programming".to_string(),
+            };
 
-    let embeddings = model
-        .embed_texts(vec![doc.content.clone()])
-        .await
-        .expect("Failed to generate embeddings");
+            let embeddings = model.embed_texts(vec![doc.content.clone()]).await?;
 
-    vector_store
-        .insert_documents(vec![(
-            doc.clone(),
-            OneOrMany::one(embeddings.into_iter().next().unwrap()),
-        )])
-        .await
-        .expect("Failed to insert document");
+            vector_store
+                .insert_documents(vec![(
+                    doc.clone(),
+                    OneOrMany::one(single_embedding(embeddings)?),
+                )])
+                .await?;
 
-    // Wait for eventual consistency
-    tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
+            // Wait for eventual consistency
+            tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
 
-    let request = VectorSearchRequest::builder()
-        .query("Rust programming language systems")
-        .samples(5)
-        .build();
+            let request = VectorSearchRequest::builder()
+                .query("Rust programming language systems")
+                .samples(5)
+                .build();
 
-    let results = vector_store
-        .top_n::<TestDocument>(request)
-        .await
-        .expect("top_n should succeed");
+            let results = vector_store.top_n::<TestDocument>(request).await?;
 
-    assert!(!results.is_empty(), "Should return at least one result");
+            assert!(!results.is_empty(), "Should return at least one result");
 
-    for (_score, _id, document) in &results {
-        assert!(!document.id.is_empty(), "Document should have an id");
-        assert!(!document.content.is_empty(), "Document should have content");
-        assert!(
-            !document.category.is_empty(),
-            "Document should have a category"
-        );
-    }
+            for (_score, _id, document) in &results {
+                assert!(!document.id.is_empty(), "Document should have an id");
+                assert!(!document.content.is_empty(), "Document should have content");
+                assert!(
+                    !document.category.is_empty(),
+                    "Document should have a category"
+                );
+            }
+
+            Ok(())
+        }
+        .await,
+    );
 }
 
 #[tokio::test]
 async fn test_top_n_with_multiple_documents() {
-    clear_test_index().await;
+    assert_ok(
+        async {
+            clear_test_index().await;
 
-    let Some(vector_store) = create_vector_store() else {
-        eprintln!("Skipping test: Required environment variables not set");
-        return;
-    };
+            let Some(vector_store) = create_vector_store() else {
+                eprintln!("Skipping test: Required environment variables not set");
+                return Ok(());
+            };
 
-    let model = MockEmbeddingModel::new(1536);
-    let docs = vec![
-        TestDocument {
-            id: "doc-rust".to_string(),
-            content: "Rust is a systems programming language".to_string(),
-            category: "programming".to_string(),
-        },
-        TestDocument {
-            id: "doc-python".to_string(),
-            content: "Python is a dynamic programming language".to_string(),
-            category: "programming".to_string(),
-        },
-    ];
+            let model = MockEmbeddingModel::new(1536);
+            let docs = vec![
+                TestDocument {
+                    id: "doc-rust".to_string(),
+                    content: "Rust is a systems programming language".to_string(),
+                    category: "programming".to_string(),
+                },
+                TestDocument {
+                    id: "doc-python".to_string(),
+                    content: "Python is a dynamic programming language".to_string(),
+                    category: "programming".to_string(),
+                },
+            ];
 
-    let embeddings = model
-        .embed_texts(docs.iter().map(|d| d.content.clone()))
-        .await
-        .expect("Failed to generate embeddings");
+            let embeddings = model
+                .embed_texts(docs.iter().map(|d| d.content.clone()))
+                .await?;
 
-    let documents_with_embeddings: Vec<(TestDocument, OneOrMany<Embedding>)> = docs
-        .into_iter()
-        .zip(embeddings.into_iter())
-        .map(|(doc, emb)| (doc, OneOrMany::one(emb)))
-        .collect();
+            let documents_with_embeddings: Vec<(TestDocument, OneOrMany<Embedding>)> = docs
+                .into_iter()
+                .zip(embeddings.into_iter())
+                .map(|(doc, emb)| (doc, OneOrMany::one(emb)))
+                .collect();
 
-    vector_store
-        .insert_documents(documents_with_embeddings)
-        .await
-        .expect("Failed to insert documents");
+            vector_store
+                .insert_documents(documents_with_embeddings)
+                .await?;
 
-    // Wait for eventual consistency
-    tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
+            // Wait for eventual consistency
+            tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
 
-    let request = VectorSearchRequest::builder()
-        .query("programming language")
-        .samples(10)
-        .build();
+            let request = VectorSearchRequest::builder()
+                .query("programming language")
+                .samples(10)
+                .build();
 
-    let results = vector_store
-        .top_n::<TestDocument>(request)
-        .await
-        .expect("top_n should succeed");
+            let results = vector_store.top_n::<TestDocument>(request).await?;
 
-    assert!(
-        results.len() >= 2,
-        "Should return at least 2 results, got {}",
-        results.len()
+            assert!(
+                results.len() >= 2,
+                "Should return at least 2 results, got {}",
+                results.len()
+            );
+
+            Ok(())
+        }
+        .await,
     );
 }
 
 #[tokio::test]
 async fn test_query_with_eq_filter() {
-    clear_test_index().await;
+    assert_ok(async {
+        clear_test_index().await;
 
-    let Some(vector_store) = create_vector_store() else {
-        eprintln!("Skipping test: Required environment variables not set");
-        return;
-    };
+        let Some(vector_store) = create_vector_store() else {
+            eprintln!("Skipping test: Required environment variables not set");
+            return Ok(());
+        };
 
     let model = MockEmbeddingModel::new(1536);
     let docs = vec![
@@ -251,10 +259,9 @@ async fn test_query_with_eq_filter() {
         },
     ];
 
-    let embeddings = model
-        .embed_texts(docs.iter().map(|d| d.content.clone()))
-        .await
-        .expect("Failed to generate embeddings");
+        let embeddings = model
+            .embed_texts(docs.iter().map(|d| d.content.clone()))
+            .await?;
 
     let documents_with_embeddings: Vec<(TestDocument, OneOrMany<Embedding>)> = docs
         .into_iter()
@@ -262,10 +269,9 @@ async fn test_query_with_eq_filter() {
         .map(|(doc, emb)| (doc, OneOrMany::one(emb)))
         .collect();
 
-    vector_store
-        .insert_documents(documents_with_embeddings)
-        .await
-        .expect("Failed to insert documents");
+        vector_store
+            .insert_documents(documents_with_embeddings)
+            .await?;
 
     // Wait for eventual consistency
     tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
@@ -278,35 +284,39 @@ async fn test_query_with_eq_filter() {
         .filter(filter)
         .build();
 
-    match vector_store.top_n::<TestDocument>(request).await {
-        Ok(results) => {
-            if results.is_empty() {
-                eprintln!(
-                    "Filter test inconclusive - no results returned (metadata index may not exist)"
-                );
-                return;
+        match vector_store.top_n::<TestDocument>(request).await {
+            Ok(results) => {
+                if results.is_empty() {
+                    eprintln!(
+                        "Filter test inconclusive - no results returned (metadata index may not exist)"
+                    );
+                    return Ok(());
+                }
+                for (_score, _id, document) in &results {
+                    assert_eq!(
+                        document.category, "programming",
+                        "Filter should only return programming documents"
+                    );
+                }
             }
-            for (_score, _id, document) in &results {
-                assert_eq!(
-                    document.category, "programming",
-                    "Filter should only return programming documents"
-                );
+            Err(e) => {
+                eprintln!("Filter test skipped - metadata may not be indexed: {:?}", e);
             }
         }
-        Err(e) => {
-            eprintln!("Filter test skipped - metadata may not be indexed: {:?}", e);
-        }
+        Ok(())
     }
+    .await);
 }
 
 #[tokio::test]
 async fn test_query_with_combined_filters() {
-    clear_test_index().await;
+    assert_ok(async {
+        clear_test_index().await;
 
-    let Some(vector_store) = create_vector_store() else {
-        eprintln!("Skipping test: Required environment variables not set");
-        return;
-    };
+        let Some(vector_store) = create_vector_store() else {
+            eprintln!("Skipping test: Required environment variables not set");
+            return Ok(());
+        };
 
     let model = MockEmbeddingModel::new(1536);
     let docs = vec![
@@ -327,10 +337,9 @@ async fn test_query_with_combined_filters() {
         },
     ];
 
-    let embeddings = model
-        .embed_texts(docs.iter().map(|d| d.content.clone()))
-        .await
-        .expect("Failed to generate embeddings");
+        let embeddings = model
+            .embed_texts(docs.iter().map(|d| d.content.clone()))
+            .await?;
 
     let documents_with_embeddings: Vec<(TestDocument, OneOrMany<Embedding>)> = docs
         .into_iter()
@@ -338,10 +347,9 @@ async fn test_query_with_combined_filters() {
         .map(|(doc, emb)| (doc, OneOrMany::one(emb)))
         .collect();
 
-    vector_store
-        .insert_documents(documents_with_embeddings)
-        .await
-        .expect("Failed to insert documents");
+        vector_store
+            .insert_documents(documents_with_embeddings)
+            .await?;
 
     // Wait for eventual consistency
     tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
@@ -356,36 +364,40 @@ async fn test_query_with_combined_filters() {
         .filter(filter)
         .build();
 
-    match vector_store.top_n::<TestDocument>(request).await {
-        Ok(results) => {
-            if results.is_empty() {
-                eprintln!(
-                    "Filter test inconclusive - no results returned (metadata index may not exist)"
-                );
-                return;
+        match vector_store.top_n::<TestDocument>(request).await {
+            Ok(results) => {
+                if results.is_empty() {
+                    eprintln!(
+                        "Filter test inconclusive - no results returned (metadata index may not exist)"
+                    );
+                    return Ok(());
+                }
+                for (_score, _id, document) in &results {
+                    assert_ne!(document.id, "doc-rust", "Filter should exclude doc-rust");
+                    assert_eq!(
+                        document.category, "programming",
+                        "Filter should only return programming documents"
+                    );
+                }
             }
-            for (_score, _id, document) in &results {
-                assert_ne!(document.id, "doc-rust", "Filter should exclude doc-rust");
-                assert_eq!(
-                    document.category, "programming",
-                    "Filter should only return programming documents"
-                );
+            Err(e) => {
+                eprintln!("Filter test skipped - metadata may not be indexed: {:?}", e);
             }
         }
-        Err(e) => {
-            eprintln!("Filter test skipped - metadata may not be indexed: {:?}", e);
-        }
+        Ok(())
     }
+    .await);
 }
 
 #[tokio::test]
 async fn test_query_with_in_filter() {
-    clear_test_index().await;
+    assert_ok(async {
+        clear_test_index().await;
 
-    let Some(vector_store) = create_vector_store() else {
-        eprintln!("Skipping test: Required environment variables not set");
-        return;
-    };
+        let Some(vector_store) = create_vector_store() else {
+            eprintln!("Skipping test: Required environment variables not set");
+            return Ok(());
+        };
 
     let model = MockEmbeddingModel::new(1536);
     let docs = vec![
@@ -406,10 +418,9 @@ async fn test_query_with_in_filter() {
         },
     ];
 
-    let embeddings = model
-        .embed_texts(docs.iter().map(|d| d.content.clone()))
-        .await
-        .expect("Failed to generate embeddings");
+        let embeddings = model
+            .embed_texts(docs.iter().map(|d| d.content.clone()))
+            .await?;
 
     let documents_with_embeddings: Vec<(TestDocument, OneOrMany<Embedding>)> = docs
         .into_iter()
@@ -417,10 +428,9 @@ async fn test_query_with_in_filter() {
         .map(|(doc, emb)| (doc, OneOrMany::one(emb)))
         .collect();
 
-    vector_store
-        .insert_documents(documents_with_embeddings)
-        .await
-        .expect("Failed to insert documents");
+        vector_store
+            .insert_documents(documents_with_embeddings)
+            .await?;
 
     // Wait for eventual consistency
     tokio::time::sleep(EVENTUAL_CONSISTENCY_DELAY).await;
@@ -439,26 +449,29 @@ async fn test_query_with_in_filter() {
         .filter(filter)
         .build();
 
-    match vector_store.top_n::<TestDocument>(request).await {
-        Ok(results) => {
-            if results.is_empty() {
-                eprintln!(
-                    "Filter test inconclusive - no results returned (metadata index may not exist)"
-                );
-                return;
+        match vector_store.top_n::<TestDocument>(request).await {
+            Ok(results) => {
+                if results.is_empty() {
+                    eprintln!(
+                        "Filter test inconclusive - no results returned (metadata index may not exist)"
+                    );
+                    return Ok(());
+                }
+                for (_score, _id, document) in &results {
+                    assert!(
+                        document.category == "programming" || document.category == "database",
+                        "Filter should only return programming or database documents, got: {}",
+                        document.category
+                    );
+                }
             }
-            for (_score, _id, document) in &results {
-                assert!(
-                    document.category == "programming" || document.category == "database",
-                    "Filter should only return programming or database documents, got: {}",
-                    document.category
-                );
+            Err(e) => {
+                eprintln!("Filter test skipped - metadata may not be indexed: {:?}", e);
             }
         }
-        Err(e) => {
-            eprintln!("Filter test skipped - metadata may not be indexed: {:?}", e);
-        }
+        Ok(())
     }
+    .await);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -543,6 +556,17 @@ fn simple_hash(s: &str) -> u64 {
 
 fn get_env_or_skip(var: &str) -> Option<String> {
     std::env::var(var).ok()
+}
+
+fn single_embedding(embeddings: Vec<Embedding>) -> Result<Embedding> {
+    embeddings
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("mock embedding model returned no embeddings"))
+}
+
+fn assert_ok(result: Result<()>) {
+    assert!(result.is_ok(), "{result:?}");
 }
 
 fn create_vector_store() -> Option<VectorizeVectorStore<MockEmbeddingModel>> {

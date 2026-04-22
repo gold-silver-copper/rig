@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 //! Cloudflare Vectorize integration for the Rig framework.
 //!
 //! This crate provides a vector store implementation using Cloudflare Vectorize,

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use mongodb::{
     Client as MongoClient, Collection,
     bson::{self, doc},
@@ -53,13 +54,13 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Initialize MongoDB client
     let mongodb_connection_string =
-        env::var("MONGODB_CONNECTION_STRING").expect("MONGODB_CONNECTION_STRING not set");
+        env::var("MONGODB_CONNECTION_STRING").context("MONGODB_CONNECTION_STRING not set")?;
     let options = ClientOptions::parse(mongodb_connection_string)
         .await
-        .expect("MongoDB connection string should be valid");
+        .context("MongoDB connection string should be valid")?;
 
     let mongodb_client =
-        MongoClient::with_options(options).expect("MongoDB client options should be valid");
+        MongoClient::with_options(options).context("MongoDB client options should be valid")?;
 
     // Initialize MongoDB vector store
     let collection: Collection<bson::Document> = mongodb_client

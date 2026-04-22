@@ -55,10 +55,9 @@ impl<M: CompletionModel + 'static> Prompt for ReasoningAgent<M> {
             .await?;
         if let Some(messages) = &response.messages {
             let history_vec: Vec<_> = messages.clone().into_iter().collect();
-            tracing::info!(
-                "full chat history generated: {}",
-                serde_json::to_string_pretty(&history_vec).unwrap()
-            );
+            if let Ok(history_json) = serde_json::to_string_pretty(&history_vec) {
+                tracing::info!("full chat history generated: {}", history_json);
+            }
         }
         Ok(response.output)
     }
@@ -127,10 +126,10 @@ impl Tool for Add {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "add",
-            "description": "Add x and y together",
-            "parameters": {
+        ToolDefinition {
+            name: "add".to_string(),
+            description: "Add x and y together".to_string(),
+            parameters: json!({
                 "type": "object",
                 "properties": {
                     "x": {
@@ -142,9 +141,8 @@ impl Tool for Add {
                         "description": "The second number to add"
                     }
                 }
-            }
-        }))
-        .expect("Tool Definition")
+            }),
+        }
     }
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let result = args.x + args.y;
@@ -159,10 +157,10 @@ impl Tool for Subtract {
     type Args = OperationArgs;
     type Output = i32;
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "subtract",
-            "description": "Subtract y from x (i.e.: x - y)",
-            "parameters": {
+        ToolDefinition {
+            name: "subtract".to_string(),
+            description: "Subtract y from x (i.e.: x - y)".to_string(),
+            parameters: json!({
                 "type": "object",
                 "properties": {
                     "x": {
@@ -174,9 +172,8 @@ impl Tool for Subtract {
                         "description": "The number to subtract"
                     }
                 }
-            }
-        }))
-        .expect("Tool Definition")
+            }),
+        }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -194,10 +191,10 @@ impl Tool for Multiply {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "multiply",
-            "description": "Compute the product of x and y (i.e.: x * y)",
-            "parameters": {
+        ToolDefinition {
+            name: "multiply".to_string(),
+            description: "Compute the product of x and y (i.e.: x * y)".to_string(),
+            parameters: json!({
                 "type": "object",
                 "properties": {
                     "x": {
@@ -209,9 +206,8 @@ impl Tool for Multiply {
                         "description": "The second factor in the product"
                     }
                 }
-            }
-        }))
-        .expect("Tool Definition")
+            }),
+        }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -229,10 +225,11 @@ impl Tool for Divide {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "divide",
-            "description": "Compute the Quotient of x and y (i.e.: x / y). Useful for ratios.",
-            "parameters": {
+        ToolDefinition {
+            name: "divide".to_string(),
+            description: "Compute the Quotient of x and y (i.e.: x / y). Useful for ratios."
+                .to_string(),
+            parameters: json!({
                 "type": "object",
                 "properties": {
                     "x": {
@@ -244,9 +241,8 @@ impl Tool for Divide {
                         "description": "The Divisor of the division. The number by which the dividend is being divided"
                     }
                 }
-            }
-        }))
-        .expect("Tool Definition")
+            }),
+        }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {

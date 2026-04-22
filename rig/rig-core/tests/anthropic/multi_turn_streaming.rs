@@ -47,8 +47,7 @@ impl Tool for Add {
         ToolDefinition {
             name: "add".to_string(),
             description: "Add x and y together".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -78,8 +77,7 @@ impl Tool for Subtract {
         ToolDefinition {
             name: "subtract".to_string(),
             description: "Subtract y from x (i.e.: x - y)".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -109,8 +107,7 @@ impl Tool for Multiply {
         ToolDefinition {
             name: "multiply".to_string(),
             description: "Compute the product of x and y (i.e.: x * y).".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -140,8 +137,7 @@ impl Tool for Divide {
         ToolDefinition {
             name: "divide".to_string(),
             description: "Compute the quotient of x and y.".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -219,9 +215,14 @@ async fn multi_turn_streaming_tools() -> Result<()> {
         "divide should be called"
     );
 
-    let response = observation
-        .final_response_text
-        .expect("stream should produce a final response string");
-    assert_mentions_expected_number(&response, MULTI_TURN_STREAMING_EXPECTED_RESULT);
+    let response = observation.final_response_text.as_deref();
+    assert!(
+        response.is_some(),
+        "stream should produce a final response string"
+    );
+    let Some(response) = response else {
+        return Ok(());
+    };
+    assert_mentions_expected_number(response, MULTI_TURN_STREAMING_EXPECTED_RESULT);
     Ok(())
 }

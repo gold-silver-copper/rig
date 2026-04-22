@@ -65,19 +65,18 @@ async fn main() -> Result<(), anyhow::Error> {
         .build();
 
     let mut memories: Vec<String> = Vec::new();
-    let mut response = generator_agent.prompt(TASK).await.unwrap();
+    let mut response = generator_agent.prompt(TASK).await?;
     memories.push(response.clone());
 
     loop {
         let eval_result = evaluator_agent
             .extract(&format!("{TASK}\n\n{response}"))
-            .await
-            .unwrap();
+            .await?;
         if eval_result.evaluation_status == EvalStatus::Pass {
             break;
         } else {
             let context = format!("{TASK}\n\n{}", eval_result.feedback);
-            response = generator_agent.prompt(context).await.unwrap();
+            response = generator_agent.prompt(context).await?;
             memories.push(response.clone());
         }
     }

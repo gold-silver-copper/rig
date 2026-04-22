@@ -72,7 +72,16 @@ where
         output_schema: None,
     };
 
-    let mut stream = agent.model.stream(request).await.expect("Turn 1 stream");
+    let stream_result = agent.model.stream(request).await;
+    let stream_error = stream_result
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert!(stream_result.is_ok(), "Turn 1 stream: {stream_error}");
+    let Ok(mut stream) = stream_result else {
+        return;
+    };
 
     let mut assistant_content = Vec::new();
     let mut saw_reasoning_block = false;
@@ -80,19 +89,27 @@ where
     let mut streamed_text = String::new();
 
     while let Some(chunk) = stream.next().await {
+        let error = chunk
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(chunk.is_ok(), "Turn 1 stream error: {error}");
+        let Ok(chunk) = chunk else {
+            return;
+        };
         match chunk {
-            Ok(StreamedAssistantContent::Text(text)) => {
+            StreamedAssistantContent::Text(text) => {
                 streamed_text.push_str(&text.text);
             }
-            Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+            StreamedAssistantContent::Reasoning(reasoning) => {
                 saw_reasoning_block = true;
                 assistant_content.push(AssistantContent::Reasoning(reasoning));
             }
-            Ok(StreamedAssistantContent::ReasoningDelta { reasoning, .. }) => {
+            StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
                 reasoning_delta_text.push_str(&reasoning);
             }
-            Ok(_) => {}
-            Err(error) => panic!("Turn 1 stream error: {error}"),
+            _ => {}
         }
     }
 
@@ -108,9 +125,17 @@ where
 
     assistant_content.push(AssistantContent::text(&streamed_text));
 
+    let assistant_content = OneOrMany::from_non_empty_iter(assistant_content);
+    assert!(
+        assistant_content.is_some(),
+        "assistant content should be non-empty"
+    );
+    let Some(assistant_content) = assistant_content else {
+        return;
+    };
     let turn1_assistant = Message::Assistant {
         id: stream.message_id.clone(),
-        content: OneOrMany::many(assistant_content).expect("non-empty"),
+        content: assistant_content,
     };
 
     let turn2_prompt = Message::User {
@@ -119,8 +144,15 @@ where
 
     let request2 = completion::CompletionRequest {
         preamble: Some(agent.preamble.clone()),
-        chat_history: OneOrMany::many(vec![turn1_prompt, turn1_assistant, turn2_prompt])
-            .expect("non-empty"),
+        chat_history: {
+            let history =
+                OneOrMany::from_non_empty_iter(vec![turn1_prompt, turn1_assistant, turn2_prompt]);
+            assert!(history.is_some(), "chat history should be non-empty");
+            let Some(history) = history else {
+                return;
+            };
+            history
+        },
         documents: vec![],
         tools: vec![],
         temperature: None,
@@ -131,16 +163,30 @@ where
         output_schema: None,
     };
 
-    let mut stream2 = agent.model.stream(request2).await.expect("Turn 2 stream");
+    let stream2_result = agent.model.stream(request2).await;
+    let stream2_error = stream2_result
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert!(stream2_result.is_ok(), "Turn 2 stream: {stream2_error}");
+    let Ok(mut stream2) = stream2_result else {
+        return;
+    };
     let mut turn2_text = String::new();
 
     while let Some(chunk) = stream2.next().await {
-        match chunk {
-            Ok(StreamedAssistantContent::Text(text)) => {
-                turn2_text.push_str(&text.text);
-            }
-            Ok(_) => {}
-            Err(error) => panic!("Turn 2 stream error: {error}"),
+        let error = chunk
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(chunk.is_ok(), "Turn 2 stream error: {error}");
+        let Ok(chunk) = chunk else {
+            return;
+        };
+        if let StreamedAssistantContent::Text(text) = chunk {
+            turn2_text.push_str(&text.text);
         }
     }
 
@@ -181,11 +227,19 @@ where
         output_schema: None,
     };
 
-    let response = agent
-        .model
-        .completion(request)
-        .await
-        .expect("Turn 1 completion");
+    let response_result = agent.model.completion(request).await;
+    let response_error = response_result
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert!(
+        response_result.is_ok(),
+        "Turn 1 completion: {response_error}"
+    );
+    let Ok(response) = response_result else {
+        return;
+    };
 
     let mut text_parts = String::new();
 
@@ -215,8 +269,15 @@ where
 
     let request2 = completion::CompletionRequest {
         preamble: Some(agent.preamble.clone()),
-        chat_history: OneOrMany::many(vec![turn1_prompt, turn1_assistant, turn2_prompt])
-            .expect("non-empty"),
+        chat_history: {
+            let history =
+                OneOrMany::from_non_empty_iter(vec![turn1_prompt, turn1_assistant, turn2_prompt]);
+            assert!(history.is_some(), "chat history should be non-empty");
+            let Some(history) = history else {
+                return;
+            };
+            history
+        },
         documents: vec![],
         tools: vec![],
         temperature: None,
@@ -227,11 +288,19 @@ where
         output_schema: None,
     };
 
-    let response2 = agent
-        .model
-        .completion(request2)
-        .await
-        .expect("Turn 2 completion - provider may have rejected reasoning in chat history");
+    let response2_result = agent.model.completion(request2).await;
+    let response2_error = response2_result
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert!(
+        response2_result.is_ok(),
+        "Turn 2 completion - provider may have rejected reasoning in chat history: {response2_error}"
+    );
+    let Ok(response2) = response2_result else {
+        return;
+    };
 
     let turn2_text: String = response2
         .choice

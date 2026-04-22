@@ -88,16 +88,6 @@ jobs:
         with:
           args: --all-features --all-targets
 
-      - name: Forbid panic-style Clippy lints in library and binary targets
-        run: >
-          cargo clippy --workspace --all-features --lib --bins --
-          -D clippy::expect_used
-          -D clippy::panic
-          -D clippy::todo
-          -D clippy::unreachable
-          -D clippy::unwrap_used
-          -D clippy::indexing_slicing
-
   test:
     name: stable / test
     runs-on: ubuntu-latest

@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use serde_json::json;
 use testcontainers::{
     GenericImage, ImageExt,
@@ -27,24 +28,31 @@ struct Word {
 
 #[tokio::test]
 async fn vector_search_test() {
-    // Setup a local Neo 4J container for testing. NOTE: docker service must be running.
-    let container = GenericImage::new("neo4j", "latest")
-        .with_wait_for(WaitFor::Duration {
-            length: std::time::Duration::from_secs(5),
-        })
-        .with_exposed_port(BOLT_PORT.tcp())
-        .with_exposed_port(HTTP_PORT.tcp())
-        .with_env_var("NEO4J_AUTH", "none")
-        .start()
-        .await
-        .expect("Failed to start Neo 4J container");
+    assert_ok(async {
+        let container = GenericImage::new("neo4j", "latest")
+            .with_wait_for(WaitFor::Duration {
+                length: std::time::Duration::from_secs(5),
+            })
+            .with_exposed_port(BOLT_PORT.tcp())
+            .with_exposed_port(HTTP_PORT.tcp())
+            .with_env_var("NEO4J_AUTH", "none")
+            .start()
+            .await
+            .context("failed to start Neo4j container")?;
 
-    let port = container.get_host_port_ipv4(BOLT_PORT).await.expect("");
-    let host = container.get_host().await.expect("").to_string();
+        let port = container
+            .get_host_port_ipv4(BOLT_PORT)
+            .await
+            .context("failed to resolve Neo4j bolt port")?;
+        let host = container
+            .get_host()
+            .await
+            .context("failed to resolve Neo4j host")?
+            .to_string();
 
-    let neo4j_client = Neo4jClient::connect(&format!("neo4j://{host}:{port}"), "", "")
-        .await
-        .expect("");
+        let neo4j_client = Neo4jClient::connect(&format!("neo4j://{host}:{port}"), "", "")
+            .await
+            .context("failed to connect to Neo4j")?;
 
     // Setup mock openai API
     let server = httpmock::MockServer::start();
@@ -123,18 +131,18 @@ async fn vector_search_test() {
     });
 
     // Initialize OpenAI client
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(server.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client
-        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
-        .expect("embedding model should build");
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+            .context("embedding model should build")?;
 
-    let embeddings = create_embeddings(model.clone()).await;
+        let embeddings = create_embeddings(model.clone()).await?;
 
     futures::stream::iter(embeddings)
         .map(|(doc, embeddings)| {
@@ -157,8 +165,7 @@ async fn vector_search_test() {
         })
         .buffer_unordered(3)
         .try_collect::<Vec<_>>()
-        .await
-        .expect("");
+        .await?;
 
     // Create a vector index on our vector store
     println!("Creating vector index...");
@@ -173,8 +180,7 @@ async fn vector_search_test() {
                     `vector.similarity_function`: 'cosine'
                     }}",
         ))
-        .await
-        .expect("");
+        .await?;
 
     // ℹ️ The index name must be unique among both indexes and constraints.
     // A newly created index is not immediately available but is created in the background.
@@ -193,10 +199,7 @@ async fn vector_search_test() {
 
     // Create a vector index on our vector store
     // IMPORTANT: Reuse the same model that was used to generate the embeddings
-    let index = neo4j_client
-        .get_index(model, "vector_index")
-        .await
-        .expect("");
+        let index = neo4j_client.get_index(model, "vector_index").await?;
 
     let query = "What is a glarb?";
     let req = VectorSearchRequest::builder()
@@ -205,21 +208,29 @@ async fn vector_search_test() {
         .build();
 
     // Query the index
-    let results = index.top_n::<serde_json::Value>(req).await.expect("");
+        let results = index.top_n::<serde_json::Value>(req).await?;
 
-    let (_, _, value) = &results.first().expect("");
+        let (_, _, value) = results
+            .first()
+            .context("vector search returned no results")?;
 
-    assert_eq!(
-        value,
-        &serde_json::json!({
-            "id": "doc1",
-            "document": "Definition of a *glarb-glarb*: A glarb-glarb is a ancient tool used by the ancestors of the inhabitants of planet Jiro to farm the land.",
-            "embedding": serde_json::Value::Null
-        })
-    )
+        assert_eq!(
+            value,
+            &serde_json::json!({
+                "id": "doc1",
+                "document": "Definition of a *glarb-glarb*: A glarb-glarb is a ancient tool used by the ancestors of the inhabitants of planet Jiro to farm the land.",
+                "embedding": serde_json::Value::Null
+            })
+        );
+
+        Ok(())
+    }
+    .await);
 }
 
-async fn create_embeddings(model: openai::EmbeddingModel) -> Vec<(Word, OneOrMany<Embedding>)> {
+async fn create_embeddings(
+    model: openai::EmbeddingModel,
+) -> Result<Vec<(Word, OneOrMany<Embedding>)>> {
     let words = vec![
         Word {
             id: "doc0".to_string(),
@@ -235,10 +246,12 @@ async fn create_embeddings(model: openai::EmbeddingModel) -> Vec<(Word, OneOrMan
         }
     ];
 
-    EmbeddingsBuilder::new(model)
-        .documents(words)
-        .expect("")
+    Ok(EmbeddingsBuilder::new(model)
+        .documents(words)?
         .build()
-        .await
-        .expect("")
+        .await?)
+}
+
+fn assert_ok(result: Result<()>) {
+    assert!(result.is_ok(), "{result:?}");
 }

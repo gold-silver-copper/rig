@@ -15,11 +15,9 @@ async fn transcription_smoke() -> Result<()> {
     let model = client.transcription_model(mistral::VOXTRAL_MINI);
     let response = model
         .transcription_request()
-        .load_file(AUDIO_FIXTURE_PATH)
-        .expect("should be able to load audio fixture")
+        .load_file(AUDIO_FIXTURE_PATH)?
         .send()
-        .await
-        .expect("transcription should succeed");
+        .await?;
 
     assert_nonempty_response(&response.text);
     Ok(())

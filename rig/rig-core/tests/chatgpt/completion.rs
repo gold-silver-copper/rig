@@ -1,5 +1,6 @@
 //! ChatGPT completion normalization smoke tests.
 
+use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use rig::client::CompletionClient;
 use rig::completion::CompletionModel;
@@ -24,42 +25,35 @@ fn aggregated_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
 
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
-async fn default_instructions_fill_required_instructions() {
+async fn default_instructions_fill_required_instructions() -> Result<()> {
     let client = live_builder()
         .default_instructions("Always answer with the single word cedar.")
-        .build()
-        .expect("ChatGPT client should build");
+        .build()?;
 
     let agent = client.agent(LIVE_MODEL).build();
     let mut stream = agent
         .stream_prompt("Reply with the exact word from the instructions.")
         .await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("default-instructions streaming completion should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_contains_any_case_insensitive(&response, &["cedar"]);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
-async fn system_messages_are_lifted_into_instructions() {
-    let model = live_client().completion_model(LIVE_MODEL);
+async fn system_messages_are_lifted_into_instructions() -> Result<()> {
+    let model = live_client()?.completion_model(LIVE_MODEL);
 
     let request = model
         .completion_request("Reply with the exact word from the system message.")
         .message(Message::system("Always answer with the single word maple."))
         .build();
-    let mut stream = model
-        .stream(request)
-        .await
-        .expect("system-message stream should succeed");
+    let mut stream = model.stream(request).await?;
 
     let mut text = String::new();
     while let Some(item) = stream.next().await {
-        if let StreamedAssistantContent::Text(delta) =
-            item.expect("system-message stream item should succeed")
-        {
+        if let StreamedAssistantContent::Text(delta) = item? {
             text.push_str(&delta.text);
         }
     }
@@ -67,9 +61,10 @@ async fn system_messages_are_lifted_into_instructions() {
         text = aggregated_text(
             stream
                 .choice()
-                .expect("completed stream should expose an aggregated choice"),
+                .ok_or_else(|| anyhow!("completed stream should expose an aggregated choice"))?,
         );
     }
     assert_nonempty_response(&text);
     assert_contains_any_case_insensitive(&text, &["maple"]);
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! Shared helpers for Llamafile live tests.
 
+use anyhow::Result;
 use rig::providers::llamafile;
 use url::Url;
 
@@ -14,8 +15,8 @@ pub(super) fn model_name() -> String {
     std::env::var("LLAMAFILE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string())
 }
 
-pub(super) fn client() -> llamafile::Client {
-    llamafile::Client::from_url(&api_base_url()).expect("valid LLAMAFILE_API_BASE_URL")
+pub(super) fn client() -> Result<llamafile::Client> {
+    Ok(llamafile::Client::from_url(&api_base_url())?)
 }
 
 fn server_addr() -> Option<String> {

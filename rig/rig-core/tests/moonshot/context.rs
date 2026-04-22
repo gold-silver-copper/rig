@@ -19,10 +19,7 @@ async fn context_smoke() -> Result<()> {
         })
         .build();
 
-    let response = agent
-        .prompt(CONTEXT_PROMPT)
-        .await
-        .expect("context prompt should succeed");
+    let response = agent.prompt(CONTEXT_PROMPT).await?;
 
     assert_contains_any_case_insensitive(
         &response,

@@ -1,6 +1,6 @@
 //! Integration tests for llama.cpp extractor usage tracking.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::extractor::ExtractionResponse;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,13 +35,13 @@ Extract every field explicitly stated in the input text.
 Do not omit keys when the value is present in the text.
 Return the exact stated values through the submit tool.";
 
-fn assert_compatible_professions(left: Option<&str>, right: Option<&str>) {
+fn assert_compatible_professions(left: Option<&str>, right: Option<&str>) -> Result<()> {
     let left = left
-        .expect("profession should be present")
+        .ok_or_else(|| anyhow!("profession should be present"))?
         .trim()
         .to_ascii_lowercase();
     let right = right
-        .expect("profession should be present")
+        .ok_or_else(|| anyhow!("profession should be present"))?
         .trim()
         .to_ascii_lowercase();
 
@@ -49,13 +49,14 @@ fn assert_compatible_professions(left: Option<&str>, right: Option<&str>) {
         left == right || left.contains(&right) || right.contains(&left),
         "expected compatible professions, got {left:?} and {right:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
 async fn extract_backward_compatibility() -> Result<()> {
     let model = support::model_name();
-    let client = support::completions_client();
+    let client = support::completions_client()?;
     let extractor = client
         .extractor::<Person>(model)
         .preamble(EXTRACTOR_PREAMBLE)
@@ -77,7 +78,7 @@ async fn extract_backward_compatibility() -> Result<()> {
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
 async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
     let model = support::model_name();
-    let client = support::completions_client();
+    let client = support::completions_client()?;
     let extractor = client
         .extractor::<Person>(model)
         .preamble(EXTRACTOR_PREAMBLE)
@@ -104,7 +105,7 @@ async fn extract_with_chat_history_with_usage_works() -> Result<()> {
     use rig::message::Message;
 
     let model = support::model_name();
-    let client = support::completions_client();
+    let client = support::completions_client()?;
     let extractor = client
         .extractor::<Address>(model)
         .preamble(EXTRACTOR_PREAMBLE)
@@ -136,7 +137,7 @@ async fn extract_with_chat_history_with_usage_works() -> Result<()> {
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
 async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
     let model = support::model_name();
-    let client = support::completions_client();
+    let client = support::completions_client()?;
     let extractor = client
         .extractor::<Person>(model)
         .preamble(EXTRACTOR_PREAMBLE)
@@ -154,7 +155,7 @@ async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
     assert_compatible_professions(
         person.profession.as_deref(),
         response.data.profession.as_deref(),
-    );
+    )?;
     assert!(response.usage.total_tokens > 0, "usage should be populated");
 
     Ok(())
@@ -164,7 +165,7 @@ async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
 async fn usage_tracking_works_for_different_schemas() -> Result<()> {
     let model = support::model_name();
-    let client = support::completions_client();
+    let client = support::completions_client()?;
 
     let person_extractor = client
         .extractor::<Person>(model.clone())

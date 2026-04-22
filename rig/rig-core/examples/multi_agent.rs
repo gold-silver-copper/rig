@@ -29,10 +29,12 @@ impl<M: CompletionModel + 'static> Tool for TranslatorTool<M> {
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": Self::NAME,
-            "description": "Translate any text to English. If already in English, fix grammar and syntax issues.",
-            "parameters": {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description:
+                "Translate any text to English. If already in English, fix grammar and syntax issues."
+                    .to_string(),
+            parameters: json!({
                 "type": "object",
                 "properties": {
                     "prompt": {
@@ -41,9 +43,8 @@ impl<M: CompletionModel + 'static> Tool for TranslatorTool<M> {
                     },
                 },
                 "required": ["prompt"]
-            }
-        }))
-        .expect("Tool Definition")
+            }),
+        }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {

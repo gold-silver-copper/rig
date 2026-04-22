@@ -1,6 +1,6 @@
 //! Integration tests for OpenRouter extractor usage tracking.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::extractor::ExtractionResponse;
 use rig::message::Message;
@@ -25,9 +25,9 @@ struct Address {
     zip_code: Option<String>,
 }
 
-fn assert_compatible_professions(left: Option<&str>, right: &str) {
+fn assert_compatible_professions(left: Option<&str>, right: &str) -> Result<()> {
     let left = left
-        .expect("profession should be present")
+        .ok_or_else(|| anyhow!("profession should be present"))?
         .trim()
         .to_ascii_lowercase();
     let right = right.trim().to_ascii_lowercase();
@@ -36,6 +36,7 @@ fn assert_compatible_professions(left: Option<&str>, right: &str) {
         left == right || left.contains(&right) || right.contains(&left),
         "expected compatible professions, got {left:?} and {right:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -50,7 +51,7 @@ async fn extract_backward_compatibility() -> Result<()> {
 
     assert_eq!(person.name, Some("John Doe".to_string()));
     assert_eq!(person.age, Some(30));
-    assert_compatible_professions(person.profession.as_deref(), "software engineer");
+    assert_compatible_professions(person.profession.as_deref(), "software engineer")?;
 
     Ok(())
 }
@@ -67,7 +68,7 @@ async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
 
     assert_eq!(response.data.name, Some("Jane Smith".to_string()));
     assert_eq!(response.data.age, Some(45));
-    assert_compatible_professions(response.data.profession.as_deref(), "data scientist");
+    assert_compatible_professions(response.data.profession.as_deref(), "data scientist")?;
     assert!(response.usage.input_tokens > 0);
     assert!(response.usage.output_tokens > 0);
     assert!(response.usage.total_tokens > 0);
@@ -116,8 +117,8 @@ async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
     assert_eq!(response.data.name, Some("Bob Johnson".to_string()));
     assert_eq!(person.age, Some(55));
     assert_eq!(response.data.age, Some(55));
-    assert_compatible_professions(person.profession.as_deref(), "retired teacher");
-    assert_compatible_professions(response.data.profession.as_deref(), "retired teacher");
+    assert_compatible_professions(person.profession.as_deref(), "retired teacher")?;
+    assert_compatible_professions(response.data.profession.as_deref(), "retired teacher")?;
     assert!(response.usage.total_tokens > 0, "usage should be populated");
 
     Ok(())

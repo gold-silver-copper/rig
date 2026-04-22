@@ -104,15 +104,13 @@ async fn main() -> ExampleResult<()> {
 
     let oai_response = openai_agent
         .prompt("How much does 4oz of parmesan cheese weigh")
-        .await
-        .unwrap();
+        .await?;
 
     println!("Helpful: {oai_response}");
 
     let anthropic_response = anthropic_agent
         .prompt("How much does 4oz of parmesan cheese weigh")
-        .await
-        .unwrap();
+        .await?;
 
     println!("Unhelpful: {anthropic_response}");
 

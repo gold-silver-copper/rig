@@ -125,12 +125,12 @@ impl<E: EmbeddingModel + Send + Sync> VectorStoreIndex for RedisVectorStore<E> {
                 .await
                 .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
-            let metadata: T = attrs
-                .as_deref()
-                .map(serde_json::from_str)
-                .transpose()
-                .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?
-                .unwrap_or_else(|| serde_json::from_str("{}").unwrap());
+            let metadata: T = match attrs.as_deref() {
+                Some(attrs) => serde_json::from_str(attrs)
+                    .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?,
+                None => serde_json::from_str("{}")
+                    .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?,
+            };
 
             output.push((score, id, metadata));
         }

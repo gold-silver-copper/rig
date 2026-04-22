@@ -4,8 +4,7 @@ use rig::providers::openai;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let discord_bot_token = std::env::var("DISCORD_BOT_TOKEN")
-        .expect("DISCORD_BOT_TOKEN to be set as an environment variable");
+    let discord_bot_token = std::env::var("DISCORD_BOT_TOKEN")?;
     // Create OpenAI client
     let client = rig::providers::openai::Client::from_env()?;
 

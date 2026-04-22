@@ -1,13 +1,11 @@
 use rig::prelude::*;
 
-use rig::pipeline::agent_ops::extract;
-
 use rig::providers::openai;
 use rig::providers::openai::client::Client;
 
 use rig::{
-    parallel,
-    pipeline::{self, Op, passthrough},
+    pipeline::{self, TryOp, agent_ops},
+    try_parallel,
 };
 
 use schemars::JsonSchema;
@@ -49,31 +47,25 @@ async fn main() -> Result<(), anyhow::Error> {
         )
         .build();
 
-    let chain = pipeline::new()
-        .chain(parallel!(
-            passthrough(),
-            extract(manipulation_agent),
-            extract(depression_agent),
-            extract(intelligent_agent)
+    let statement = "I hate swimming. The water always gets in my eyes.";
+    let (manip_score, dep_score, int_score) = pipeline::new()
+        .chain(try_parallel!(
+            agent_ops::extract(manipulation_agent),
+            agent_ops::extract(depression_agent),
+            agent_ops::extract(intelligent_agent)
         ))
-        .map(|(statement, manip_score, dep_score, int_score)| {
-            format!(
-                "
-                Original statement: {statement}
-                Manipulation sentiment score: {}
-                Depression sentiment score: {}
-                Intelligence sentiment score: {}
-                ",
-                manip_score.unwrap().score,
-                dep_score.unwrap().score,
-                int_score.unwrap().score
-            )
-        });
+        .try_call(statement)
+        .await?;
 
-    // Prompt the agent and print the response
-    let response = chain
-        .call("I hate swimming. The water always gets in my eyes.")
-        .await;
+    let response = format!(
+        "
+        Original statement: {statement}
+        Manipulation sentiment score: {}
+        Depression sentiment score: {}
+        Intelligence sentiment score: {}
+        ",
+        manip_score.score, dep_score.score, int_score.score
+    );
 
     println!("Pipeline run: {response:?}");
 

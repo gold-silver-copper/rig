@@ -68,7 +68,7 @@ where
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
 async fn request_hook_records_prompt_and_response() -> Result<()> {
-    let agent = live_client()
+    let agent = live_client()?
         .agent(LIVE_MODEL)
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .build();

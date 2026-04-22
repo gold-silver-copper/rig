@@ -25,6 +25,31 @@ struct MathError;
 #[error("Math error")]
 struct InitError;
 
+fn arithmetic_tool_definition(
+    name: &str,
+    description: &str,
+    x_description: &str,
+    y_description: &str,
+) -> ToolDefinition {
+    ToolDefinition {
+        name: name.to_string(),
+        description: description.to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number",
+                    "description": x_description
+                },
+                "y": {
+                    "type": "number",
+                    "description": y_description
+                }
+            }
+        }),
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 struct Add;
 
@@ -35,24 +60,12 @@ impl Tool for Add {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "add",
-            "description": "Add x and y together",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The first number to add"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The second number to add"
-                    }
-                }
-            }
-        }))
-        .expect("Tool Definition")
+        arithmetic_tool_definition(
+            "add",
+            "Add x and y together",
+            "The first number to add",
+            "The second number to add",
+        )
     }
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let result = args.x + args.y;
@@ -79,24 +92,12 @@ impl Tool for Subtract {
     type Args = OperationArgs;
     type Output = i32;
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "subtract",
-            "description": "Subtract y from x (i.e.: x - y)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The number to subtract from"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The number to subtract"
-                    }
-                }
-            }
-        }))
-        .expect("Tool Definition")
+        arithmetic_tool_definition(
+            "subtract",
+            "Subtract y from x (i.e.: x - y)",
+            "The number to subtract from",
+            "The number to subtract",
+        )
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {

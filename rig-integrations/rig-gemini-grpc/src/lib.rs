@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 //! Google Gemini gRPC API client and Rig integration
 //!
 //! This module provides gRPC-based access to the Gemini API, offering better

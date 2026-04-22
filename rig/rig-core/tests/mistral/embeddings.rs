@@ -1,6 +1,6 @@
 //! Migrated from `examples/mistral_embeddings.rs`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rig::Embed;
 use rig::client::{EmbeddingsClient, ProviderClient};
 use rig::embeddings::EmbeddingsBuilder;
@@ -24,15 +24,12 @@ async fn derive_embeddings_and_vector_search() -> Result<()> {
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
         .document(Greetings {
             message: "Hello, world!".to_string(),
-        })
-        .expect("first document should build")
+        })?
         .document(Greetings {
             message: "Goodbye, world!".to_string(),
-        })
-        .expect("second document should build")
+        })?
         .build()
-        .await
-        .expect("embedding request should succeed");
+        .await?;
 
     let vector_store = InMemoryVectorStore::from_documents(embeddings);
     let index = vector_store.index(embedding_model);
@@ -40,14 +37,14 @@ async fn derive_embeddings_and_vector_search() -> Result<()> {
         .query("Hello world")
         .samples(1)
         .build();
-    let results = index
-        .top_n::<Greetings>(request)
-        .await
-        .expect("vector search should succeed");
+    let results = index.top_n::<Greetings>(request).await?;
+    let closest = results
+        .first()
+        .context("expected one vector search result")?;
 
     assert_eq!(results.len(), 1);
     assert!(
-        results[0].2.message.contains("Hello"),
+        closest.2.message.contains("Hello"),
         "expected the hello document to be the closest match"
     );
     Ok(())

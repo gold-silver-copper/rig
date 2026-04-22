@@ -29,10 +29,8 @@ async fn structured_output_prompt() -> Result<()> {
 
     let response = agent
         .prompt("Create a protagonist for a sci-fi novel set on Mars.")
-        .await
-        .expect("prompt should succeed");
-    let character: Character =
-        serde_json::from_str(&response).expect("schema response should deserialize");
+        .await?;
+    let character: Character = serde_json::from_str(&response)?;
 
     assert_nonempty_response(&character.name);
     assert_nonempty_response(&character.bio);

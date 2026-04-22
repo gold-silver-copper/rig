@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 use rig::embeddings::{Embedding, EmbeddingModel};
 use rig::vector_store::request::{FilterError, SearchFilter, VectorSearchRequest};
 use rig::vector_store::{InsertDocuments, VectorStoreError, VectorStoreIndex};

@@ -1,6 +1,6 @@
 //! DeepSeek extractor smoke test.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::deepseek;
 
@@ -14,20 +14,17 @@ async fn extractor_smoke() -> Result<()> {
         .extractor::<SmokePerson>(deepseek::DEEPSEEK_CHAT)
         .build();
 
-    let person = extractor
-        .extract(EXTRACTOR_TEXT)
-        .await
-        .expect("extractor request should succeed");
+    let person = extractor.extract(EXTRACTOR_TEXT).await?;
 
-    let first_name = person
-        .first_name
-        .as_deref()
-        .expect("first_name should be present");
-    let last_name = person
-        .last_name
-        .as_deref()
-        .expect("last_name should be present");
-    let job = person.job.as_deref().expect("job should be present");
+    let Some(first_name) = person.first_name.as_deref() else {
+        return Err(anyhow!("first_name should be present"));
+    };
+    let Some(last_name) = person.last_name.as_deref() else {
+        return Err(anyhow!("last_name should be present"));
+    };
+    let Some(job) = person.job.as_deref() else {
+        return Err(anyhow!("job should be present"));
+    };
 
     assert_nonempty_response(first_name);
     assert_nonempty_response(last_name);

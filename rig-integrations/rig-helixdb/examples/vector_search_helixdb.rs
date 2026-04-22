@@ -49,13 +49,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }];
 
     let documents = EmbeddingsBuilder::new(openai_model)
-        .documents(words)
-        .unwrap()
+        .documents(words)?
         .build()
-        .await
-        .expect("Failed to create embeddings");
+        .await?;
 
-    vector_store.insert_documents(documents).await.unwrap();
+    vector_store.insert_documents(documents).await?;
 
     let query = "What is a flurbo?";
     let vector_req = VectorSearchRequest::builder()
@@ -63,10 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .samples(5)
         .build();
 
-    let docs = vector_store
-        .top_n::<WordDefinition>(vector_req)
-        .await
-        .unwrap();
+    let docs = vector_store.top_n::<WordDefinition>(vector_req).await?;
 
     for doc in docs {
         println!(

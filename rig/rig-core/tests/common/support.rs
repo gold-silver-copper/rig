@@ -385,7 +385,11 @@ pub(crate) async fn collect_stream_final_response<R>(
         }
     }
 
-    Ok(final_response.expect("stream should yield a final response"))
+    assert!(
+        final_response.is_some(),
+        "stream should yield a final response"
+    );
+    Ok(final_response.unwrap_or_default())
 }
 
 pub(crate) async fn assert_stream_contains_zero_arg_tool_call_named<R>(
@@ -399,7 +403,16 @@ pub(crate) async fn assert_stream_contains_zero_arg_tool_call_named<R>(
     let mut saw_matching_tool_call = false;
 
     while let Some(chunk) = stream.next().await {
-        match chunk.expect("stream item should be ok") {
+        let error = chunk
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(chunk.is_ok(), "stream item should be ok: {error}");
+        let Ok(chunk) = chunk else {
+            return;
+        };
+        match chunk {
             StreamedAssistantContent::Final(_) => saw_final = true,
             StreamedAssistantContent::ToolCall { tool_call, .. } => {
                 if tool_call.function.name == expected_name {
@@ -629,8 +642,14 @@ pub(crate) fn assert_two_tool_roundtrip_contract(
         observation.tool_results
     );
 
-    let first_text = first_event_index(&observation.events, "text")
-        .expect("stream should emit final text after the tool roundtrip");
+    let first_text = first_event_index(&observation.events, "text");
+    assert!(
+        first_text.is_some(),
+        "stream should emit final text after the tool roundtrip"
+    );
+    let Some(first_text) = first_text else {
+        return;
+    };
     let tool_calls_before_text = event_count_before(&observation.events, "tool_call", first_text);
     let tool_results_before_text =
         event_count_before(&observation.events, "tool_result", first_text);
@@ -680,10 +699,14 @@ pub(crate) fn assert_two_tool_roundtrip_contract(
         );
     }
 
-    let response = observation
-        .final_response_text
-        .as_deref()
-        .expect("stream should produce a final response string");
+    let response = observation.final_response_text.as_deref();
+    assert!(
+        response.is_some(),
+        "stream should produce a final response string"
+    );
+    let Some(response) = response else {
+        return;
+    };
     assert_contains_all_case_insensitive(response, expected_markers);
 }
 
@@ -720,12 +743,27 @@ pub(crate) fn assert_tool_call_precedes_later_text(
         observation.tool_results
     );
 
-    let first_tool_call = first_event_index(&observation.events, "tool_call")
-        .expect("stream should emit a tool call event");
-    let first_tool_result = first_event_index(&observation.events, "tool_result")
-        .expect("stream should emit a tool result event");
-    let first_text = first_event_index(&observation.events, "text")
-        .expect("stream should emit text after tools");
+    let first_tool_call = first_event_index(&observation.events, "tool_call");
+    assert!(
+        first_tool_call.is_some(),
+        "stream should emit a tool call event"
+    );
+    let Some(first_tool_call) = first_tool_call else {
+        return;
+    };
+    let first_tool_result = first_event_index(&observation.events, "tool_result");
+    assert!(
+        first_tool_result.is_some(),
+        "stream should emit a tool result event"
+    );
+    let Some(first_tool_result) = first_tool_result else {
+        return;
+    };
+    let first_text = first_event_index(&observation.events, "text");
+    assert!(first_text.is_some(), "stream should emit text after tools");
+    let Some(first_text) = first_text else {
+        return;
+    };
 
     assert!(
         first_tool_call < first_text,
@@ -738,10 +776,14 @@ pub(crate) fn assert_tool_call_precedes_later_text(
         observation.events
     );
 
-    let response = observation
-        .final_response_text
-        .as_deref()
-        .expect("stream should produce a final response string");
+    let response = observation.final_response_text.as_deref();
+    assert!(
+        response.is_some(),
+        "stream should produce a final response string"
+    );
+    let Some(response) = response else {
+        return;
+    };
     assert_contains_all_case_insensitive(response, expected_markers);
 }
 
@@ -762,17 +804,19 @@ pub(crate) fn assert_raw_stream_tool_call_precedes_text(
     let record = observation
         .tool_call_records
         .iter()
-        .find(|record| record.name == expected_tool)
-        .unwrap_or_else(|| {
-            panic!(
-                "expected raw stream tool call for {expected_tool}, saw {:?}",
-                observation
-                    .tool_call_records
-                    .iter()
-                    .map(|record| record.name.as_str())
-                    .collect::<Vec<_>>()
-            )
-        });
+        .find(|record| record.name == expected_tool);
+    assert!(
+        record.is_some(),
+        "expected raw stream tool call for {expected_tool}, saw {:?}",
+        observation
+            .tool_call_records
+            .iter()
+            .map(|record| record.name.as_str())
+            .collect::<Vec<_>>()
+    );
+    let Some(_record) = record else {
+        return;
+    };
 
     assert!(
         first_event_index(&observation.events, "tool_call").is_some(),
@@ -781,16 +825,20 @@ pub(crate) fn assert_raw_stream_tool_call_precedes_text(
     );
 
     if let Some(first_text) = first_event_index(&observation.events, "text") {
-        let first_tool_call = first_event_index(&observation.events, "tool_call")
-            .expect("raw stream should emit a tool_call event");
+        let first_tool_call = first_event_index(&observation.events, "tool_call");
+        assert!(
+            first_tool_call.is_some(),
+            "raw stream should emit a tool_call event"
+        );
+        let Some(first_tool_call) = first_tool_call else {
+            return;
+        };
         assert!(
             first_tool_call < first_text,
             "expected the raw stream to emit a tool call before any text, saw events {:?}",
             observation.events
         );
     }
-
-    let _ = record;
 }
 
 pub(crate) fn assert_raw_stream_contains_distinct_tool_calls_before_text(

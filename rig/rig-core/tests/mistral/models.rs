@@ -8,12 +8,7 @@ use rig::providers::mistral;
 #[ignore = "requires MISTRAL_API_KEY"]
 async fn list_models_smoke() -> Result<()> {
     let client = mistral::Client::from_env()?;
-    let models = match client.list_models().await {
-        Ok(models) => models,
-        Err(error) => {
-            panic!("listing Mistral models should succeed\nDisplay: {error}\nDebug: {error:#?}")
-        }
-    };
+    let models = client.list_models().await?;
 
     assert!(
         !models.is_empty(),

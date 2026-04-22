@@ -21,8 +21,7 @@ use crate::support::{
 };
 
 fn streaming_tool_params() -> serde_json::Value {
-    serde_json::to_value(AdditionalParameters::default().with_config(GenerationConfig::default()))
-        .expect("Gemini additional params should serialize")
+    serde_json::json!(AdditionalParameters::default().with_config(GenerationConfig::default()))
 }
 
 #[tokio::test]
@@ -38,9 +37,7 @@ async fn streaming_tools_smoke() -> Result<()> {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
     Ok(())
@@ -57,7 +54,7 @@ async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
         .tool_choice(ToolChoice::Required)
         .additional_params(streaming_tool_params())
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
     Ok(())
@@ -130,9 +127,7 @@ async fn example_streaming_with_tools() -> Result<()> {
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
     Ok(())

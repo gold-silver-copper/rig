@@ -108,6 +108,13 @@ struct PermissionHook {
     last_result: Arc<Mutex<Option<String>>>,
 }
 
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 impl<M: CompletionModel> PromptHook<M> for PermissionHook {
     async fn on_tool_call(
         &self,
@@ -143,7 +150,7 @@ impl<M: CompletionModel> PromptHook<M> for PermissionHook {
             Ok(value) => value,
             Err(_) => result.to_string(),
         };
-        let mut last = self.last_result.lock().expect("lock last_result");
+        let mut last = lock_or_recover(&self.last_result);
         *last = Some(normalized);
 
         HookAction::cont()
@@ -155,7 +162,7 @@ impl<M: CompletionModel> PromptHook<M> for PermissionHook {
 async fn permission_control_prompt_example() -> Result<()> {
     let _cleanup = FileCleanup::new()?;
 
-    let agent = live_client()
+    let agent = live_client()?
         .agent(LIVE_LIGHT_MODEL)
         .preamble("You are a helpful assistant that can read files using different methods.")
         .tool(ReadFileHead)
@@ -178,7 +185,7 @@ async fn permission_control_prompt_example() -> Result<()> {
         .with_hook(hook)
         .await?;
 
-    let last = last_result.lock().expect("lock last_result").clone();
+    let last = lock_or_recover(&last_result).clone();
     assert_eq!(last.as_deref(), Some("hello world"));
     assert!(
         call_count.load(Ordering::SeqCst) >= 2,
@@ -192,7 +199,7 @@ async fn permission_control_prompt_example() -> Result<()> {
 async fn permission_control_streaming_example() -> Result<()> {
     let _cleanup = FileCleanup::new()?;
 
-    let agent = live_client()
+    let agent = live_client()?
         .agent(LIVE_LIGHT_MODEL)
         .preamble("You are a helpful assistant that can read files using different methods.")
         .tool(ReadFileHead)
@@ -216,7 +223,7 @@ async fn permission_control_streaming_example() -> Result<()> {
         .await;
 
     let final_response = stream_to_stdout(&mut stream).await?;
-    let last = last_result.lock().expect("lock last_result").clone();
+    let last = lock_or_recover(&last_result).clone();
     assert_nonempty_response(final_response.response());
     assert!(
         final_response

@@ -12,8 +12,7 @@ use crate::support::{LOADERS_GLOB, LOADERS_PROMPT, assert_loader_answer_is_relev
 #[ignore = "requires HUGGINGFACE_API_KEY"]
 async fn loaders_smoke() -> Result<()> {
     let client = huggingface::Client::from_env()?;
-    let examples = FileLoader::with_glob(LOADERS_GLOB)
-        .expect("examples glob should parse")
+    let examples = FileLoader::with_glob(LOADERS_GLOB)?
         .read_with_path()
         .ignore_errors()
         .into_iter();
@@ -27,10 +26,7 @@ async fn loaders_smoke() -> Result<()> {
         )
         .build();
 
-    let response = agent
-        .prompt(LOADERS_PROMPT)
-        .await
-        .expect("loader prompt should succeed");
+    let response = agent.prompt(LOADERS_PROMPT).await?;
 
     assert_loader_answer_is_relevant(&response);
     Ok(())

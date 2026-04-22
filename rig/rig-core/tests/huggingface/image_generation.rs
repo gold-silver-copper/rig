@@ -20,8 +20,7 @@ async fn image_generation_smoke() -> Result<()> {
         .width(1024)
         .height(1024)
         .send()
-        .await
-        .expect("image generation should succeed");
+        .await?;
 
     assert_nonempty_bytes(&response.image);
     Ok(())

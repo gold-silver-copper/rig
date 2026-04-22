@@ -8,12 +8,7 @@ use rig::providers::anthropic;
 #[ignore = "requires ANTHROPIC_API_KEY"]
 async fn list_models_smoke() -> Result<()> {
     let client = anthropic::Client::from_env()?;
-    let models = match client.list_models().await {
-        Ok(models) => models,
-        Err(error) => {
-            panic!("listing Anthropic models should succeed\nDisplay: {error}\nDebug: {error:#?}")
-        }
-    };
+    let models = client.list_models().await?;
 
     assert!(
         !models.is_empty(),

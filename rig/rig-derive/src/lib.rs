@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 extern crate proc_macro;
 
 use convert_case::{Case, Casing};

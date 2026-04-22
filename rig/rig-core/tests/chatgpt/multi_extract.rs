@@ -29,7 +29,7 @@ struct Sentiment {
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
 async fn batch_multi_extract_chain() -> Result<()> {
-    let client = live_client();
+    let client = live_client()?;
     let names_extractor = client
         .extractor::<Names>(LIVE_MODEL)
         .preamble("Extract names from the given text.")

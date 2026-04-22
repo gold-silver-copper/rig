@@ -19,9 +19,7 @@ async fn streaming_smoke() -> Result<()> {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_nonempty_response(&response);
     Ok(())
@@ -30,12 +28,11 @@ async fn streaming_smoke() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
 async fn together_subprovider_streaming() -> Result<()> {
-    let api_key = std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY must be set");
+    let api_key = std::env::var("HUGGINGFACE_API_KEY")?;
     let agent = huggingface::Client::builder()
         .api_key(&api_key)
         .subprovider(SubProvider::Together)
-        .build()
-        .expect("client should build")
+        .build()?
         .agent("deepseek-ai/DeepSeek-R1")
         .preamble("Be precise and concise.")
         .temperature(0.5)
@@ -44,9 +41,7 @@ async fn together_subprovider_streaming() -> Result<()> {
     let mut stream = agent
         .stream_prompt("When and where and what type is the next solar eclipse?")
         .await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_nonempty_response(&response);
     Ok(())

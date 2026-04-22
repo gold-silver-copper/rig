@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Add 100 and 200",
     ] {
         println!("User: {prompt}");
-        println!("Agent: {}", calculator_agent.prompt(prompt).await.unwrap());
+        println!("Agent: {}", calculator_agent.prompt(prompt).await?);
     }
 
     Ok(())

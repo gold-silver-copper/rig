@@ -69,7 +69,7 @@ impl Tool for WeatherTool {
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
 async fn prompt_typed_with_tool_call_roundtrip() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let agent = live_client()
+    let agent = live_client()?
         .agent(live_responses_model())
         .preamble(
             "You are a helpful assistant. When asked about weather, use the weather tool to get the current conditions. \

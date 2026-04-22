@@ -1,6 +1,6 @@
 //! Groq streaming tools smoke test.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
@@ -33,7 +33,7 @@ async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
         .tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
     Ok(())
@@ -51,13 +51,7 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() -> Result<()>
         .tool(BetaSignal.definition(String::new()).await)
         .build();
 
-    let observation = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw stream should start"),
-    )
-    .await;
+    let observation = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_contains_distinct_tool_calls_before_text(
         &observation,
@@ -126,13 +120,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() -> Result<()> {
         .tool(AlphaSignal.definition(String::new()).await)
         .build();
 
-    let first_turn = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw stream should start"),
-    )
-    .await;
+    let first_turn = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_tool_call_precedes_text(&first_turn, "lookup_harbor_label");
 
@@ -141,7 +129,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() -> Result<()> {
         .iter()
         .find(|tool_call| tool_call.function.name == "lookup_harbor_label")
         .cloned()
-        .expect("raw stream should yield lookup_harbor_label");
+        .ok_or_else(|| anyhow!("raw stream should yield lookup_harbor_label"))?;
     let assistant_message = Message::Assistant {
         id: None,
         content: OneOrMany::one(AssistantContent::ToolCall(tool_call.clone())),
@@ -157,13 +145,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() -> Result<()> {
         .message(tool_result_message)
         .build();
 
-    let second_turn = collect_raw_stream_observation(
-        model
-            .stream(followup_request)
-            .await
-            .expect("raw followup stream should start"),
-    )
-    .await;
+    let second_turn = collect_raw_stream_observation(model.stream(followup_request).await?).await;
 
     assert!(
         second_turn.tool_calls.is_empty(),

@@ -1,5 +1,6 @@
 //! Migrated from `examples/huggingface_subproviders.rs`.
 
+use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
 use rig::providers::huggingface::{self, SubProvider};
@@ -8,8 +9,8 @@ use crate::support::{Adder, Subtract, assert_mentions_expected_number};
 
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
-async fn tool_prompt_across_subproviders() {
-    let api_key = std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY must be set");
+async fn tool_prompt_across_subproviders() -> Result<()> {
+    let api_key = std::env::var("HUGGINGFACE_API_KEY")?;
     let cases = [
         ("deepseek-ai/DeepSeek-V3", SubProvider::Together),
         (
@@ -23,8 +24,7 @@ async fn tool_prompt_across_subproviders() {
         let client = huggingface::Client::builder()
             .api_key(&api_key)
             .subprovider(subprovider)
-            .build()
-            .expect("client should build");
+            .build()?;
         let agent = client
             .agent(model)
             .preamble(
@@ -36,10 +36,8 @@ async fn tool_prompt_across_subproviders() {
             .tool(Subtract)
             .build();
 
-        let response = agent
-            .prompt("Calculate 2 - 5")
-            .await
-            .expect("prompt should succeed");
+        let response = agent.prompt("Calculate 2 - 5").await?;
         assert_mentions_expected_number(&response, -3);
     }
+    Ok(())
 }

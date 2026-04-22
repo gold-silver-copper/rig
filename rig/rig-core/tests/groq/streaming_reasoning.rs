@@ -20,9 +20,7 @@ async fn parsed_reasoning_stream() -> Result<()> {
         .build();
 
     let mut stream = agent.stream_prompt("Entertain me!").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_nonempty_response(&response);
     Ok(())

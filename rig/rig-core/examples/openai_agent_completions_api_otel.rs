@@ -50,7 +50,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .preamble("You are a helpful assistant")
         .build();
 
-    let res = agent.prompt("Hello world!").await.unwrap();
+    let res = agent.prompt("Hello world!").await?;
 
     println!("GPT-4o: {res}");
 

@@ -69,8 +69,7 @@ async fn nonstreaming() -> Result<()> {
 
     let result = agent
         .chat(reasoning::TOOL_USER_PROMPT, Vec::<Message>::new())
-        .await
-        .expect("[anthropic] Non-streaming chat failed - likely 400 from dropped reasoning");
+        .await?;
 
     reasoning::assert_nonstreaming_universal(&result, &call_count, "anthropic");
     Ok(())

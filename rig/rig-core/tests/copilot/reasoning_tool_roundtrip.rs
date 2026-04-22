@@ -1,5 +1,6 @@
 //! Copilot reasoning-enabled tool roundtrip tests.
 
+use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -12,9 +13,9 @@ use crate::reasoning::{self, WeatherTool};
 
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
-async fn streaming() {
+async fn streaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let agent = live_client()
+    let agent = live_client()?
         .agent(live_responses_model())
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
@@ -39,13 +40,14 @@ async fn streaming() {
             stats.reasoning_content_types
         );
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
-async fn nonstreaming() {
+async fn nonstreaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let agent = live_client()
+    let agent = live_client()?
         .agent(live_responses_model())
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
@@ -57,8 +59,8 @@ async fn nonstreaming() {
 
     let result = agent
         .chat(reasoning::TOOL_USER_PROMPT, Vec::<Message>::new())
-        .await
-        .expect("[copilot] Non-streaming chat failed");
+        .await?;
 
     reasoning::assert_nonstreaming_universal(&result, &call_count, "copilot");
+    Ok(())
 }

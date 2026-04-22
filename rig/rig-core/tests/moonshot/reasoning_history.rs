@@ -23,14 +23,13 @@ fn response_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
 #[ignore = "requires MOONSHOT_API_KEY"]
 async fn assistant_reasoning_content_roundtrips_in_history() -> Result<()> {
     let model = moonshot::Client::from_env()?.completion_model(moonshot::KIMI_K2_5);
-    let assistant = Message::Assistant {
-        id: None,
-        content: OneOrMany::many(vec![
-            AssistantContent::Reasoning(Reasoning::new("Remember the chosen color.")),
-            AssistantContent::text("Understood. I will remember teal."),
-        ])
-        .expect("assistant content"),
+    let Some(content) = OneOrMany::from_non_empty_iter(vec![
+        AssistantContent::Reasoning(Reasoning::new("Remember the chosen color.")),
+        AssistantContent::text("Understood. I will remember teal."),
+    ]) else {
+        return Err(anyhow::anyhow!("assistant content should not be empty"));
     };
+    let assistant = Message::Assistant { id: None, content };
 
     let response = model
         .completion(
@@ -40,8 +39,7 @@ async fn assistant_reasoning_content_roundtrips_in_history() -> Result<()> {
                 .message(assistant)
                 .build(),
         )
-        .await
-        .expect("reasoning-history completion should succeed");
+        .await?;
 
     let text = response_text(&response.choice);
     assert_nonempty_response(&text);

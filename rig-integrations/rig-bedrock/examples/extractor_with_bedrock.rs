@@ -25,9 +25,6 @@ async fn main() -> Result<(), anyhow::Error> {
         .extract("Hello my name is John Doe! I am a software engineer.")
         .await?;
 
-    info!(
-        "AWS Bedrock: {}",
-        serde_json::to_string_pretty(&person).unwrap()
-    );
+    info!("AWS Bedrock: {}", serde_json::to_string_pretty(&person)?);
     Ok(())
 }

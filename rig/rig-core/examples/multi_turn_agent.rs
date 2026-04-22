@@ -7,6 +7,31 @@ use rig::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+fn arithmetic_tool_definition(
+    name: &str,
+    description: &str,
+    x_description: &str,
+    y_description: &str,
+) -> ToolDefinition {
+    ToolDefinition {
+        name: name.to_string(),
+        description: description.to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number",
+                    "description": x_description
+                },
+                "y": {
+                    "type": "number",
+                    "description": y_description
+                }
+            }
+        }),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -73,24 +98,12 @@ impl Tool for Add {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "add",
-            "description": "Add x and y together",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The first number to add"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The second number to add"
-                    }
-                }
-            }
-        }))
-        .expect("Tool Definition")
+        arithmetic_tool_definition(
+            "add",
+            "Add x and y together",
+            "The first number to add",
+            "The second number to add",
+        )
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -109,24 +122,12 @@ impl Tool for Subtract {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "subtract",
-            "description": "Subtract y from x (i.e.: x - y)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The number to subtract from"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The number to subtract"
-                    }
-                }
-            }
-        }))
-        .expect("Tool Definition")
+        arithmetic_tool_definition(
+            "subtract",
+            "Subtract y from x (i.e.: x - y)",
+            "The number to subtract from",
+            "The number to subtract",
+        )
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -145,24 +146,12 @@ impl Tool for Multiply {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "multiply",
-            "description": "Compute the product of x and y (i.e.: x * y)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The first factor in the product"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The second factor in the product"
-                    }
-                }
-            }
-        }))
-        .expect("Tool Definition")
+        arithmetic_tool_definition(
+            "multiply",
+            "Compute the product of x and y (i.e.: x * y)",
+            "The first factor in the product",
+            "The second factor in the product",
+        )
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -181,24 +170,12 @@ impl Tool for Divide {
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        serde_json::from_value(json!({
-            "name": "divide",
-            "description": "Compute the Quotient of x and y (i.e.: x / y). Useful for ratios.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The Dividend of the division. The number being divided"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The Divisor of the division. The number by which the dividend is being divided"
-                    }
-                }
-            }
-        }))
-        .expect("Tool Definition")
+        arithmetic_tool_definition(
+            "divide",
+            "Compute the Quotient of x and y (i.e.: x / y). Useful for ratios.",
+            "The Dividend of the division. The number being divided",
+            "The Divisor of the division. The number by which the dividend is being divided",
+        )
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {

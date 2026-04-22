@@ -15,8 +15,7 @@ async fn anthropic_compatible_completion_smoke() -> Result<()> {
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
-        .await
-        .expect("MiniMax Anthropic-compatible completion should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
     Ok(())

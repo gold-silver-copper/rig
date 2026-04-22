@@ -15,10 +15,7 @@ async fn completion_smoke() -> Result<()> {
     let client = groq::Client::from_env()?;
     let agent = client.agent(AGENT_MODEL).preamble(BASIC_PREAMBLE).build();
 
-    let response = agent
-        .prompt(BASIC_PROMPT)
-        .await
-        .expect("completion should succeed");
+    let response = agent.prompt(BASIC_PROMPT).await?;
 
     assert_nonempty_response(&response);
     Ok(())

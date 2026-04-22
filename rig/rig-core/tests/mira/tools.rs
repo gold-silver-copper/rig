@@ -20,10 +20,7 @@ async fn tools_smoke() -> Result<()> {
         .tool(Subtract)
         .build();
 
-    let response = agent
-        .prompt(TOOLS_PROMPT)
-        .await
-        .expect("tool prompt should succeed");
+    let response = agent.prompt(TOOLS_PROMPT).await?;
 
     assert_mentions_expected_number(&response, -3);
     Ok(())

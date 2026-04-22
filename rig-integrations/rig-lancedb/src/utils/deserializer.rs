@@ -63,7 +63,7 @@ impl RecordBatchDeserializer for RecordBatch {
             .map(type_matcher)
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok((0..self.num_rows())
+        (0..self.num_rows())
             .map(|row_i| {
                 columns.iter().enumerate().try_fold(
                     serde_json::Map::new(),
@@ -88,7 +88,7 @@ impl RecordBatchDeserializer for RecordBatch {
                     row.map(Value::Object)
                 },
             )
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 

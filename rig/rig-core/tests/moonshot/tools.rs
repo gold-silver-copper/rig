@@ -21,11 +21,7 @@ async fn required_tool_choice_agent_roundtrip() -> Result<()> {
         .tool(Subtract)
         .build();
 
-    let response = agent
-        .prompt(TOOLS_PROMPT)
-        .max_turns(3)
-        .await
-        .expect("required-tool-choice prompt should succeed");
+    let response = agent.prompt(TOOLS_PROMPT).max_turns(3).await?;
 
     assert_mentions_expected_number(&response, -3);
     Ok(())

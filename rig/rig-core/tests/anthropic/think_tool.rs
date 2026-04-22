@@ -27,8 +27,7 @@ async fn think_tool_menu_planning() -> Result<()> {
              1 person with a gluten allergy. Create appetizers, mains, and desserts.",
         )
         .max_turns(10)
-        .await
-        .expect("think tool prompt should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
     assert_contains_any_case_insensitive(&response, &["appetizer", "main", "dessert"]);

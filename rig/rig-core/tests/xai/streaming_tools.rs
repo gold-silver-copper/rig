@@ -1,6 +1,6 @@
 //! xAI streaming tools smoke test.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{CompletionModel, ToolDefinition};
@@ -69,7 +69,7 @@ async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
         .tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
     Ok(())
@@ -110,13 +110,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() -> Re
         .tool(StatusWordTool.definition(String::new()).await)
         .build();
 
-    let first_turn = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw xAI responses stream should start"),
-    )
-    .await;
+    let first_turn = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_tool_call_precedes_text(&first_turn, "get_status_word");
 
@@ -125,7 +119,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() -> Re
         .iter()
         .find(|tool_call| tool_call.function.name == "get_status_word")
         .cloned()
-        .expect("raw xAI responses stream should yield get_status_word");
+        .context("raw xAI responses stream should yield get_status_word")?;
     let assistant_message = Message::Assistant {
         id: None,
         content: OneOrMany::one(AssistantContent::ToolCall(tool_call.clone())),
@@ -139,13 +133,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() -> Re
         .message(tool_result_message)
         .build();
 
-    let second_turn = collect_raw_stream_observation(
-        model
-            .stream(followup_request)
-            .await
-            .expect("raw xAI followup stream should start"),
-    )
-    .await;
+    let second_turn = collect_raw_stream_observation(model.stream(followup_request).await?).await;
 
     assert!(
         second_turn.tool_calls.is_empty(),

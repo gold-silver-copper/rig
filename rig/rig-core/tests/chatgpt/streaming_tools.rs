@@ -1,5 +1,6 @@
 //! ChatGPT streaming tools coverage.
 
+use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::streaming::StreamingPrompt;
 
@@ -11,8 +12,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
-async fn streaming_tools_smoke() {
-    let agent = live_client()
+async fn streaming_tools_smoke() -> Result<()> {
+    let agent = live_client()?
         .agent(LIVE_MODEL)
         .preamble(STREAMING_TOOLS_PREAMBLE)
         .tool(Adder)
@@ -20,17 +21,16 @@ async fn streaming_tools_smoke() {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
-async fn example_streaming_with_tools() {
-    let agent = live_client()
+async fn example_streaming_with_tools() -> Result<()> {
+    let agent = live_client()?
         .agent(LIVE_MODEL)
         .preamble(
             "You are a calculator here to help the user perform arithmetic operations. \
@@ -42,9 +42,8 @@ async fn example_streaming_with_tools() {
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tools prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

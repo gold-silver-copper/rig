@@ -141,7 +141,10 @@ impl<M: CompletionModel> PromptHook<M> for PermissionHook {
     ) -> HookAction {
         let normalized =
             serde_json::from_str::<String>(result).unwrap_or_else(|_| result.to_string());
-        let mut last = self.last_result.lock().expect("lock last_result");
+        let mut last = self
+            .last_result
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *last = Some(normalized);
 
         HookAction::cont()
@@ -176,7 +179,10 @@ async fn permission_control_prompt_example() -> Result<()> {
         .with_hook(hook)
         .await?;
 
-    let last = last_result.lock().expect("lock last_result").clone();
+    let last = last_result
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     assert_eq!(last.as_deref(), Some("hello world"));
     assert_eq!(call_count.load(Ordering::SeqCst), 2);
 
@@ -212,7 +218,10 @@ async fn permission_control_streaming_example() -> Result<()> {
         .await;
 
     let final_response = stream_to_stdout(&mut stream).await?;
-    let last = last_result.lock().expect("lock last_result").clone();
+    let last = last_result
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     assert_nonempty_response(final_response.response());
     assert!(
         final_response

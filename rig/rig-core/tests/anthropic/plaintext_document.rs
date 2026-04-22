@@ -1,6 +1,6 @@
 //! Migrated from `examples/anthropic_plaintext_document.rs`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
@@ -41,10 +41,7 @@ async fn plaintext_document_prompt() -> Result<()> {
         media_type: Some(DocumentMediaType::TXT),
         additional_params: None,
     };
-    let response = agent
-        .prompt(document)
-        .await
-        .expect("document prompt should succeed");
+    let response = agent.prompt(document).await?;
 
     assert_nonempty_response(&response);
     assert_contains_any_case_insensitive(&response, &["safety", "speed", "concurrency"]);
@@ -60,17 +57,13 @@ async fn plaintext_document_with_instruction() -> Result<()> {
         .preamble("You are a helpful assistant that analyzes documents.")
         .temperature(0.5)
         .build();
+    let content = OneOrMany::from_non_empty_iter(vec![
+        UserContent::document(rust_document(), Some(DocumentMediaType::TXT)),
+        UserContent::text("List the three main goals of Rust mentioned in this document."),
+    ])
+    .context("content should be non-empty")?;
 
-    let response = agent
-        .prompt(Message::User {
-            content: OneOrMany::many(vec![
-                UserContent::document(rust_document(), Some(DocumentMediaType::TXT)),
-                UserContent::text("List the three main goals of Rust mentioned in this document."),
-            ])
-            .expect("content should be non-empty"),
-        })
-        .await
-        .expect("instruction prompt should succeed");
+    let response = agent.prompt(Message::User { content }).await?;
 
     assert_contains_any_case_insensitive(&response, &["safety", "speed", "concurrency"]);
     Ok(())

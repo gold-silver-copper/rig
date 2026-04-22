@@ -1,3 +1,4 @@
+use anyhow::Context;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3vectors::Client;
 use aws_sdk_s3vectors::config::Credentials;
@@ -22,9 +23,9 @@ struct Word {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let access_key_id = env::var("AWS_ACCESS_KEY_ID")
-        .expect("AWS_ACCESS_KEY_ID does not exist as an environment variable");
+        .context("AWS_ACCESS_KEY_ID does not exist as an environment variable")?;
     let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")
-        .expect("AWS_ACCESS_KEY_ID does not exist as an environment variable");
+        .context("AWS_SECRET_ACCESS_KEY does not exist as an environment variable")?;
 
     let credentials = Credentials::new(access_key_id, secret_access_key, None, None, "test");
     let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");

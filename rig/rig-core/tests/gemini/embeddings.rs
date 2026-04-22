@@ -24,8 +24,7 @@ async fn embeddings_smoke() -> Result<()> {
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))
-        .await
-        .expect("embedding request should succeed");
+        .await?;
 
     assert_embeddings_nonempty_and_consistent(&embeddings, EMBEDDING_INPUTS.len());
     Ok(())
@@ -40,15 +39,12 @@ async fn derive_document_embeddings() -> Result<()> {
         .embeddings(gemini::embedding::EMBEDDING_001)?
         .document(Greetings {
             message: "Hello, world!".to_string(),
-        })
-        .expect("first document should build")
+        })?
         .document(Greetings {
             message: "Goodbye, world!".to_string(),
-        })
-        .expect("second document should build")
+        })?
         .build()
-        .await
-        .expect("embedding request should succeed");
+        .await?;
 
     assert_eq!(embeddings.len(), 2);
     for (_document, embeddings_for_document) in embeddings {

@@ -17,12 +17,12 @@ async fn streaming_pause_and_resume() -> Result<()> {
         .preamble("You are a helpful AI assistant. Provide concise explanations.".to_string())
         .temperature(0.7)
         .build();
-    let mut stream = model.stream(request).await.expect("stream should start");
+    let mut stream = model.stream(request).await?;
 
     let mut chunk_count = 0usize;
     let mut paused_once = false;
     while let Some(chunk) = stream.next().await {
-        match chunk.expect("stream chunk should succeed") {
+        match chunk? {
             StreamedAssistantContent::Text(text) => {
                 chunk_count += usize::from(!text.text.is_empty());
             }
@@ -34,9 +34,9 @@ async fn streaming_pause_and_resume() -> Result<()> {
         }
 
         if !paused_once && chunk_count > 0 {
-            stream.pause().expect("pause should succeed");
+            stream.pause()?;
             sleep(Duration::from_millis(50)).await;
-            stream.resume().expect("resume should succeed");
+            stream.resume()?;
             paused_once = true;
         }
     }

@@ -17,9 +17,7 @@ async fn streaming_prompt_smoke() -> Result<()> {
         .build();
 
     let mut stream = agent.stream_prompt("Tell me a joke").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_nonempty_response(&response);
     Ok(())

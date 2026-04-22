@@ -1,6 +1,6 @@
 //! xAI extractor smoke test.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::xai;
 
@@ -12,22 +12,23 @@ async fn extractor_smoke() -> Result<()> {
     let client = xai::Client::from_env()?;
     let extractor = client.extractor::<SmokePerson>(xai::GROK_3_MINI).build();
 
-    let response = extractor
-        .extract_with_usage(EXTRACTOR_TEXT)
-        .await
-        .expect("extractor request should succeed");
+    let response = extractor.extract_with_usage(EXTRACTOR_TEXT).await?;
 
     let first_name = response
         .data
         .first_name
         .as_deref()
-        .expect("first_name should be present");
+        .context("first_name should be present")?;
     let last_name = response
         .data
         .last_name
         .as_deref()
-        .expect("last_name should be present");
-    let job = response.data.job.as_deref().expect("job should be present");
+        .context("last_name should be present")?;
+    let job = response
+        .data
+        .job
+        .as_deref()
+        .context("job should be present")?;
 
     assert_nonempty_response(first_name);
     assert_nonempty_response(last_name);

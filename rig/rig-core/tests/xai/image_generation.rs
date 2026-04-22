@@ -23,8 +23,7 @@ async fn image_generation_smoke() -> Result<()> {
             "aspect_ratio": "4:3",
         }))
         .send()
-        .await
-        .expect("image generation should succeed");
+        .await?;
 
     assert_nonempty_bytes(&response.image);
     Ok(())

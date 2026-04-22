@@ -15,8 +15,7 @@ async fn embeddings_smoke() -> Result<()> {
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))
-        .await
-        .expect("embedding request should succeed");
+        .await?;
 
     assert_embeddings_nonempty_and_consistent(&embeddings, EMBEDDING_INPUTS.len());
     Ok(())

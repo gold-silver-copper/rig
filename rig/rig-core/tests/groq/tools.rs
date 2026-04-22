@@ -26,8 +26,7 @@ async fn tools_smoke() -> Result<()> {
     let response = agent
         .prompt("Calculate 2 - 5. Call `subtract` exactly once, then answer with just the result.")
         .max_turns(3)
-        .await
-        .expect("tool prompt should succeed");
+        .await?;
 
     assert_mentions_expected_number(&response, -3);
     Ok(())

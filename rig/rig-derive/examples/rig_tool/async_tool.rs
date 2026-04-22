@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Tool definition:");
     println!(
         "ASYNCOPERATION: {}",
-        serde_json::to_string_pretty(&AsyncOperation.definition(String::default()).await).unwrap()
+        serde_json::to_string_pretty(&AsyncOperation.definition(String::default()).await)?
     );
 
     for prompt in [
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Process the text 'error handling' with a delay of 'not a number'",
     ] {
         println!("User: {prompt}");
-        println!("Agent: {}", async_agent.prompt(prompt).await.unwrap());
+        println!("Agent: {}", async_agent.prompt(prompt).await?);
     }
 
     Ok(())

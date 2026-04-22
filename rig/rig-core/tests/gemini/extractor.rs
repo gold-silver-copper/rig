@@ -1,6 +1,6 @@
 //! Gemini extractor coverage, including the migrated example path.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::gemini;
 use rig::providers::gemini::completion::gemini_api_types::{
@@ -27,26 +27,20 @@ async fn extractor_smoke() -> Result<()> {
     let client = gemini::Client::from_env()?;
     let extractor = client
         .extractor::<SmokePerson>(gemini::completion::GEMINI_2_5_FLASH)
-        .additional_params(
-            serde_json::to_value(additional_params)
-                .expect("Gemini additional params should serialize"),
-        )
+        .additional_params(serde_json::json!(additional_params))
         .build();
 
-    let person = extractor
-        .extract(EXTRACTOR_TEXT)
-        .await
-        .expect("extractor request should succeed");
+    let person = extractor.extract(EXTRACTOR_TEXT).await?;
 
-    let first_name = person
-        .first_name
-        .as_deref()
-        .expect("first_name should be present");
-    let last_name = person
-        .last_name
-        .as_deref()
-        .expect("last_name should be present");
-    let job = person.job.as_deref().expect("job should be present");
+    let Some(first_name) = person.first_name.as_deref() else {
+        return Err(anyhow!("first_name should be present"));
+    };
+    let Some(last_name) = person.last_name.as_deref() else {
+        return Err(anyhow!("last_name should be present"));
+    };
+    let Some(job) = person.job.as_deref() else {
+        return Err(anyhow!("job should be present"));
+    };
 
     assert_nonempty_response(first_name);
     assert_nonempty_response(last_name);
@@ -61,13 +55,12 @@ async fn extractor_with_additional_params() -> Result<()> {
     let client = gemini::Client::from_env()?;
     let extractor = client
         .extractor::<Person>(gemini::completion::GEMINI_2_5_FLASH)
-        .additional_params(serde_json::to_value(params).expect("params should serialize"))
+        .additional_params(serde_json::json!(params))
         .build();
 
     let person = extractor
         .extract("Hello my name is John Doe! I am a software engineer.")
-        .await
-        .expect("extract should succeed");
+        .await?;
 
     assert_eq!(person.first_name.as_deref(), Some("John"));
     assert_eq!(person.last_name.as_deref(), Some("Doe"));

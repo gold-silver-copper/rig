@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use rig::vector_store::request::{SearchFilter, VectorSearchRequest};
 use serde_json::json;
 
@@ -60,18 +61,19 @@ fn register_sqlite_vec_extension() {
     }
 }
 
-async fn open_test_connection(name: &str) -> Connection {
+async fn open_test_connection(name: &str) -> Result<Connection> {
     Connection::open(format!("file:{name}?mode=memory"))
         .await
-        .expect("Could not initialize SQLite connection")
+        .context("could not initialize SQLite connection")
 }
 
 #[tokio::test]
 async fn vector_search_test() {
-    register_sqlite_vec_extension();
+    assert_ok(async {
+        register_sqlite_vec_extension();
 
-    let conn = open_test_connection("vector_search_test").await;
-    let server = httpmock::MockServer::start();
+        let conn = open_test_connection("vector_search_test").await?;
+        let server = httpmock::MockServer::start();
 
     server.mock(|when, then| {
         when.method(httpmock::Method::POST)
@@ -145,27 +147,24 @@ async fn vector_search_test() {
             ));
     });
 
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
-    let model = openai_client
-        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
-        .expect("embedding model should build");
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(server.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+            .context("embedding model should build")?;
 
-    let embeddings = create_embeddings(model.clone()).await;
+        let embeddings = create_embeddings(model.clone()).await?;
 
     // Initialize SQLite vector store
-    let vector_store = SqliteVectorStore::new(conn, &model)
-        .await
-        .expect("Could not initialize SQLite vector store");
+        let vector_store = SqliteVectorStore::new(conn, &model)
+            .await
+            .context("could not initialize SQLite vector store")?;
 
     // Add embeddings to vector store
-    vector_store
-        .add_rows(embeddings)
-        .await
-        .expect("Could not add embeddings to vector store");
+        vector_store.add_rows(embeddings).await?;
 
     // Create a vector index on our vector store
     let index = vector_store.index(model);
@@ -178,16 +177,21 @@ async fn vector_search_test() {
         .build();
 
     // Query the index
-    let results = index.top_n::<serde_json::Value>(req).await.expect("");
-    assert!(results.is_empty());
+        let results = index.top_n::<serde_json::Value>(req).await?;
+        assert!(results.is_empty());
+
+        Ok(())
+    }
+    .await);
 }
 
 #[tokio::test]
 async fn insert_documents_test() {
-    register_sqlite_vec_extension();
+    assert_ok(async {
+        register_sqlite_vec_extension();
 
-    let conn = open_test_connection("insert_documents_test").await;
-    let server = httpmock::MockServer::start();
+        let conn = open_test_connection("insert_documents_test").await?;
+        let server = httpmock::MockServer::start();
 
     server.mock(|when, then| {
         when.method(httpmock::Method::POST)
@@ -231,44 +235,47 @@ async fn insert_documents_test() {
         ));
     });
 
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
-    let model = openai_client
-        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
-        .expect("embedding model should build");
-    let embeddings = create_embeddings(model.clone()).await;
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(server.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+            .context("embedding model should build")?;
+        let embeddings = create_embeddings(model.clone()).await?;
 
-    let vector_store: SqliteVectorStore<_, Word> = SqliteVectorStore::new(conn.clone(), &model)
-        .await
-        .expect("Could not initialize SQLite vector store");
+        let vector_store: SqliteVectorStore<_, Word> = SqliteVectorStore::new(conn.clone(), &model)
+            .await
+            .context("could not initialize SQLite vector store")?;
 
-    vector_store
-        .insert_documents(embeddings)
-        .await
-        .expect("Could not add embeddings to vector store");
+        vector_store.insert_documents(embeddings).await?;
 
-    let (document_count, embedding_count) = conn
-        .call(|conn| {
-            let document_count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))?;
-            let embedding_count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM documents_embeddings", [], |row| {
-                    row.get(0)
-                })?;
+        let (document_count, embedding_count) = conn
+            .call(|conn| {
+                let document_count: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))?;
+                let embedding_count: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM documents_embeddings", [], |row| {
+                        row.get(0)
+                    })?;
 
-            Ok((document_count, embedding_count))
-        })
-        .await
-        .expect("Could not verify inserted rows");
+                Ok((document_count, embedding_count))
+            })
+            .await
+            .context("could not verify inserted rows")?;
 
-    assert_eq!(document_count, 3);
-    assert_eq!(embedding_count, 3);
+        assert_eq!(document_count, 3);
+        assert_eq!(embedding_count, 3);
+
+        Ok(())
+    }
+    .await);
 }
 
-async fn create_embeddings(model: openai::EmbeddingModel) -> Vec<(Word, OneOrMany<Embedding>)> {
+async fn create_embeddings(
+    model: openai::EmbeddingModel,
+) -> Result<Vec<(Word, OneOrMany<Embedding>)>> {
     let words = vec![
         Word {
             id: "doc0".to_string(),
@@ -284,10 +291,12 @@ async fn create_embeddings(model: openai::EmbeddingModel) -> Vec<(Word, OneOrMan
         }
     ];
 
-    EmbeddingsBuilder::new(model)
-        .documents(words)
-        .expect("")
+    Ok(EmbeddingsBuilder::new(model)
+        .documents(words)?
         .build()
-        .await
-        .expect("")
+        .await?)
+}
+
+fn assert_ok(result: Result<()>) {
+    assert!(result.is_ok(), "{result:?}");
 }

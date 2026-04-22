@@ -54,9 +54,7 @@ async fn manual_multi_turn_streaming_loop() -> Result<()> {
         .build();
 
     let mut stream = multi_turn_prompt(agent, MULTI_TURN_STREAMING_PROMPT, Vec::new()).await;
-    let response = collect_text(&mut stream)
-        .await
-        .expect("manual multi-turn streaming should succeed");
+    let response = collect_text(&mut stream).await?;
 
     assert_nonempty_response(&response);
     assert!(
@@ -150,10 +148,11 @@ where
             }
 
             if !tool_calls.is_empty() {
-                chat_history.push(Message::Assistant {
-                    id: None,
-                    content: OneOrMany::many(tool_calls).expect("tool calls should be non-empty"),
-                });
+                let Some(content) = OneOrMany::from_non_empty_iter(tool_calls) else {
+                    debug_assert!(false, "tool calls should be non-empty");
+                    break;
+                };
+                chat_history.push(Message::Assistant { id: None, content });
             }
 
             for (id, call_id, tool_result) in tool_results {
@@ -228,8 +227,7 @@ impl Tool for Add {
         ToolDefinition {
             name: "add".to_string(),
             description: "Add x and y together".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -259,8 +257,7 @@ impl Tool for Subtract {
         ToolDefinition {
             name: "subtract".to_string(),
             description: "Subtract y from x (i.e.: x - y)".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -290,8 +287,7 @@ impl Tool for Multiply {
         ToolDefinition {
             name: "multiply".to_string(),
             description: "Compute the product of x and y (i.e.: x * y)".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -321,8 +317,7 @@ impl Tool for Divide {
         ToolDefinition {
             name: "divide".to_string(),
             description: "Compute the quotient of x and y.".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 

@@ -160,7 +160,10 @@ impl<M: CompletionModel> PromptHook<M> for PermissionHook {
     ) -> HookAction {
         let normalized =
             serde_json::from_str::<String>(result).unwrap_or_else(|_| result.to_string());
-        let mut last = self.last_result.lock().expect("lock last_result");
+        let mut last = self
+            .last_result
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *last = Some(normalized);
 
         HookAction::cont()
@@ -176,7 +179,7 @@ async fn permission_control_prompt_example() -> Result<()> {
 
     let _cleanup = FileCleanup::new()?;
 
-    let agent = support::client()
+    let agent = support::client()?
         .agent(support::model_name())
         .preamble("You are a helpful assistant that can read files using different methods.")
         .tool(ReadFileHead)
@@ -208,7 +211,10 @@ async fn permission_control_prompt_example() -> Result<()> {
             ..
         }) => {
             let trace = format!("{chat_history:?}\n{prompt:?}");
-            let last = last_result.lock().expect("lock last_result").clone();
+            let last = last_result
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
             if should_skip_retry_capability(&trace, &last, call_count.load(Ordering::SeqCst)) {
                 eprintln!(
                     "skipping llamafile permission-control prompt test: model loops by naming tools in plain text instead of issuing a follow-up tool call"
@@ -225,7 +231,10 @@ async fn permission_control_prompt_example() -> Result<()> {
         Err(error) => return Err(error.into()),
     };
 
-    let last = last_result.lock().expect("lock last_result").clone();
+    let last = last_result
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     if should_skip_retry_capability(&response, &last, call_count.load(Ordering::SeqCst)) {
         eprintln!(
             "skipping llamafile permission-control prompt test: model narrates retries instead of issuing a follow-up tool call"
@@ -250,7 +259,7 @@ async fn permission_control_streaming_example() -> Result<()> {
 
     let _cleanup = FileCleanup::new()?;
 
-    let agent = support::client()
+    let agent = support::client()?
         .agent(support::model_name())
         .preamble("You are a helpful assistant that can read files using different methods.")
         .tool(ReadFileHead)
@@ -277,7 +286,10 @@ async fn permission_control_streaming_example() -> Result<()> {
         .await;
 
     let final_response = stream_to_stdout(&mut stream).await?;
-    let last = last_result.lock().expect("lock last_result").clone();
+    let last = last_result
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     if should_skip_retry_capability(
         final_response.response(),
         &last,

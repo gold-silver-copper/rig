@@ -18,10 +18,7 @@ async fn completion_smoke() -> Result<()> {
         .max_tokens(1024)
         .build();
 
-    let response = agent
-        .prompt(BASIC_PROMPT)
-        .await
-        .expect("completion should succeed");
+    let response = agent.prompt(BASIC_PROMPT).await?;
 
     assert_nonempty_response(&response);
     Ok(())

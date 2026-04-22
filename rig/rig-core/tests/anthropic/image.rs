@@ -24,19 +24,14 @@ async fn image_prompt_from_fixture() -> Result<()> {
         .temperature(0.5)
         .build();
 
-    let image_bytes = fs::read(IMAGE_FIXTURE_PATH)
-        .await
-        .expect("fixture image should be readable");
+    let image_bytes = fs::read(IMAGE_FIXTURE_PATH).await?;
     let image = Image {
         data: DocumentSourceKind::base64(&BASE64_STANDARD.encode(image_bytes)),
         media_type: Some(ImageMediaType::JPEG),
         ..Default::default()
     };
 
-    let response = agent
-        .prompt(image)
-        .await
-        .expect("image prompt should succeed");
+    let response = agent.prompt(image).await?;
 
     assert_nonempty_response(&response);
     assert_contains_any_case_insensitive(&response, &["ant", "insect"]);

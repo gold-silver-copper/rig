@@ -36,8 +36,7 @@ async fn context_smoke() -> Result<()> {
             "What is glarb-glarb according to the provided context? \
              Answer with exactly `ancient tool` or `not found`.",
         )
-        .await
-        .expect("context prompt should succeed");
+        .await?;
 
     assert_contains_any_case_insensitive(&response, &["ancient tool"]);
     Ok(())

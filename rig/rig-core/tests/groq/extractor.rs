@@ -1,6 +1,6 @@
 //! Groq extractor smoke test.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::groq;
 
@@ -14,22 +14,23 @@ async fn extractor_smoke() -> Result<()> {
     let client = groq::Client::from_env()?;
     let extractor = client.extractor::<SmokePerson>(EXTRACTOR_MODEL).build();
 
-    let response = extractor
-        .extract_with_usage(EXTRACTOR_TEXT)
-        .await
-        .expect("extractor request should succeed");
+    let response = extractor.extract_with_usage(EXTRACTOR_TEXT).await?;
 
     let first_name = response
         .data
         .first_name
         .as_deref()
-        .expect("first_name should be present");
+        .ok_or_else(|| anyhow!("first_name should be present"))?;
     let last_name = response
         .data
         .last_name
         .as_deref()
-        .expect("last_name should be present");
-    let job = response.data.job.as_deref().expect("job should be present");
+        .ok_or_else(|| anyhow!("last_name should be present"))?;
+    let job = response
+        .data
+        .job
+        .as_deref()
+        .ok_or_else(|| anyhow!("job should be present"))?;
 
     assert_nonempty_response(first_name);
     assert_nonempty_response(last_name);

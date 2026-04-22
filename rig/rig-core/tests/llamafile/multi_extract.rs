@@ -34,7 +34,7 @@ async fn batch_multi_extract_chain() -> Result<()> {
         return Ok(());
     }
 
-    let client = support::client();
+    let client = support::client()?;
     let model = support::model_name();
     let names_extractor = client
         .extractor::<Names>(model.clone())

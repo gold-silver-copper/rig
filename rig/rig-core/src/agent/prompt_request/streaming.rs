@@ -724,7 +724,7 @@ where
                 {
                     if let Some(ref hook) = self.hook
                         && let HookAction::Terminate { reason } = hook
-                            .on_stream_completion_response_finish(&current_prompt, &final_resp)
+                            .on_stream_completion_response_finish(&current_prompt, final_resp)
                             .await
                     {
                         yield Err(

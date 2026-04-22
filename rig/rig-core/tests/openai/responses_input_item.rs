@@ -1,3 +1,4 @@
+use anyhow::{Context, Result, anyhow};
 use rig::OneOrMany;
 use rig::completion::{CompletionError, Message as CompletionMessage};
 use rig::message::{AssistantContent, Reasoning, ReasoningContent};
@@ -7,7 +8,7 @@ use rig::providers::openai::responses_api::{
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 #[test]
-fn test_input_item_serialization_avoids_duplicate_role() {
+fn test_input_item_serialization_avoids_duplicate_role() -> Result<()> {
     let message = Message::User {
         content: OneOrMany::one(UserContent::InputText {
             text: "hello".to_string(),
@@ -15,13 +16,14 @@ fn test_input_item_serialization_avoids_duplicate_role() {
         name: None,
     };
     let item: InputItem = message.into();
-    let json = serde_json::to_string(&item).expect("serialize InputItem");
+    let json = serde_json::to_string(&item)?;
     let role_count = json.matches("\"role\"").count();
 
     assert_eq!(
         role_count, 1,
         "InputItem should serialize a single role field, got {role_count}: {json}"
     );
+    Ok(())
 }
 
 #[test]
@@ -41,23 +43,21 @@ fn assistant_reasoning_without_id_returns_error() {
 }
 
 #[test]
-fn assistant_reasoning_encrypted_only_serializes_encrypted_content() {
+fn assistant_reasoning_encrypted_only_serializes_encrypted_content() -> Result<()> {
     let reasoning = Reasoning::encrypted("encrypted_blob").with_id("rs_1".to_string());
     let message = CompletionMessage::Assistant {
         id: Some("assistant_message_id".to_string()),
         content: OneOrMany::one(AssistantContent::Reasoning(reasoning)),
     };
 
-    let items: Vec<InputItem> = message
-        .try_into()
-        .expect("assistant reasoning should convert to InputItem");
+    let items: Vec<InputItem> = message.try_into()?;
     assert_eq!(items.len(), 1);
 
-    let item_json = serde_json::to_value(&items[0]).expect("serialize InputItem");
+    let item_json = serde_json::to_value(items.first().context("expected one InputItem")?)?;
     let item_type = item_json
         .get("type")
         .and_then(|value| value.as_str())
-        .expect("reasoning item should include type");
+        .context("reasoning item should include type")?;
     assert_eq!(item_type, "reasoning");
     assert_eq!(
         item_json.get("id").and_then(|value| value.as_str()),
@@ -76,10 +76,11 @@ fn assistant_reasoning_encrypted_only_serializes_encrypted_content() {
             .map(Vec::len),
         Some(0)
     );
+    Ok(())
 }
 
 #[test]
-fn assistant_reasoning_mixed_content_serializes_only_text_like_summaries() {
+fn assistant_reasoning_mixed_content_serializes_only_text_like_summaries() -> Result<()> {
     let mut reasoning =
         Reasoning::new_with_signature("step-1", Some("sig-1".to_string())).with_id("rs_2".into());
     reasoning
@@ -97,16 +98,14 @@ fn assistant_reasoning_mixed_content_serializes_only_text_like_summaries() {
         content: OneOrMany::one(AssistantContent::Reasoning(reasoning)),
     };
 
-    let items: Vec<InputItem> = message
-        .try_into()
-        .expect("assistant reasoning should convert to InputItem");
+    let items: Vec<InputItem> = message.try_into()?;
     assert_eq!(items.len(), 1);
 
-    let item_json = serde_json::to_value(&items[0]).expect("serialize InputItem");
+    let item_json = serde_json::to_value(items.first().context("expected one InputItem")?)?;
     let summary = item_json
         .get("summary")
         .and_then(|value| value.as_array())
-        .expect("reasoning item should include summary array");
+        .context("reasoning item should include summary array")?;
     let summary_texts: Vec<&str> = summary
         .iter()
         .filter_map(|entry| entry.get("text").and_then(|text| text.as_str()))
@@ -119,10 +118,11 @@ fn assistant_reasoning_mixed_content_serializes_only_text_like_summaries() {
             .and_then(|value| value.as_str()),
         Some("ciphertext")
     );
+    Ok(())
 }
 
 #[test]
-fn openai_responses_request_auto_adds_reasoning_encrypted_include() {
+fn openai_responses_request_auto_adds_reasoning_encrypted_include() -> Result<()> {
     let core_request = rig::completion::CompletionRequest {
         preamble: None,
         chat_history: OneOrMany::one(CompletionMessage::user("hello")),
@@ -138,21 +138,21 @@ fn openai_responses_request_auto_adds_reasoning_encrypted_include() {
         output_schema: None,
     };
 
-    let request = OpenAIResponsesRequest::try_from(("gpt-test".to_string(), core_request))
-        .expect("convert request");
+    let request = OpenAIResponsesRequest::try_from(("gpt-test".to_string(), core_request))?;
     let include = request
         .additional_parameters
         .include
-        .expect("include should be auto-populated when reasoning is configured");
+        .context("include should be auto-populated when reasoning is configured")?;
     assert!(
         include
             .iter()
             .any(|item| matches!(item, Include::ReasoningEncryptedContent))
     );
+    Ok(())
 }
 
 #[test]
-fn openai_responses_reasoning_output_preserves_encrypted_content() {
+fn openai_responses_reasoning_output_preserves_encrypted_content() -> Result<()> {
     let output: Output = serde_json::from_value(serde_json::json!({
         "type": "reasoning",
         "id": "rs_out_1",
@@ -161,13 +161,12 @@ fn openai_responses_reasoning_output_preserves_encrypted_content() {
         ],
         "encrypted_content": "cipher_blob",
         "status": "completed"
-    }))
-    .expect("deserialize reasoning output");
+    }))?;
 
     let content: Vec<AssistantContent> = output.into();
     assert_eq!(content.len(), 1);
     let Some(AssistantContent::Reasoning(reasoning)) = content.first() else {
-        panic!("expected reasoning output content");
+        return Err(anyhow!("expected reasoning output content"));
     };
     assert_eq!(reasoning.id.as_deref(), Some("rs_out_1"));
     assert!(matches!(
@@ -178,49 +177,47 @@ fn openai_responses_reasoning_output_preserves_encrypted_content() {
         reasoning.content.get(1),
         Some(ReasoningContent::Encrypted(value)) if value == "cipher_blob"
     ));
+    Ok(())
 }
 
 #[test]
-fn openai_responses_reasoning_output_without_summary_is_not_dropped() {
+fn openai_responses_reasoning_output_without_summary_is_not_dropped() -> Result<()> {
     let output: Output = serde_json::from_value(serde_json::json!({
         "type": "reasoning",
         "id": "rs_empty",
         "summary": []
-    }))
-    .expect("deserialize reasoning output");
+    }))?;
 
     let content: Vec<AssistantContent> = output.into();
     assert_eq!(content.len(), 1);
     let Some(AssistantContent::Reasoning(reasoning)) = content.first() else {
-        panic!("expected reasoning output content");
+        return Err(anyhow!("expected reasoning output content"));
     };
     assert_eq!(reasoning.id.as_deref(), Some("rs_empty"));
     assert!(reasoning.content.is_empty());
+    Ok(())
 }
 
 #[test]
-fn openai_empty_reasoning_content_roundtrips_to_request_item() {
+fn openai_empty_reasoning_content_roundtrips_to_request_item() -> Result<()> {
     let output: Output = serde_json::from_value(serde_json::json!({
         "type": "reasoning",
         "id": "rs_roundtrip_empty",
         "summary": []
-    }))
-    .expect("deserialize reasoning output");
+    }))?;
     let content: Vec<AssistantContent> = output.into();
     let Some(AssistantContent::Reasoning(reasoning)) = content.first().cloned() else {
-        panic!("expected reasoning output content");
+        return Err(anyhow!("expected reasoning output content"));
     };
 
     let message = CompletionMessage::Assistant {
         id: Some("assistant_message_id".to_string()),
         content: OneOrMany::one(AssistantContent::Reasoning(reasoning)),
     };
-    let items: Vec<InputItem> = message
-        .try_into()
-        .expect("empty reasoning content should still convert");
+    let items: Vec<InputItem> = message.try_into()?;
 
     assert_eq!(items.len(), 1);
-    let item_json = serde_json::to_value(&items[0]).expect("serialize InputItem");
+    let item_json = serde_json::to_value(items.first().context("expected one InputItem")?)?;
     assert_eq!(
         item_json.get("id").and_then(|value| value.as_str()),
         Some("rs_roundtrip_empty")
@@ -237,22 +234,21 @@ fn openai_empty_reasoning_content_roundtrips_to_request_item() {
             .get("encrypted_content")
             .is_none_or(serde_json::Value::is_null)
     );
+    Ok(())
 }
 
 #[test]
-fn assistant_reasoning_redacted_only_serializes_as_encrypted_content() {
+fn assistant_reasoning_redacted_only_serializes_as_encrypted_content() -> Result<()> {
     let reasoning = Reasoning::redacted("opaque-redacted").with_id("rs_redacted".to_string());
     let message = CompletionMessage::Assistant {
         id: Some("assistant_message_id".to_string()),
         content: OneOrMany::one(AssistantContent::Reasoning(reasoning)),
     };
 
-    let items: Vec<InputItem> = message
-        .try_into()
-        .expect("assistant reasoning should convert to InputItem");
+    let items: Vec<InputItem> = message.try_into()?;
     assert_eq!(items.len(), 1);
 
-    let item_json = serde_json::to_value(&items[0]).expect("serialize InputItem");
+    let item_json = serde_json::to_value(items.first().context("expected one InputItem")?)?;
     assert_eq!(
         item_json
             .get("encrypted_content")
@@ -266,10 +262,11 @@ fn assistant_reasoning_redacted_only_serializes_as_encrypted_content() {
             .map(Vec::len),
         Some(0)
     );
+    Ok(())
 }
 
 #[test]
-fn openai_responses_request_reasoning_without_id_returns_error_without_panicking() {
+fn openai_responses_request_reasoning_without_id_returns_error_without_panicking() -> Result<()> {
     let panic_result = catch_unwind(AssertUnwindSafe(|| {
         let request = rig::completion::CompletionRequest {
             preamble: None,
@@ -289,13 +286,17 @@ fn openai_responses_request_reasoning_without_id_returns_error_without_panicking
         OpenAIResponsesRequest::try_from(("gpt-test".to_string(), request))
     }));
 
-    let conversion = panic_result.expect("request conversion should not panic");
+    let conversion = match panic_result {
+        Ok(conversion) => conversion,
+        Err(_) => return Err(anyhow!("request conversion should not panic")),
+    };
     assert!(matches!(
         conversion,
         Err(CompletionError::TransportError(
             rig::completion::CompletionTransportError::Message { message }
         )) if message.contains("OpenAI-generated ID is required")
     ));
+    Ok(())
 }
 
 #[test]
@@ -334,7 +335,7 @@ fn user_tool_result_without_call_id_returns_request_error() {
 }
 
 #[test]
-fn openai_responses_invalid_additional_params_returns_error_without_panicking() {
+fn openai_responses_invalid_additional_params_returns_error_without_panicking() -> Result<()> {
     let panic_result = catch_unwind(AssertUnwindSafe(|| {
         let request = rig::completion::CompletionRequest {
             preamble: None,
@@ -351,7 +352,10 @@ fn openai_responses_invalid_additional_params_returns_error_without_panicking() 
         OpenAIResponsesRequest::try_from(("gpt-test".to_string(), request))
     }));
 
-    let conversion = panic_result.expect("request conversion should not panic");
+    let conversion = match panic_result {
+        Ok(conversion) => conversion,
+        Err(_) => return Err(anyhow!("request conversion should not panic")),
+    };
     assert!(matches!(
         conversion,
         Err(CompletionError::RequestError(error))
@@ -359,4 +363,5 @@ fn openai_responses_invalid_additional_params_returns_error_without_panicking() 
                 .to_string()
                 .contains("Invalid OpenAI Responses additional_params payload")
     ));
+    Ok(())
 }

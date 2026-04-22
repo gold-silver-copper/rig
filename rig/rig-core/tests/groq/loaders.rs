@@ -14,8 +14,7 @@ use super::LOADERS_MODEL;
 #[ignore = "requires GROQ_API_KEY"]
 async fn loaders_smoke() -> Result<()> {
     let client = groq::Client::from_env()?;
-    let examples = FileLoader::with_glob(LOADERS_GLOB)
-        .expect("examples glob should parse")
+    let examples = FileLoader::with_glob(LOADERS_GLOB)?
         .read_with_path()
         .ignore_errors()
         .into_iter();
@@ -37,8 +36,7 @@ async fn loaders_smoke() -> Result<()> {
                 "{LOADERS_PROMPT} Choose only from these exact file names: agent_with_loaders.rs, streaming.rs, tools.rs. Reply with just the exact file name."
             ),
         )
-        .await
-        .expect("loader prompt should succeed");
+        .await?;
 
     assert_loader_answer_is_relevant(&response);
     Ok(())
