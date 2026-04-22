@@ -348,9 +348,9 @@ where
 
                 if stream.assistant_items.is_empty() && stream.response.is_none() {
                     stream.finished = true;
-                    return Poll::Ready(Some(Err(CompletionError::response(
-                        "stream completed without assistant content",
-                    ))));
+                    return Poll::Ready(Some(Err(
+                        CompletionError::stream_ended_without_assistant_content(),
+                    )));
                 }
 
                 let assistant_items = std::mem::take(&mut stream.assistant_items);

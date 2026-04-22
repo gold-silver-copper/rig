@@ -243,7 +243,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         let Choice { message, .. } = response
             .choices
             .first()
-            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
+            .ok_or_else(CompletionError::missing_choices)?;
 
         let mut content = message
             .content

@@ -305,9 +305,7 @@ where
         let api_resp: EmbeddingResponse = serde_json::from_slice(&bytes)?;
 
         if api_resp.embeddings.len() != docs.len() {
-            return Err(EmbeddingError::response(
-                "Number of returned embeddings does not match input",
-            ));
+            return Err(EmbeddingError::mismatched_embedding_count());
         }
         Ok(api_resp
             .embeddings
@@ -371,7 +369,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     ));
                 }
                 let choice = OneOrMany::many(assistant_contents)
-                    .map_err(|_| CompletionError::response("No content provided".to_owned()))?;
+                    .map_err(|_| CompletionError::missing_content())?;
                 let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
                 let completion_tokens = resp.eval_count.unwrap_or(0);
 

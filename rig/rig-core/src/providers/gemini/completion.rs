@@ -413,7 +413,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
         let candidate = response
             .candidates
             .first()
-            .ok_or_else(|| CompletionError::response("No response candidates in response"))?;
+            .ok_or_else(CompletionError::missing_candidates)?;
 
         let content = candidate
             .content

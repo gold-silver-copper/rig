@@ -566,9 +566,7 @@ pub(crate) async fn completion_response_from_sse_body(
     }
 
     if choice_is_empty(&stream.choice) {
-        return Err(CompletionError::response(
-            "Response contained no parts".to_owned(),
-        ));
+        return Err(CompletionError::missing_parts());
     }
 
     Ok(completion::CompletionResponse {

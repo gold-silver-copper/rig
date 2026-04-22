@@ -516,9 +516,9 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
         let (content, usage) = match &response {
             CompletionResponse::Structured { choices, usage, .. } => {
-                let choice = choices.first().ok_or_else(|| {
-                    CompletionError::response("Response contained no choices".to_owned())
-                })?;
+                let choice = choices
+                    .first()
+                    .ok_or_else(CompletionError::missing_choices)?;
 
                 let usage = usage
                     .as_ref()

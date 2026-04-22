@@ -184,7 +184,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         let choice = response
             .choices
             .first()
-            .ok_or_else(|| CompletionError::response("Response contained no choices".to_owned()))?;
+            .ok_or_else(CompletionError::missing_choices)?;
 
         match &choice.message {
             Message {

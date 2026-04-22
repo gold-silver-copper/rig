@@ -180,6 +180,18 @@ fn assistant_text_from_choice(choice: &OneOrMany<AssistantContent>) -> String {
         .collect()
 }
 
+fn turn_has_terminal_assistant_state(
+    turn_text_response: &str,
+    tool_calls: &[AssistantContent],
+    accumulated_reasoning: &[crate::message::Reasoning],
+    has_final_response: bool,
+) -> bool {
+    !turn_text_response.is_empty()
+        || !tool_calls.is_empty()
+        || !accumulated_reasoning.is_empty()
+        || has_final_response
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StreamingError {
     #[error("CompletionError: {0}")]
@@ -669,6 +681,12 @@ where
                 }
 
                 let turn_text_response = assistant_text_from_choice(&stream.choice);
+                let turn_has_terminal_assistant_state = turn_has_terminal_assistant_state(
+                    &turn_text_response,
+                    &tool_calls,
+                    &accumulated_reasoning,
+                    stream.response.is_some(),
+                );
                 tracing::Span::current().record("gen_ai.completion", &turn_text_response);
 
                 // Add text, reasoning, and tool calls to chat history.
@@ -710,11 +728,10 @@ where
                     // Add user message and assistant response to history before finishing
                     if !turn_text_response.is_empty() {
                         new_messages.push(Message::assistant(&turn_text_response));
-                    } else {
-                        yield Err(CompletionError::response(
-                            "stream completed without assistant content",
-                        )
-                        .into());
+                    } else if !turn_has_terminal_assistant_state {
+                        yield Err(
+                            CompletionError::stream_ended_without_assistant_content().into(),
+                        );
                         break;
                     }
 
@@ -1129,6 +1146,7 @@ mod tests {
     enum FinalResponseScenario {
         TextThenFinal,
         FinalOnly,
+        ReasoningOnly,
     }
 
     #[derive(Clone)]
@@ -1172,6 +1190,15 @@ mod tests {
                     FinalResponseScenario::FinalOnly => {
                         yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(1)));
                     }
+                    FinalResponseScenario::ReasoningOnly => {
+                        yield Ok(RawStreamingChoice::Reasoning {
+                            id: Some("rs_final_only".to_string()),
+                            content: ReasoningContent::Text {
+                                text: "thinking".to_string(),
+                                signature: None,
+                            },
+                        });
+                    }
                 }
             };
 
@@ -1211,24 +1238,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn textless_stream_turns_surface_an_error() {
+    async fn textless_stream_turns_complete_when_provider_returns_final_response_only() {
         let agent = AgentBuilder::new(FinalResponseMockModel {
             scenario: FinalResponseScenario::FinalOnly,
         })
         .build();
 
-        let mut stream = agent.stream_prompt("say nothing").await;
-        let mut saw_error = false;
+        let empty_history: &[Message] = &[];
+        let mut stream = agent
+            .stream_prompt("say nothing")
+            .with_history(empty_history)
+            .await;
+        let mut final_response_text = None;
+        let mut final_history = None;
 
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Final(
-                    _,
-                ))) => {}
-                Err(StreamingError::Completion(CompletionError::ResponseError(
-                    crate::completion::CompletionResponseError::StreamEndedWithoutAssistantContent,
-                ))) => {
-                    saw_error = true;
+                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                    final_response_text = Some(res.response().to_owned());
+                    final_history = res.history().map(|history| history.to_vec());
                     break;
                 }
                 Ok(_) => {}
@@ -1236,10 +1264,69 @@ mod tests {
             }
         }
 
+        assert_eq!(final_response_text.as_deref(), Some(""));
+        let history = final_history.expect("expected final response history");
+        assert_eq!(history.len(), 1);
+        assert!(matches!(history.first(), Some(Message::User { .. })));
         assert!(
-            saw_error,
-            "expected textless stream turn to surface an error"
+            !history
+                .iter()
+                .any(|message| matches!(message, Message::Assistant { .. })),
+            "final-only turns should not synthesize assistant history entries"
         );
+    }
+
+    #[tokio::test]
+    async fn reasoning_only_stream_turns_complete_and_preserve_history() {
+        let agent = AgentBuilder::new(FinalResponseMockModel {
+            scenario: FinalResponseScenario::ReasoningOnly,
+        })
+        .build();
+
+        let empty_history: &[Message] = &[];
+        let mut stream = agent
+            .stream_prompt("think silently")
+            .with_history(empty_history)
+            .await;
+        let mut saw_reasoning = false;
+        let mut final_response_text = None;
+        let mut final_history = None;
+
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Reasoning(reasoning),
+                )) => {
+                    saw_reasoning = true;
+                    assert_eq!(reasoning.id.as_deref(), Some("rs_final_only"));
+                }
+                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                    final_response_text = Some(res.response().to_owned());
+                    final_history = res.history().map(|history| history.to_vec());
+                    break;
+                }
+                Ok(_) => {}
+                Err(err) => panic!("unexpected streaming error: {err:?}"),
+            }
+        }
+
+        assert!(saw_reasoning);
+        assert_eq!(final_response_text.as_deref(), Some(""));
+        let history = final_history.expect("expected final response history");
+        assert!(matches!(history.first(), Some(Message::User { .. })));
+        assert!(history.iter().any(|message| matches!(
+            message,
+            Message::Assistant { content, .. }
+                if content.iter().any(|item| matches!(
+                    item,
+                    AssistantContent::Reasoning(reasoning)
+                        if reasoning.id.as_deref() == Some("rs_final_only")
+                            && matches!(
+                                reasoning.content.first(),
+                                Some(ReasoningContent::Text { text, .. }) if text == "thinking"
+                            )
+                ))
+        )));
     }
 
     /// Background task that logs periodically to detect span leakage.

@@ -145,8 +145,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .flat_map(<Vec<completion::AssistantContent>>::from)
             .collect();
 
-        let choice = OneOrMany::many(content)
-            .map_err(|_| CompletionError::response("Response contained no output".to_owned()))?;
+        let choice = OneOrMany::many(content).map_err(|_| CompletionError::missing_output())?;
 
         let usage = response
             .usage

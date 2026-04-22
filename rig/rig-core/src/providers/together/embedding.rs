@@ -117,9 +117,7 @@ where
             match body {
                 ApiResponse::Ok(response) => {
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::response(
-                            "Response data length does not match input length",
-                        ));
+                        return Err(EmbeddingError::mismatched_embedding_count());
                     }
 
                     Ok(response

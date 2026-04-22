@@ -221,12 +221,38 @@ impl CompletionError {
         Self::ResponseError(CompletionResponseError::from_message(message))
     }
 
+    pub fn missing_choices() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingChoices)
+    }
+
+    pub fn missing_parts() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingParts)
+    }
+
+    pub fn missing_output() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingOutput)
+    }
+
+    pub fn missing_content() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingContent)
+    }
+
+    pub fn missing_candidates() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingCandidates)
+    }
+
+    pub fn stream_ended_without_assistant_content() -> Self {
+        Self::ResponseError(CompletionResponseError::StreamEndedWithoutAssistantContent)
+    }
+
     pub fn response_with_context(context: &'static str, details: impl Into<String>) -> Self {
         Self::ResponseError(CompletionResponseError::context(context, details))
     }
 
     pub fn provider(message: impl Into<String>) -> Self {
-        Self::ProviderError(CompletionProviderError::from_message(message))
+        Self::ProviderError(CompletionProviderError::Message {
+            message: message.into(),
+        })
     }
 
     pub fn aborted() -> Self {
@@ -1276,6 +1302,36 @@ mod tests {
                 context: "invalid response",
                 details,
             }) if details == "provider emitted malformed chunk"
+        ));
+    }
+
+    #[test]
+    fn completion_error_typed_response_constructors_are_structured() {
+        assert!(matches!(
+            CompletionError::missing_choices(),
+            CompletionError::ResponseError(CompletionResponseError::MissingChoices)
+        ));
+        assert!(matches!(
+            CompletionError::missing_parts(),
+            CompletionError::ResponseError(CompletionResponseError::MissingParts)
+        ));
+        assert!(matches!(
+            CompletionError::missing_output(),
+            CompletionError::ResponseError(CompletionResponseError::MissingOutput)
+        ));
+        assert!(matches!(
+            CompletionError::missing_content(),
+            CompletionError::ResponseError(CompletionResponseError::MissingContent)
+        ));
+        assert!(matches!(
+            CompletionError::missing_candidates(),
+            CompletionError::ResponseError(CompletionResponseError::MissingCandidates)
+        ));
+        assert!(matches!(
+            CompletionError::stream_ended_without_assistant_content(),
+            CompletionError::ResponseError(
+                CompletionResponseError::StreamEndedWithoutAssistantContent
+            )
         ));
     }
 

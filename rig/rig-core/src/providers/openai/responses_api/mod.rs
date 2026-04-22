@@ -1442,9 +1442,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
         if response.output.is_empty() {
-            return Err(CompletionError::response(
-                "Response contained no parts".to_owned(),
-            ));
+            return Err(CompletionError::missing_parts());
         }
 
         // Extract the msg_ ID from the first Output::Message item

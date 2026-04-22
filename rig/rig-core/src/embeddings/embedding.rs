@@ -162,6 +162,10 @@ impl EmbeddingError {
         Self::ResponseError(EmbeddingResponseError::from_message(message))
     }
 
+    pub fn mismatched_embedding_count() -> Self {
+        Self::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
+    }
+
     pub fn provider(message: impl Into<String>) -> Self {
         Self::ProviderError(EmbeddingProviderError::from_message(message))
     }
