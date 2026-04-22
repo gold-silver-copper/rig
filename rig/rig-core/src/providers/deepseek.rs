@@ -977,11 +977,9 @@ mod tests {
             1,
             "multiple text items should produce a single user message"
         );
-        match &user_messages[0] {
-            Message::User { content, .. } => {
-                assert_eq!(content, "first part\nsecond part");
-            }
-            _ => unreachable!(),
+        assert!(matches!(user_messages.first(), Some(Message::User { .. })));
+        if let Some(Message::User { content, .. }) = user_messages.first() {
+            assert_eq!(content, "first part\nsecond part");
         }
     }
 

@@ -88,10 +88,13 @@ impl TryFrom<AwsConverseOutput> for completion::CompletionResponse<AwsConverseOu
             .to_owned()
             .0
             .output
-            .ok_or_else(|| CompletionError::provider("Model didn't return any output"))?
+            .ok_or_else(CompletionError::missing_output)?
             .as_message()
             .map_err(|_| {
-                CompletionError::provider("Failed to extract message from converse output")
+                CompletionError::response_with_context(
+                    "bedrock converse output",
+                    "output was not a message",
+                )
             })?
             .to_owned()
             .try_into()?;
@@ -248,6 +251,7 @@ mod tests {
     use aws_sdk_bedrockruntime::types as aws_bedrock;
     use rig::{
         OneOrMany, completion,
+        completion::CompletionResponseError,
         completion::GetTokenUsage,
         message::{AssistantContent, ReasoningContent},
         telemetry::ProviderResponseExt,
@@ -357,6 +361,53 @@ mod tests {
             completion.choice,
             OneOrMany::one(AssistantContent::Text("txt".into()))
         );
+    }
+
+    #[test]
+    fn aws_converse_output_without_output_is_response_error() {
+        let completion: Result<completion::CompletionResponse<AwsConverseOutput>, _> =
+            AwsConverseOutput(InternalConverseOutput {
+                output: None,
+                stop_reason: crate::types::converse_output::StopReason::EndTurn,
+                usage: None,
+                metrics: None,
+                additional_model_response_fields: None,
+                trace: None,
+                performance_config: None,
+            })
+            .try_into();
+
+        assert!(matches!(
+            completion,
+            Err(completion::CompletionError::ResponseError(
+                CompletionResponseError::MissingOutput
+            ))
+        ));
+    }
+
+    #[test]
+    fn aws_converse_output_with_non_message_output_is_response_error() {
+        let completion: Result<completion::CompletionResponse<AwsConverseOutput>, _> =
+            AwsConverseOutput(InternalConverseOutput {
+                output: Some(crate::types::converse_output::ConverseOutput::Unknown),
+                stop_reason: crate::types::converse_output::StopReason::EndTurn,
+                usage: None,
+                metrics: None,
+                additional_model_response_fields: None,
+                trace: None,
+                performance_config: None,
+            })
+            .try_into();
+
+        assert!(matches!(
+            completion,
+            Err(completion::CompletionError::ResponseError(
+                CompletionResponseError::Context {
+                    context: "bedrock converse output",
+                    ..
+                }
+            ))
+        ));
     }
 
     #[test]

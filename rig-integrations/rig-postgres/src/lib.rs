@@ -1,15 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unreachable,
-        clippy::unwrap_used,
-        clippy::indexing_slicing
-    )
-)]
-
 use std::{fmt::Display, ops::RangeInclusive};
 
 use rig::{

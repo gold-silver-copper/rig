@@ -3,8 +3,10 @@ use google_cloud_aiplatform_v1 as vertexai;
 use google_cloud_auth::credentials;
 use google_cloud_auth::credentials::Credentials;
 use rig::client::{CompletionClient, Nothing};
+use rig::http_client;
 use rig::prelude::*;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::OnceCell;
 
 // Env vars and terminology (location, project) chosen to match google genai client
@@ -18,22 +20,97 @@ use tokio::sync::OnceCell;
 /// Regional endpoints may be preferred for data residency requirements or to use regional quotas.
 pub const DEFAULT_LOCATION: &str = "global";
 
+#[cfg(not(target_family = "wasm"))]
+type VertexAiErrorSource = Box<dyn std::error::Error + Send + Sync + 'static>;
+#[cfg(target_family = "wasm")]
+type VertexAiErrorSource = Box<dyn std::error::Error + 'static>;
+
+#[cfg(not(target_family = "wasm"))]
+fn vertex_ai_error_source<E>(error: E) -> VertexAiErrorSource
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    Box::new(error)
+}
+
+#[cfg(target_family = "wasm")]
+fn vertex_ai_error_source<E>(error: E) -> VertexAiErrorSource
+where
+    E: std::error::Error + 'static,
+{
+    Box::new(error)
+}
+
+/// Errors that can occur while configuring or initializing a Vertex AI client.
+#[derive(Debug, Error)]
+pub enum VertexAiClientError {
+    #[error(
+        "Google Cloud project is required. Set it via `ClientBuilder::with_project()` or the GOOGLE_CLOUD_PROJECT environment variable"
+    )]
+    MissingProject,
+
+    #[error("failed to build Google Cloud application default credentials")]
+    BuildDefaultCredentials {
+        #[source]
+        source: VertexAiErrorSource,
+    },
+
+    #[error(
+        "failed to build impersonated Google Cloud credentials for service account `{service_account}`"
+    )]
+    BuildImpersonatedCredentials {
+        service_account: String,
+        #[source]
+        source: VertexAiErrorSource,
+    },
+
+    #[error("failed to build Vertex AI prediction client")]
+    BuildPredictionService {
+        #[source]
+        source: VertexAiErrorSource,
+    },
+
+    #[error(
+        "Vertex AI uses Application Default Credentials (ADC). Use `Client::from_env()` for default credentials, or `Client::builder().with_credentials(...).build()` for custom credentials"
+    )]
+    UnsupportedExplicitInput,
+}
+
+impl From<VertexAiClientError> for http_client::Error {
+    fn from(error: VertexAiClientError) -> Self {
+        match error {
+            VertexAiClientError::MissingProject => http_client::Error::MissingEnvironmentVariable {
+                name: "GOOGLE_CLOUD_PROJECT",
+                source: std::env::VarError::NotPresent,
+            },
+            other => http_client::Error::Instance(Box::new(other)),
+        }
+    }
+}
+
 /// Helper function to build credentials with optional service account impersonation.
-fn build_credentials(explicit_creds: Option<Credentials>) -> Result<Credentials, String> {
+fn build_credentials(
+    explicit_creds: Option<Credentials>,
+) -> Result<Credentials, VertexAiClientError> {
     if let Some(creds) = explicit_creds {
         Ok(creds)
     } else {
         // Build default credentials
-        let source_credentials = credentials::Builder::default()
-            .build()
-            .map_err(|e| format!("Failed to build source credentials: {e}"))?;
+        let source_credentials = credentials::Builder::default().build().map_err(|source| {
+            VertexAiClientError::BuildDefaultCredentials {
+                source: vertex_ai_error_source(source),
+            }
+        })?;
 
         // Check for service account impersonation
         if let Ok(service_account) = std::env::var("GOOGLE_CLOUD_SERVICE_ACCOUNT") {
             credentials::impersonated::Builder::from_source_credentials(source_credentials)
-                .with_target_principal(service_account)
+                .with_target_principal(service_account.clone())
                 .build()
-                .map_err(|e| format!("Failed to build impersonated credentials: {e}"))
+                .map_err(|source| VertexAiClientError::BuildImpersonatedCredentials {
+                    service_account,
+                    source: vertex_ai_error_source(source),
+                })
         } else {
             Ok(source_credentials)
         }
@@ -85,13 +162,11 @@ impl ClientBuilder {
     /// Build the client with the configured values, falling back to environment variables where not set.
     ///
     /// The Vertex AI client is built lazily on first use via `get_inner()`.
-    pub fn build(self) -> Result<Client, String> {
+    pub fn build(self) -> Result<Client, VertexAiClientError> {
         let project = self
             .project
             .or_else(|| std::env::var("GOOGLE_CLOUD_PROJECT").ok())
-            .ok_or_else(|| {
-                "Google Cloud project is required. Set it via ClientBuilder::with_project() or GOOGLE_CLOUD_PROJECT environment variable".to_string()
-            })?;
+            .ok_or(VertexAiClientError::MissingProject)?;
 
         let location = self
             .location
@@ -134,7 +209,7 @@ impl Client {
     /// Example:
     /// ```no_run
     /// # use rig_vertexai::Client;
-    /// # fn example() -> Result<(), String> {
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // Use all env vars
     /// let client = Client::builder().build()?;
     ///
@@ -159,7 +234,7 @@ impl Client {
     /// - `GOOGLE_CLOUD_PROJECT` (required)
     /// - `GOOGLE_CLOUD_LOCATION` (optional, defaults to "global")
     /// - `GOOGLE_CLOUD_SERVICE_ACCOUNT` (optional, for service account impersonation)
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> Result<Self, VertexAiClientError> {
         ClientBuilder::new().build()
     }
 
@@ -170,7 +245,7 @@ impl Client {
     /// - `GOOGLE_CLOUD_PROJECT` (required)
     /// - `GOOGLE_CLOUD_LOCATION` (optional, defaults to "global")
     /// - `GOOGLE_CLOUD_SERVICE_ACCOUNT` (optional, for service account impersonation)
-    pub fn from_env() -> rig::http_client::Result<Self> {
+    pub fn from_env() -> http_client::Result<Self> {
         <Self as ProviderClient>::from_env()
     }
 
@@ -182,20 +257,19 @@ impl Client {
         &self.location
     }
 
-    pub async fn get_inner(&self) -> Result<&vertexai::client::PredictionService, String> {
+    pub async fn get_inner(
+        &self,
+    ) -> Result<&vertexai::client::PredictionService, VertexAiClientError> {
         let credentials = self.credentials.clone();
         self.vertex_client
             .get_or_try_init(|| async {
                 let mut builder = vertexai::client::PredictionService::builder();
                 builder = builder.with_credentials(credentials);
-                builder
-                    .build()
-                    .await
-                    .map_err(|error| {
-                        format!(
-                            "Failed to build Vertex AI prediction client after successful client construction: {error}"
-                        )
-                    })
+                builder.build().await.map_err(|source| {
+                    VertexAiClientError::BuildPredictionService {
+                        source: vertex_ai_error_source(source),
+                    }
+                })
             })
             .await
     }
@@ -204,24 +278,18 @@ impl Client {
 impl ProviderClient for Client {
     type Input = Nothing;
 
-    fn from_env() -> rig::http_client::Result<Self>
+    fn from_env() -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        Client::new()
-            .map_err(|error| rig::http_client::Error::Instance(std::io::Error::other(error).into()))
+        Client::new().map_err(Into::into)
     }
 
-    fn from_val(_: Self::Input) -> rig::http_client::Result<Self>
+    fn from_val(_: Self::Input) -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        Err(rig::http_client::Error::Instance(
-            std::io::Error::other(
-                "Vertex AI uses Application Default Credentials (ADC). Use `Client::from_env()` for default credentials, or `Client::builder().with_credentials(...).build()` for custom credentials.",
-            )
-            .into(),
-        ))
+        Err(VertexAiClientError::UnsupportedExplicitInput.into())
     }
 }
 
@@ -237,5 +305,31 @@ impl VerifyClient for Client {
     async fn verify(&self) -> Result<(), VerifyError> {
         // No API endpoint to verify credentials - they're validated on first use
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VertexAiClientError;
+    use rig::http_client;
+
+    #[test]
+    fn missing_project_maps_to_missing_environment_variable() {
+        let error: http_client::Error = VertexAiClientError::MissingProject.into();
+
+        assert!(matches!(
+            error,
+            http_client::Error::MissingEnvironmentVariable {
+                name: "GOOGLE_CLOUD_PROJECT",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unsupported_input_maps_to_http_instance_error() {
+        let error: http_client::Error = VertexAiClientError::UnsupportedExplicitInput.into();
+
+        assert!(matches!(error, http_client::Error::Instance(_)));
     }
 }

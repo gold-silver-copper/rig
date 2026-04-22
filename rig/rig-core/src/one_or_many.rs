@@ -114,7 +114,7 @@ impl<T: Clone> OneOrMany<T> {
 
     /// Create a `OneOrMany` from a known-non-empty iterator without forcing callers to invent a
     /// panic path when the invariant is already checked elsewhere.
-    pub(crate) fn from_non_empty_iter<I>(items: I) -> Option<Self>
+    pub fn from_non_empty_iter<I>(items: I) -> Option<Self>
     where
         I: IntoIterator<Item = T>,
     {

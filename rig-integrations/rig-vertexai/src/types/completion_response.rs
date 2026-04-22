@@ -16,12 +16,12 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
         let candidate = response
             .candidates
             .first()
-            .ok_or_else(|| CompletionError::provider("No candidates in response"))?;
+            .ok_or_else(CompletionError::missing_candidates)?;
 
         let content = candidate
             .content
             .as_ref()
-            .ok_or_else(|| CompletionError::provider("No content in candidate"))?;
+            .ok_or_else(CompletionError::missing_content)?;
 
         let mut assistant_contents = Vec::new();
 
@@ -45,13 +45,18 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
         }
 
         if assistant_contents.is_empty() {
-            return Err(CompletionError::provider(
-                "No text or tool call content found in response",
+            return Err(CompletionError::response_with_context(
+                "vertex ai response",
+                "candidate content contained no text or tool call parts",
             ));
         }
 
-        let choice = OneOrMany::many(assistant_contents)
-            .map_err(|e| CompletionError::provider(format!("Failed to create OneOrMany: {e}")))?;
+        let choice = OneOrMany::from_non_empty_iter(assistant_contents).ok_or_else(|| {
+            CompletionError::response_with_context(
+                "vertex ai response",
+                "candidate content contained no text or tool call parts",
+            )
+        })?;
 
         let usage = response
             .usage_metadata
@@ -79,6 +84,7 @@ mod tests {
     use super::*;
     use google_cloud_aiplatform_v1 as vertexai;
     use rig::OneOrMany;
+    use rig::completion::CompletionResponseError;
     use rig::message::{AssistantContent, Text, ToolCall};
 
     fn create_text_response(text: &str) -> VertexGenerateContentOutput {
@@ -182,6 +188,50 @@ mod tests {
         let completion_response: Result<CompletionResponse<VertexGenerateContentOutput>, _> =
             vertex_output.try_into();
 
-        assert!(completion_response.is_err());
+        assert!(matches!(
+            completion_response,
+            Err(CompletionError::ResponseError(
+                CompletionResponseError::MissingCandidates
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_missing_candidate_content_is_response_error() {
+        let candidate = vertexai::model::Candidate::new()
+            .set_finish_reason(vertexai::model::candidate::FinishReason::Stop);
+        let response = vertexai::model::GenerateContentResponse::new().set_candidates([candidate]);
+        let vertex_output = VertexGenerateContentOutput(response);
+        let completion_response: Result<CompletionResponse<VertexGenerateContentOutput>, _> =
+            vertex_output.try_into();
+
+        assert!(matches!(
+            completion_response,
+            Err(CompletionError::ResponseError(
+                CompletionResponseError::MissingContent
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_candidate_without_supported_parts_is_response_error() {
+        let content = vertexai::model::Content::new().set_role("model");
+        let candidate = vertexai::model::Candidate::new()
+            .set_content(content)
+            .set_finish_reason(vertexai::model::candidate::FinishReason::Stop);
+        let response = vertexai::model::GenerateContentResponse::new().set_candidates([candidate]);
+        let vertex_output = VertexGenerateContentOutput(response);
+        let completion_response: Result<CompletionResponse<VertexGenerateContentOutput>, _> =
+            vertex_output.try_into();
+
+        assert!(matches!(
+            completion_response,
+            Err(CompletionError::ResponseError(
+                CompletionResponseError::Context {
+                    context: "vertex ai response",
+                    ..
+                }
+            ))
+        ));
     }
 }

@@ -108,42 +108,11 @@ pub enum CompletionResponseError {
 }
 
 impl CompletionResponseError {
-    pub fn from_message(message: impl Into<String>) -> Self {
-        let message = message.into();
-
-        match message.as_str() {
-            "Response contained no choices" => Self::MissingChoices,
-            "Response contained no parts" => Self::MissingParts,
-            "Response contained no output" => Self::MissingOutput,
-            "No content provided" => Self::MissingContent,
-            "No response candidates in response" => Self::MissingCandidates,
-            "stream completed without assistant content" => {
-                Self::StreamEndedWithoutAssistantContent
-            }
-            _ => Self::Context {
-                context: "invalid response",
-                details: message,
-            },
-        }
-    }
-
     pub fn context(context: &'static str, details: impl Into<String>) -> Self {
         Self::Context {
             context,
             details: details.into(),
         }
-    }
-}
-
-impl From<String> for CompletionResponseError {
-    fn from(message: String) -> Self {
-        Self::from_message(message)
-    }
-}
-
-impl From<&str> for CompletionResponseError {
-    fn from(message: &str) -> Self {
-        Self::from_message(message)
     }
 }
 
@@ -218,7 +187,7 @@ pub enum CompletionError {
 
 impl CompletionError {
     pub fn response(message: impl Into<String>) -> Self {
-        Self::ResponseError(CompletionResponseError::from_message(message))
+        Self::response_with_context("invalid response", message)
     }
 
     pub fn missing_choices() -> Self {
@@ -1280,25 +1249,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_response_error_maps_known_messages_to_structured_variants() {
-        assert!(matches!(
-            CompletionError::response("Response contained no choices"),
-            CompletionError::ResponseError(CompletionResponseError::MissingChoices)
-        ));
-        assert!(matches!(
-            CompletionError::response("No response candidates in response"),
-            CompletionError::ResponseError(CompletionResponseError::MissingCandidates)
-        ));
-        assert!(matches!(
-            CompletionError::response("stream completed without assistant content"),
-            CompletionError::ResponseError(
-                CompletionResponseError::StreamEndedWithoutAssistantContent
-            )
-        ));
-    }
-
-    #[test]
-    fn completion_response_error_preserves_unclassified_details() {
+    fn completion_error_response_helper_preserves_invalid_response_details() {
         assert!(matches!(
             CompletionError::response("provider emitted malformed chunk"),
             CompletionError::ResponseError(CompletionResponseError::Context {

@@ -1,15 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unreachable,
-        clippy::unwrap_used,
-        clippy::indexing_slicing
-    )
-)]
-
 use std::sync::Arc;
 
 pub use fastembed::EmbeddingModel as FastembedModel;
@@ -56,10 +44,7 @@ impl Client {
         &self,
         model: &FastembedModel,
     ) -> Result<EmbeddingModel, EmbeddingError> {
-        let ndims = TextEmbedding::get_model_info(model)
-            .map(|info| info.dim)
-            .map_err(|error| EmbeddingError::initialization(error.to_string()))?;
-
+        let ndims = embedding_dimensions(model)?;
         EmbeddingModel::new(model, ndims)
     }
 
@@ -136,6 +121,12 @@ impl EmbeddingModel {
     }
 }
 
+fn embedding_dimensions(model: &FastembedModel) -> Result<usize, EmbeddingError> {
+    TextEmbedding::get_model_info(model)
+        .map(|info| info.dim)
+        .map_err(|error| EmbeddingError::initialization(error.to_string()))
+}
+
 impl embeddings::EmbeddingModel for EmbeddingModel {
     const MAX_DOCUMENTS: usize = 1024;
 
@@ -152,13 +143,10 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
                 "FastEmbed model `{requested_model}` is unavailable: {error}"
             ))
         })?;
-        let ndims = dims
-            .or_else(|| {
-                TextEmbedding::get_model_info(&model)
-                    .ok()
-                    .map(|info| info.dim)
-            })
-            .unwrap_or_default();
+        let ndims = match dims {
+            Some(ndims) => ndims,
+            None => embedding_dimensions(&model)?,
+        };
 
         #[cfg(feature = "hf-hub")]
         {

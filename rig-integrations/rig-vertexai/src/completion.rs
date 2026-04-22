@@ -11,6 +11,16 @@ use rig::completion::{
 use rig::streaming::StreamingCompletionResponse;
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(target_family = "wasm"))]
+fn vertex_client_request_error(error: crate::client::VertexAiClientError) -> CompletionError {
+    CompletionError::RequestError(Box::new(error))
+}
+
+#[cfg(target_family = "wasm")]
+fn vertex_client_request_error(error: crate::client::VertexAiClientError) -> CompletionError {
+    CompletionError::RequestError(Box::new(error))
+}
+
 /// `gemini-1.5-pro`
 pub const GEMINI_1_5_PRO: &str = "gemini-1.5-pro";
 /// `gemini-1.5-flash`
@@ -100,7 +110,7 @@ impl CompletionModelTrait for CompletionModel {
             .client
             .get_inner()
             .await
-            .map_err(CompletionError::provider)?
+            .map_err(vertex_client_request_error)?
             .generate_content()
             .set_model(&model_path)
             .set_contents(contents);

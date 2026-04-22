@@ -1,14 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unreachable,
-        clippy::unwrap_used
-    )
-)]
-
 extern crate proc_macro;
 
 use convert_case::{Case, Casing};
@@ -231,13 +220,15 @@ impl Parse for MacroArgs {
 fn get_json_type(ty: &Type) -> proc_macro2::TokenStream {
     match ty {
         Type::Path(type_path) => {
-            let segment = &type_path.path.segments[0];
+            let Some(segment) = type_path.path.segments.first() else {
+                return quote! { "type": "string" };
+            };
             let type_name = segment.ident.to_string();
 
             // Handle Vec types
             if type_name == "Vec" {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-                    && let syn::GenericArgument::Type(inner_type) = &args.args[0]
+                    && let Some(syn::GenericArgument::Type(inner_type)) = args.args.first()
                 {
                     let inner_json_type = get_json_type(inner_type);
                     return quote! {

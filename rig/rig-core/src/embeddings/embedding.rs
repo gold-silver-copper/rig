@@ -22,28 +22,10 @@ pub enum EmbeddingResponseError {
 }
 
 impl EmbeddingResponseError {
-    pub fn from_message(message: impl Into<String>) -> Self {
-        let message = message.into();
-
-        match message.as_str() {
-            "Response data length does not match input length"
-            | "Number of returned embeddings does not match input" => {
-                Self::MismatchedEmbeddingCount
-            }
-            _ => Self::Message { message },
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
         }
-    }
-}
-
-impl From<String> for EmbeddingResponseError {
-    fn from(message: String) -> Self {
-        Self::from_message(message)
-    }
-}
-
-impl From<&str> for EmbeddingResponseError {
-    fn from(message: &str) -> Self {
-        Self::from_message(message)
     }
 }
 
@@ -159,7 +141,7 @@ pub enum EmbeddingError {
 
 impl EmbeddingError {
     pub fn response(message: impl Into<String>) -> Self {
-        Self::ResponseError(EmbeddingResponseError::from_message(message))
+        Self::ResponseError(EmbeddingResponseError::message(message))
     }
 
     pub fn mismatched_embedding_count() -> Self {
@@ -266,13 +248,9 @@ mod tests {
     };
 
     #[test]
-    fn embedding_response_error_maps_count_mismatches() {
+    fn embedding_error_typed_response_constructors_are_structured() {
         assert!(matches!(
-            EmbeddingError::response("Response data length does not match input length"),
-            EmbeddingError::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
-        ));
-        assert!(matches!(
-            EmbeddingError::response("Number of returned embeddings does not match input"),
+            EmbeddingError::mismatched_embedding_count(),
             EmbeddingError::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
         ));
     }

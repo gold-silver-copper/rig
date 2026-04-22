@@ -1,15 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unreachable,
-        clippy::unwrap_used,
-        clippy::indexing_slicing
-    )
-)]
-
 //! A Rig vector store for Neo4j.
 //!
 //! This crate is a companion crate to the [rig-core crate](https://github.com/0xPlaygrounds/rig).

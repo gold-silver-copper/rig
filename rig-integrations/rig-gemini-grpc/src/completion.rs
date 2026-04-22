@@ -374,7 +374,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
         let candidate = response
             .candidates
             .first()
-            .ok_or_else(|| CompletionError::response("No response candidates in response"))?;
+            .ok_or_else(CompletionError::missing_candidates)?;
 
         let content_ref = candidate.content.as_ref().ok_or_else(|| {
             CompletionError::response(format!(
@@ -451,8 +451,11 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             assistant_contents.push(assistant_content);
         }
 
-        let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-            CompletionError::response("Response contained no message or tool call (empty)")
+        let choice = OneOrMany::from_non_empty_iter(assistant_contents).ok_or_else(|| {
+            CompletionError::response_with_context(
+                "gemini grpc response",
+                "response contained no message, reasoning, image, or tool call content",
+            )
         })?;
 
         let usage = response

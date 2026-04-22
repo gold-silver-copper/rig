@@ -174,10 +174,14 @@ where
                 });
             }
 
-            current_prompt = match chat_history.pop() {
-                Some(prompt) => prompt,
-                None => unreachable!("chat history should not be empty"),
+            let Some(prompt) = chat_history.pop() else {
+                debug_assert!(
+                    false,
+                    "chat history should not be empty after pushing tool results"
+                );
+                break;
             };
+            current_prompt = prompt;
 
             if !did_call_tool {
                 break;
