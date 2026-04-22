@@ -69,7 +69,7 @@ impl EmbeddingModel {
             .map_err(|e: EmbeddingError| e)?;
 
         let response_str = String::from_utf8(response.body.into_inner())
-            .map_err(|e| EmbeddingError::ResponseError(e.to_string()))?;
+            .map_err(|e| EmbeddingError::response(e.to_string()))?;
 
         let result: EmbeddingResponse =
             serde_json::from_str(&response_str).map_err(EmbeddingError::JsonError)?;
@@ -83,8 +83,12 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
 
     type Client = Client;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, dims)
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -122,7 +126,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
 
         match errors.as_slice() {
             [] => Ok(results),
-            [err, ..] => Err(EmbeddingError::ResponseError(err.to_string())),
+            [err, ..] => Err(EmbeddingError::response(err.to_string())),
         }
     }
 }

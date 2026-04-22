@@ -1,3 +1,4 @@
+use anyhow::Context;
 use mongodb::{
     Client as MongoClient, Collection,
     bson::{self, doc},
@@ -49,17 +50,17 @@ where
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenAI client
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     // Initialize MongoDB client
     let mongodb_connection_string =
-        env::var("MONGODB_CONNECTION_STRING").expect("MONGODB_CONNECTION_STRING not set");
+        env::var("MONGODB_CONNECTION_STRING").context("MONGODB_CONNECTION_STRING not set")?;
     let options = ClientOptions::parse(mongodb_connection_string)
         .await
-        .expect("MongoDB connection string should be valid");
+        .context("MongoDB connection string should be valid")?;
 
     let mongodb_client =
-        MongoClient::with_options(options).expect("MongoDB client options should be valid");
+        MongoClient::with_options(options).context("MongoDB client options should be valid")?;
 
     // Initialize MongoDB vector store
     let collection: Collection<bson::Document> = mongodb_client
@@ -67,7 +68,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .collection("context");
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     let words = vec![
         Word {

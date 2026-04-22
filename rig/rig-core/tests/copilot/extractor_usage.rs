@@ -1,6 +1,6 @@
 //! Copilot integration tests for extractor usage tracking.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::client::CompletionClient;
 use rig::extractor::ExtractionResponse;
 use schemars::JsonSchema;
@@ -23,13 +23,13 @@ struct Address {
     zip_code: Option<String>,
 }
 
-fn assert_compatible_professions(left: Option<&str>, right: Option<&str>) {
+fn assert_compatible_professions(left: Option<&str>, right: Option<&str>) -> Result<()> {
     let left = left
-        .expect("profession should be present")
+        .ok_or_else(|| anyhow!("profession should be present"))?
         .trim()
         .to_ascii_lowercase();
     let right = right
-        .expect("profession should be present")
+        .ok_or_else(|| anyhow!("profession should be present"))?
         .trim()
         .to_ascii_lowercase();
 
@@ -37,12 +37,13 @@ fn assert_compatible_professions(left: Option<&str>, right: Option<&str>) {
         left == right || left.contains(&right) || right.contains(&left),
         "expected compatible professions, got {left:?} and {right:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
 async fn extract_backward_compatibility() -> Result<()> {
-    let extractor = live_client().extractor::<Person>(LIVE_LIGHT_MODEL).build();
+    let extractor = live_client()?.extractor::<Person>(LIVE_LIGHT_MODEL).build();
 
     let person = extractor
         .extract("John Doe is a 30 year old software engineer.")
@@ -58,7 +59,7 @@ async fn extract_backward_compatibility() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
 async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
-    let extractor = live_client().extractor::<Person>(LIVE_LIGHT_MODEL).build();
+    let extractor = live_client()?.extractor::<Person>(LIVE_LIGHT_MODEL).build();
 
     let response: ExtractionResponse<Person> = extractor
         .extract_with_usage("Jane Smith is a 45 year old data scientist.")
@@ -79,7 +80,9 @@ async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
 async fn extract_with_chat_history_with_usage_works() -> Result<()> {
     use rig::message::Message;
 
-    let extractor = live_client().extractor::<Address>(LIVE_LIGHT_MODEL).build();
+    let extractor = live_client()?
+        .extractor::<Address>(LIVE_LIGHT_MODEL)
+        .build();
 
     let chat_history = vec![Message::user(
         "I'm looking at a property that might be interesting.",
@@ -105,7 +108,7 @@ async fn extract_with_chat_history_with_usage_works() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
 async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
-    let extractor = live_client().extractor::<Person>(LIVE_LIGHT_MODEL).build();
+    let extractor = live_client()?.extractor::<Person>(LIVE_LIGHT_MODEL).build();
 
     let text = "Bob Johnson is a 55 year old retired teacher.";
 
@@ -119,7 +122,7 @@ async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
     assert_compatible_professions(
         person.profession.as_deref(),
         response.data.profession.as_deref(),
-    );
+    )?;
     assert!(response.usage.total_tokens > 0, "usage should be populated");
 
     Ok(())
@@ -128,13 +131,15 @@ async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
 async fn usage_tracking_works_for_different_schemas() -> Result<()> {
-    let person_extractor = live_client().extractor::<Person>(LIVE_LIGHT_MODEL).build();
+    let person_extractor = live_client()?.extractor::<Person>(LIVE_LIGHT_MODEL).build();
     let person_response = person_extractor
         .extract_with_usage("Alice is a 25 year old developer.")
         .await?;
     assert!(person_response.usage.total_tokens > 0);
 
-    let address_extractor = live_client().extractor::<Address>(LIVE_LIGHT_MODEL).build();
+    let address_extractor = live_client()?
+        .extractor::<Address>(LIVE_LIGHT_MODEL)
+        .build();
     let address_response = address_extractor
         .extract_with_usage("456 Oak Avenue, Cambridge, MA 02139")
         .await?;

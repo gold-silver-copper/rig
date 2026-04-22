@@ -13,6 +13,51 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
+pub enum EmbeddingResponseError {
+    #[error("ResponseError: response data length does not match input length")]
+    MismatchedEmbeddingCount,
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+impl EmbeddingResponseError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EmbeddingTransportError {
+    #[error("TransportError: {message}")]
+    Message { message: String },
+}
+
+impl EmbeddingTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EmbeddingConfigurationError {
+    #[error("ConfigurationError: {message}")]
+    Message { message: String },
+}
+
+impl EmbeddingConfigurationError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum EmbeddingError {
     /// Http error (e.g.: connection error, timeout, etc.)
     #[error("HttpError: {0}")]
@@ -26,6 +71,16 @@ pub enum EmbeddingError {
     UrlError(#[from] url::ParseError),
 
     #[cfg(not(target_family = "wasm"))]
+    /// Error building the embedding request
+    #[error("RequestError: {0}")]
+    RequestError(Box<dyn std::error::Error + Send + Sync + 'static>),
+
+    #[cfg(target_family = "wasm")]
+    /// Error building the embedding request
+    #[error("RequestError: {0}")]
+    RequestError(Box<dyn std::error::Error + 'static>),
+
+    #[cfg(not(target_family = "wasm"))]
     /// Error processing the document for embedding
     #[error("DocumentError: {0}")]
     DocumentError(Box<dyn std::error::Error + Send + Sync + 'static>),
@@ -36,12 +91,46 @@ pub enum EmbeddingError {
     DocumentError(Box<dyn std::error::Error + 'static>),
 
     /// Error parsing the completion response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(EmbeddingResponseError),
 
-    /// Error returned by the embedding model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    /// Error returned while talking to the embedding model provider.
+    #[error(transparent)]
+    TransportError(EmbeddingTransportError),
+
+    /// The embedding backend or local runtime could not be configured or initialized.
+    #[error(transparent)]
+    ConfigurationError(EmbeddingConfigurationError),
+
+    /// The embedding backend returned no embeddings for a request that should produce one.
+    #[error("EmptyResponse: embedding backend returned no embeddings")]
+    EmptyResponse,
+
+    /// The embedding backend omitted the embedding for a specific document.
+    #[error("MissingEmbeddingForDocument: backend omitted embedding for document index {index}")]
+    MissingEmbeddingForDocument { index: usize },
+}
+
+impl EmbeddingError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
+    pub fn response(message: impl Into<String>) -> Self {
+        Self::ResponseError(EmbeddingResponseError::message(message))
+    }
+
+    pub fn mismatched_embedding_count() -> Self {
+        Self::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
+    }
+
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(EmbeddingTransportError::message(message))
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(EmbeddingConfigurationError::message(message))
+    }
 }
 
 /// Trait for embedding models that can generate embeddings for documents.
@@ -51,7 +140,13 @@ pub trait EmbeddingModel: WasmCompatSend + WasmCompatSync {
 
     type Client;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self;
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError>
+    where
+        Self: Sized;
 
     /// The number of dimensions in the embedding vector.
     fn ndims(&self) -> usize;
@@ -68,11 +163,10 @@ pub trait EmbeddingModel: WasmCompatSend + WasmCompatSync {
         text: &str,
     ) -> impl std::future::Future<Output = Result<Embedding, EmbeddingError>> + WasmCompatSend {
         async {
-            Ok(self
-                .embed_texts(vec![text.to_string()])
+            self.embed_texts(vec![text.to_string()])
                 .await?
                 .pop()
-                .expect("There should be at least one embedding"))
+                .ok_or(EmbeddingError::EmptyResponse)
         }
     }
 }
@@ -97,11 +191,10 @@ pub trait ImageEmbeddingModel: Clone + WasmCompatSend + WasmCompatSync {
         bytes: &'a [u8],
     ) -> impl std::future::Future<Output = Result<Embedding, EmbeddingError>> + WasmCompatSend {
         async move {
-            Ok(self
-                .embed_images(vec![bytes.to_owned()])
+            self.embed_images(vec![bytes.to_owned()])
                 .await?
                 .pop()
-                .expect("There should be at least one embedding"))
+                .ok_or(EmbeddingError::EmptyResponse)
         }
     }
 }
@@ -122,3 +215,43 @@ impl PartialEq for Embedding {
 }
 
 impl Eq for Embedding {}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EmbeddingConfigurationError, EmbeddingError, EmbeddingResponseError,
+        EmbeddingTransportError,
+    };
+
+    #[test]
+    fn embedding_error_typed_response_constructors_are_structured() {
+        assert!(matches!(
+            EmbeddingError::request("unsupported input"),
+            EmbeddingError::RequestError(_)
+        ));
+        assert!(matches!(
+            EmbeddingError::mismatched_embedding_count(),
+            EmbeddingError::ResponseError(EmbeddingResponseError::MismatchedEmbeddingCount)
+        ));
+    }
+
+    #[test]
+    fn embedding_error_preserves_unclassified_messages() {
+        assert!(matches!(
+            EmbeddingError::response("embedding payload missing vector"),
+            EmbeddingError::ResponseError(EmbeddingResponseError::Message { message })
+                if message == "embedding payload missing vector"
+        ));
+        assert!(matches!(
+            EmbeddingError::transport("provider throttled request"),
+            EmbeddingError::TransportError(EmbeddingTransportError::Message { message })
+                if message == "provider throttled request"
+        ));
+        assert!(matches!(
+            EmbeddingError::configuration("tokenizer failed to load"),
+            EmbeddingError::ConfigurationError(EmbeddingConfigurationError::Message {
+                message
+            }) if message == "tokenizer failed to load"
+        ));
+    }
+}

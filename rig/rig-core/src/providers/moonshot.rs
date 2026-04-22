@@ -160,36 +160,46 @@ impl ProviderClient for Client {
 
     /// Create a new Moonshot client from the `MOONSHOT_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("MOONSHOT_API_KEY").expect("MOONSHOT_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("MOONSHOT_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "MOONSHOT_API_KEY",
+                source,
+            }
+        })?;
         let mut builder = Self::builder().api_key(&api_key);
         if let Ok(base_url) = std::env::var("MOONSHOT_API_BASE") {
             builder = builder.base_url(base_url);
         }
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(&input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(&input)
     }
 }
 
 impl ProviderClient for AnthropicClient {
     type Input = String;
 
-    fn from_env() -> Self {
-        let api_key = std::env::var("MOONSHOT_API_KEY").expect("MOONSHOT_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("MOONSHOT_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "MOONSHOT_API_KEY",
+                source,
+            }
+        })?;
         let mut builder = Self::builder().api_key(api_key);
         if let Some(base_url) =
             anthropic_base_override("MOONSHOT_ANTHROPIC_API_BASE", "MOONSHOT_API_BASE")
         {
             builder = builder.base_url(base_url);
         }
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::builder().api_key(input).build().unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(input).build()
     }
 }
 
@@ -424,8 +434,8 @@ fn moonshot_assistant_message_value(
                 }
             }
             message::AssistantContent::Image(_) => {
-                return Err(CompletionError::ProviderError(
-                    "Moonshot does not support assistant image content in chat history".into(),
+                return Err(CompletionError::transport(
+                    "Moonshot does not support assistant image content in chat history",
                 ));
             }
         }
@@ -558,10 +568,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.error.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.error.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -637,7 +647,7 @@ impl TryFrom<message::ToolChoice> for ToolChoice {
             message::ToolChoice::None => Self::None,
             message::ToolChoice::Auto => Self::Auto,
             choice => {
-                return Err(CompletionError::ProviderError(format!(
+                return Err(CompletionError::transport(format!(
                     "Unsupported tool choice type: {choice:?}"
                 )));
             }

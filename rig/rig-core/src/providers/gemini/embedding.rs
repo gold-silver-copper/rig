@@ -61,10 +61,14 @@ where
 
     const MAX_DOCUMENTS: usize = 1024;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
         let model = model.into();
         let ndims = dims.or_else(|| model_default_ndims(&model)).unwrap_or(768);
-        Self::new(client.clone(), model, ndims)
+        Ok(Self::new(client.clone(), model, ndims))
     }
 
     fn ndims(&self) -> usize {
@@ -99,7 +103,8 @@ where
         tracing::trace!(
             target: "rig::embedding",
             "Sending embedding request to Gemini API {}",
-            serde_json::to_string_pretty(&request_body).unwrap()
+            serde_json::to_string_pretty(&request_body)
+                .unwrap_or_else(|error| format!("{{\"serialization_error\":\"{error}\"}}"))
         );
 
         let request_body = serde_json::to_vec(&request_body)?;
@@ -131,7 +136,7 @@ where
 
                 Ok(docs)
             }
-            ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
         }
     }
 }
@@ -273,12 +278,14 @@ mod tests {
 
         // EMBEDDING_001 defaults to 3072
         let model =
-            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, None);
+            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, None)
+                .expect("embedding model should build");
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 3072);
 
         // EMBEDDING_004 defaults to 768
         let model =
-            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_004, None);
+            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_004, None)
+                .expect("embedding model should build");
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 768);
 
         // Unknown model falls back to 768
@@ -286,7 +293,8 @@ mod tests {
             &client,
             "some-future-model",
             None,
-        );
+        )
+        .expect("embedding model should build");
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 768);
     }
 
@@ -295,7 +303,8 @@ mod tests {
         let client = Client::new("test_key").unwrap();
 
         let model =
-            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, Some(256));
+            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, Some(256))
+                .expect("embedding model should build");
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 256);
     }
 

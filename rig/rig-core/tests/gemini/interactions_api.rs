@@ -1,5 +1,6 @@
 //! Migrated from `examples/gemini_interactions_api.rs`.
 
+use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
@@ -31,8 +32,8 @@ fn first_tool_call(choice: &OneOrMany<AssistantContent>) -> Option<ToolCall> {
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn basic_interaction_returns_id() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+async fn basic_interaction_returns_id() -> Result<()> {
+    let model = gemini::InteractionsClient::from_env()?.completion_model("gemini-3-flash-preview");
     let params = AdditionalParameters {
         store: Some(true),
         ..Default::default()
@@ -40,39 +41,33 @@ async fn basic_interaction_returns_id() {
     let request = model
         .completion_request("Give me two fun facts about hummingbirds.")
         .preamble("Be concise.".to_string())
-        .additional_params(serde_json::to_value(params).expect("params should serialize"))
+        .additional_params(serde_json::json!(params))
         .build();
-    let response = model
-        .completion(request)
-        .await
-        .expect("completion should succeed");
+    let response = model.completion(request).await?;
 
     assert_nonempty_response(&extract_text(&response.choice));
     assert!(
         !response.raw_response.id.is_empty(),
         "interactions api should return an interaction id"
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn followup_with_previous_interaction_id() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+async fn followup_with_previous_interaction_id() -> Result<()> {
+    let model = gemini::InteractionsClient::from_env()?.completion_model("gemini-3-flash-preview");
     let initial = model
         .completion(
             model
                 .completion_request("Give me one short fact about hummingbirds.")
-                .additional_params(
-                    serde_json::to_value(AdditionalParameters {
-                        store: Some(true),
-                        ..Default::default()
-                    })
-                    .expect("params should serialize"),
-                )
+                .additional_params(serde_json::json!(AdditionalParameters {
+                    store: Some(true),
+                    ..Default::default()
+                }))
                 .build(),
         )
-        .await
-        .expect("initial completion should succeed");
+        .await?;
     let interaction_id = initial.raw_response.id.clone();
     assert!(!interaction_id.is_empty(), "expected an interaction id");
 
@@ -80,52 +75,46 @@ async fn followup_with_previous_interaction_id() {
         .completion(
             model
                 .completion_request("Now answer with a short analogy.")
-                .additional_params(
-                    serde_json::to_value(AdditionalParameters {
-                        previous_interaction_id: Some(interaction_id),
-                        ..Default::default()
-                    })
-                    .expect("params should serialize"),
-                )
+                .additional_params(serde_json::json!(AdditionalParameters {
+                    previous_interaction_id: Some(interaction_id),
+                    ..Default::default()
+                }))
                 .build(),
         )
-        .await
-        .expect("followup completion should succeed");
+        .await?;
 
     assert_nonempty_response(&extract_text(&followup.choice));
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn google_search_tool_interaction() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+async fn google_search_tool_interaction() -> Result<()> {
+    let model = gemini::InteractionsClient::from_env()?.completion_model("gemini-3-flash-preview");
     let response = model
         .completion(
             model
                 .completion_request("Who won the Euro 2024 tournament?")
-                .additional_params(
-                    serde_json::to_value(AdditionalParameters {
-                        tools: Some(vec![Tool::GoogleSearch]),
-                        ..Default::default()
-                    })
-                    .expect("params should serialize"),
-                )
+                .additional_params(serde_json::json!(AdditionalParameters {
+                    tools: Some(vec![Tool::GoogleSearch]),
+                    ..Default::default()
+                }))
                 .build(),
         )
-        .await
-        .expect("search completion should succeed");
+        .await?;
 
     assert_nonempty_response(&extract_text(&response.choice));
     assert!(
         !response.raw_response.google_search_exchanges().is_empty(),
         "expected a search-backed exchange"
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn tool_result_roundtrip() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+async fn tool_result_roundtrip() -> Result<()> {
+    let model = gemini::InteractionsClient::from_env()?.completion_model("gemini-3-flash-preview");
     let tool = rig::completion::ToolDefinition {
         name: "add".to_string(),
         description: "Add two numbers together".to_string(),
@@ -145,19 +134,16 @@ async fn tool_result_roundtrip() {
                 .completion_request("Use the add tool to sum 7 and 11.")
                 .tool(tool)
                 .tool_choice(ToolChoice::Required)
-                .additional_params(
-                    serde_json::to_value(AdditionalParameters {
-                        store: Some(true),
-                        ..Default::default()
-                    })
-                    .expect("params should serialize"),
-                )
+                .additional_params(serde_json::json!(AdditionalParameters {
+                    store: Some(true),
+                    ..Default::default()
+                }))
                 .build(),
         )
-        .await
-        .expect("tool call completion should succeed");
+        .await?;
 
-    let tool_call = first_tool_call(&initial.choice).expect("expected a tool call");
+    let tool_call =
+        first_tool_call(&initial.choice).ok_or_else(|| anyhow!("expected a tool call"))?;
     let call_id = tool_call
         .call_id
         .clone()
@@ -173,35 +159,32 @@ async fn tool_result_roundtrip() {
                     Some(call_id),
                     serde_json::json!({ "sum": 18.0 }).to_string(),
                 ))
-                .additional_params(
-                    serde_json::to_value(AdditionalParameters {
-                        previous_interaction_id: Some(interaction_id),
-                        ..Default::default()
-                    })
-                    .expect("params should serialize"),
-                )
+                .additional_params(serde_json::json!(AdditionalParameters {
+                    previous_interaction_id: Some(interaction_id),
+                    ..Default::default()
+                }))
                 .build(),
         )
-        .await
-        .expect("tool result followup should succeed");
+        .await?;
 
     assert_nonempty_response(&extract_text(&followup.choice));
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn streaming_interaction() {
-    let model = gemini::InteractionsClient::from_env().completion_model("gemini-3-flash-preview");
+async fn streaming_interaction() -> Result<()> {
+    let model = gemini::InteractionsClient::from_env()?.completion_model("gemini-3-flash-preview");
     let request = model
         .completion_request("Write a 3-line poem about rust and rivers.")
         .temperature(0.4)
         .build();
-    let mut stream = model.stream(request).await.expect("stream should start");
+    let mut stream = model.stream(request).await?;
 
     let mut text = String::new();
     let mut saw_usage = false;
     while let Some(chunk) = stream.next().await {
-        match chunk.expect("stream chunk should succeed") {
+        match chunk? {
             StreamedAssistantContent::Text(delta) => text.push_str(&delta.text),
             StreamedAssistantContent::Final(response) => {
                 saw_usage = response.token_usage().is_some();
@@ -215,4 +198,5 @@ async fn streaming_interaction() {
         saw_usage,
         "expected the final response to expose token usage"
     );
+    Ok(())
 }

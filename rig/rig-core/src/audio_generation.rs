@@ -5,8 +5,45 @@ use crate::{
     http_client,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
+use http::StatusCode;
 use serde_json::Value;
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum AudioGenerationResponseError {
+    #[error("ResponseError: failed to decode {provider} audio payload: {source}")]
+    Base64Decode {
+        provider: &'static str,
+        #[source]
+        source: base64::DecodeError,
+    },
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+#[derive(Debug, Error)]
+pub enum AudioGenerationTransportError {
+    #[error("TransportError: request failed with status {status}: {body}")]
+    Status { status: StatusCode, body: String },
+
+    #[error("TransportError: {message}")]
+    Message { message: String },
+}
+
+impl AudioGenerationTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum AudioGenerationConfigurationError {
+    #[error("ConfigurationError: {message}")]
+    Message { message: String },
+}
 
 #[derive(Debug, Error)]
 pub enum AudioGenerationError {
@@ -18,17 +55,60 @@ pub enum AudioGenerationError {
     #[error("JsonError: {0}")]
     JsonError(#[from] serde_json::Error),
 
+    #[cfg(not(target_family = "wasm"))]
     /// Error building the transcription request
     #[error("RequestError: {0}")]
     RequestError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
-    /// Error parsing the transcription response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[cfg(target_family = "wasm")]
+    /// Error building the transcription request
+    #[error("RequestError: {0}")]
+    RequestError(#[from] Box<dyn std::error::Error + 'static>),
 
-    /// Error returned by the transcription model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    /// Error parsing the transcription response
+    #[error(transparent)]
+    ResponseError(AudioGenerationResponseError),
+
+    /// Error returned while talking to the audio generation provider.
+    #[error(transparent)]
+    TransportError(AudioGenerationTransportError),
+
+    /// Error caused by local audio generation configuration or initialization.
+    #[error(transparent)]
+    ConfigurationError(AudioGenerationConfigurationError),
+}
+
+impl AudioGenerationError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
+    pub fn decode_payload(provider: &'static str, source: base64::DecodeError) -> Self {
+        Self::ResponseError(AudioGenerationResponseError::Base64Decode { provider, source })
+    }
+
+    pub fn response_message(message: impl Into<String>) -> Self {
+        Self::ResponseError(AudioGenerationResponseError::Message {
+            message: message.into(),
+        })
+    }
+
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(AudioGenerationTransportError::message(message))
+    }
+
+    pub fn transport_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::TransportError(AudioGenerationTransportError::Status {
+            status,
+            body: body.into(),
+        })
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(AudioGenerationConfigurationError::Message {
+            message: message.into(),
+        })
+    }
 }
 pub trait AudioGeneration<M>
 where
@@ -51,7 +131,7 @@ where
             AudioGenerationRequestBuilder<M, Provided<String>, Provided<String>>,
             AudioGenerationError,
         >,
-    > + Send;
+    > + WasmCompatSend;
 }
 
 pub struct AudioGenerationResponse<T> {
@@ -60,7 +140,7 @@ pub struct AudioGenerationResponse<T> {
 }
 
 pub trait AudioGenerationModel: Sized + Clone + WasmCompatSend + WasmCompatSync {
-    type Response: Send + Sync;
+    type Response: WasmCompatSend + WasmCompatSync;
 
     type Client;
 
@@ -71,7 +151,7 @@ pub trait AudioGenerationModel: Sized + Clone + WasmCompatSend + WasmCompatSync 
         request: AudioGenerationRequest,
     ) -> impl std::future::Future<
         Output = Result<AudioGenerationResponse<Self::Response>, AudioGenerationError>,
-    > + Send;
+    > + WasmCompatSend;
 
     fn audio_generation_request(&self) -> AudioGenerationRequestBuilder<Self, Missing, Missing> {
         AudioGenerationRequestBuilder::new(self.clone())
@@ -168,5 +248,30 @@ where
         let model = self.model.clone();
 
         model.audio_generation(self.build()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AudioGenerationConfigurationError, AudioGenerationError, AudioGenerationTransportError,
+    };
+    use http::StatusCode;
+
+    #[test]
+    fn audio_generation_error_taxonomy_is_explicit() {
+        assert!(matches!(
+            AudioGenerationError::transport_status(StatusCode::BAD_GATEWAY, "bad gateway"),
+            AudioGenerationError::TransportError(AudioGenerationTransportError::Status {
+                status,
+                body,
+            }) if status == StatusCode::BAD_GATEWAY && body == "bad gateway"
+        ));
+        assert!(matches!(
+            AudioGenerationError::configuration("missing audio backend"),
+            AudioGenerationError::ConfigurationError(
+                AudioGenerationConfigurationError::Message { message }
+            ) if message == "missing audio backend"
+        ));
     }
 }

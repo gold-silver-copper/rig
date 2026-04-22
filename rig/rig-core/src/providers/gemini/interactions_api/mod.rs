@@ -195,9 +195,9 @@ where
                         .await
                         .map_err(CompletionError::HttpError)?,
                 )
-                .into();
+                .into_owned();
 
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::transport(text))
             }
         }
         .instrument(span)
@@ -445,9 +445,9 @@ where
                 .await
                 .map_err(CompletionError::HttpError)?,
         )
-        .into();
+        .into_owned();
 
-        Err(CompletionError::ProviderError(text))
+        Err(CompletionError::transport(text))
     }
 }
 
@@ -476,7 +476,7 @@ impl TryFrom<Interaction> for completion::CompletionResponse<Interaction> {
                 ),
                 None => "Interaction contained no outputs".to_string(),
             };
-            return Err(CompletionError::ResponseError(message));
+            return Err(CompletionError::response(message));
         }
 
         let content = response
@@ -491,7 +491,7 @@ impl TryFrom<Interaction> for completion::CompletionResponse<Interaction> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -577,14 +577,14 @@ fn assistant_content_from_output(
             ..
         }) => {
             let Some(mime_type) = mime_type else {
-                return Err(CompletionError::ResponseError(
+                return Err(CompletionError::response(
                     "Image output missing mime_type".to_owned(),
                 ));
             };
 
             let media_type =
                 message::ImageMediaType::from_mime_type(&mime_type).ok_or_else(|| {
-                    CompletionError::ResponseError(format!(
+                    CompletionError::response(format!(
                         "Unsupported image output mime type {mime_type}"
                     ))
                 })?;
@@ -603,7 +603,7 @@ fn assistant_content_from_output(
                     additional_params: None,
                 })
             } else {
-                return Err(CompletionError::ResponseError(
+                return Err(CompletionError::response(
                     "Image output missing data or uri".to_owned(),
                 ));
             };
@@ -622,10 +622,10 @@ fn split_data_uri(
         message::DocumentSourceKind::Base64(data) | message::DocumentSourceKind::String(data) => {
             Ok((Some(data), None))
         }
-        message::DocumentSourceKind::Raw(_) => Err(message::MessageError::ConversionError(
+        message::DocumentSourceKind::Raw(_) => Err(message::MessageError::conversion(
             "Raw content is not supported, encode as base64 first".to_string(),
         )),
-        message::DocumentSourceKind::Unknown => Err(message::MessageError::ConversionError(
+        message::DocumentSourceKind::Unknown => Err(message::MessageError::conversion(
             "Unknown content source".to_string(),
         )),
     }
@@ -914,7 +914,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].calls.push(call.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.calls.push(call.clone());
+                                } else {
+                                    exchanges.push(GoogleSearchExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: vec![call.clone()],
+                                        results: Vec::new(),
+                                    });
+                                }
                                 index
                             } else {
                                 exchanges.push(GoogleSearchExchange {
@@ -940,7 +948,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].results.push(result.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.results.push(result.clone());
+                                } else {
+                                    exchanges.push(GoogleSearchExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: Vec::new(),
+                                        results: vec![result.clone()],
+                                    });
+                                }
                             } else {
                                 exchanges.push(GoogleSearchExchange {
                                     call_id: Some(call_id.clone()),
@@ -949,7 +965,16 @@ pub mod interactions_api_types {
                                 });
                             }
                         } else if let Some(index) = last_call_index {
-                            exchanges[index].results.push(result.clone());
+                            if let Some(exchange) = exchanges.get_mut(index) {
+                                exchange.results.push(result.clone());
+                            } else {
+                                exchanges.push(GoogleSearchExchange {
+                                    call_id: None,
+                                    calls: Vec::new(),
+                                    results: vec![result.clone()],
+                                });
+                                last_call_index = Some(exchanges.len() - 1);
+                            }
                         } else {
                             exchanges.push(GoogleSearchExchange {
                                 call_id: None,
@@ -1014,7 +1039,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].calls.push(call.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.calls.push(call.clone());
+                                } else {
+                                    exchanges.push(UrlContextExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: vec![call.clone()],
+                                        results: Vec::new(),
+                                    });
+                                }
                                 index
                             } else {
                                 exchanges.push(UrlContextExchange {
@@ -1040,7 +1073,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].results.push(result.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.results.push(result.clone());
+                                } else {
+                                    exchanges.push(UrlContextExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: Vec::new(),
+                                        results: vec![result.clone()],
+                                    });
+                                }
                             } else {
                                 exchanges.push(UrlContextExchange {
                                     call_id: Some(call_id.clone()),
@@ -1049,7 +1090,16 @@ pub mod interactions_api_types {
                                 });
                             }
                         } else if let Some(index) = last_call_index {
-                            exchanges[index].results.push(result.clone());
+                            if let Some(exchange) = exchanges.get_mut(index) {
+                                exchange.results.push(result.clone());
+                            } else {
+                                exchanges.push(UrlContextExchange {
+                                    call_id: None,
+                                    calls: Vec::new(),
+                                    results: vec![result.clone()],
+                                });
+                                last_call_index = Some(exchanges.len() - 1);
+                            }
                         } else {
                             exchanges.push(UrlContextExchange {
                                 call_id: None,
@@ -1114,7 +1164,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].calls.push(call.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.calls.push(call.clone());
+                                } else {
+                                    exchanges.push(CodeExecutionExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: vec![call.clone()],
+                                        results: Vec::new(),
+                                    });
+                                }
                                 index
                             } else {
                                 exchanges.push(CodeExecutionExchange {
@@ -1140,7 +1198,15 @@ pub mod interactions_api_types {
                                 .iter()
                                 .position(|exchange| exchange.call_id.as_deref() == Some(call_id))
                             {
-                                exchanges[index].results.push(result.clone());
+                                if let Some(exchange) = exchanges.get_mut(index) {
+                                    exchange.results.push(result.clone());
+                                } else {
+                                    exchanges.push(CodeExecutionExchange {
+                                        call_id: Some(call_id.clone()),
+                                        calls: Vec::new(),
+                                        results: vec![result.clone()],
+                                    });
+                                }
                             } else {
                                 exchanges.push(CodeExecutionExchange {
                                     call_id: Some(call_id.clone()),
@@ -1149,7 +1215,16 @@ pub mod interactions_api_types {
                                 });
                             }
                         } else if let Some(index) = last_call_index {
-                            exchanges[index].results.push(result.clone());
+                            if let Some(exchange) = exchanges.get_mut(index) {
+                                exchange.results.push(result.clone());
+                            } else {
+                                exchanges.push(CodeExecutionExchange {
+                                    call_id: None,
+                                    calls: Vec::new(),
+                                    results: vec![result.clone()],
+                                });
+                                last_call_index = Some(exchanges.len() - 1);
+                            }
                         } else {
                             exchanges.push(CodeExecutionExchange {
                                 call_id: None,
@@ -1738,7 +1813,7 @@ pub mod interactions_api_types {
                     content,
                 }) => {
                     let Some(call_id) = call_id else {
-                        return Err(message::MessageError::ConversionError(
+                        return Err(message::MessageError::conversion(
                             "Tool results require call_id for Gemini Interactions API".to_string(),
                         ));
                     };
@@ -1746,7 +1821,7 @@ pub mod interactions_api_types {
                     let content = content.first();
 
                     let message::ToolResultContent::Text(text) = content else {
-                        return Err(message::MessageError::ConversionError(
+                        return Err(message::MessageError::conversion(
                             "Tool result content must be text".to_string(),
                         ));
                     };
@@ -1767,7 +1842,7 @@ pub mod interactions_api_types {
                     data, media_type, ..
                 }) => {
                     let media_type = media_type.ok_or_else(|| {
-                        message::MessageError::ConversionError(
+                        message::MessageError::conversion(
                             "Media type for image is required for Gemini".to_string(),
                         )
                     })?;
@@ -1784,7 +1859,7 @@ pub mod interactions_api_types {
                     data, media_type, ..
                 }) => {
                     let media_type = media_type.ok_or_else(|| {
-                        message::MessageError::ConversionError(
+                        message::MessageError::conversion(
                             "Media type for audio is required for Gemini".to_string(),
                         )
                     })?;
@@ -1800,7 +1875,7 @@ pub mod interactions_api_types {
                     data, media_type, ..
                 }) => {
                     let media_type = media_type.ok_or_else(|| {
-                        message::MessageError::ConversionError(
+                        message::MessageError::conversion(
                             "Media type for video is required for Gemini".to_string(),
                         )
                     })?;
@@ -1817,7 +1892,7 @@ pub mod interactions_api_types {
                     data, media_type, ..
                 }) => {
                     let media_type = media_type.ok_or_else(|| {
-                        message::MessageError::ConversionError(
+                        message::MessageError::conversion(
                             "Media type for document is required for Gemini".to_string(),
                         )
                     })?;
@@ -1888,7 +1963,7 @@ pub mod interactions_api_types {
                     data, media_type, ..
                 }) => {
                     let media_type = media_type.ok_or_else(|| {
-                        message::MessageError::ConversionError(
+                        message::MessageError::conversion(
                             "Media type for image is required for Gemini".to_string(),
                         )
                     })?;

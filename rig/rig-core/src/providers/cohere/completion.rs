@@ -14,6 +14,8 @@ use crate::providers::cohere::streaming::StreamingCompletionResponse;
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, Level, enabled, info_span};
 
+type AssistantMessageParts = (Vec<AssistantContent>, Vec<Citation>, Vec<ToolCall>);
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CompletionResponse {
     pub id: String,
@@ -25,18 +27,18 @@ pub struct CompletionResponse {
 
 impl CompletionResponse {
     /// Return that parts of the response for assistant messages w/o dealing with the other variants
-    pub fn message(&self) -> (Vec<AssistantContent>, Vec<Citation>, Vec<ToolCall>) {
-        let Message::Assistant {
-            content,
-            citations,
-            tool_calls,
-            ..
-        } = self.message.clone()
-        else {
-            unreachable!("Completion responses will only return an assistant message")
-        };
-
-        (content, citations, tool_calls)
+    pub fn message(&self) -> Result<AssistantMessageParts, CompletionError> {
+        match self.message.clone() {
+            Message::Assistant {
+                content,
+                citations,
+                tool_calls,
+                ..
+            } => Ok((content, citations, tool_calls)),
+            _ => Err(CompletionError::response(
+                "Cohere completion response did not contain an assistant message",
+            )),
+        }
     }
 }
 
@@ -137,7 +139,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let (content, _, tool_calls) = response.message();
+        let (content, _, tool_calls) = response.message()?;
 
         let model_response = if !tool_calls.is_empty() {
             OneOrMany::many(
@@ -151,7 +153,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     })
                     .collect::<Vec<_>>(),
             )
-            .expect("We have atleast 1 tool call in this if block")
+            .map_err(|_| {
+                CompletionError::response(
+                    "Cohere response declared tool calls but provided none".to_owned(),
+                )
+            })?
         } else {
             OneOrMany::many(content.into_iter().map(|content| match content {
                 AssistantContent::Text { text } => completion::AssistantContent::text(text),
@@ -160,7 +166,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 }
             }))
             .map_err(|_| {
-                CompletionError::ResponseError(
+                CompletionError::response(
                     "Response contained no message or tool call (empty)".to_owned(),
                 )
             })?
@@ -185,7 +191,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .unwrap_or_default();
 
         Ok(completion::CompletionResponse {
-            choice: OneOrMany::many(model_response).expect("There is atleast one content"),
+            choice: model_response,
             usage,
             raw_response: response,
             message_id: None,
@@ -378,12 +384,12 @@ impl TryFrom<message::Message> for Vec<Message> {
                             message::ToolResultContent::Text(text) => {
                                 Ok(ToolResultContent::Text { text: text.text })
                             }
-                            _ => Err(message::MessageError::ConversionError(
+                            _ => Err(message::MessageError::conversion(
                                 "Only text tool result content is supported by Cohere".to_owned(),
                             )),
                         })?,
                     }),
-                    _ => Err(message::MessageError::ConversionError(
+                    _ => Err(message::MessageError::conversion(
                         "Only text content is supported by Cohere".to_owned(),
                     )),
                 })
@@ -422,7 +428,7 @@ impl TryFrom<message::Message> for Vec<Message> {
                             text_content.push(AssistantContent::Thinking { thinking });
                         }
                         message::AssistantContent::Image(_) => {
-                            return Err(message::MessageError::ConversionError(
+                            return Err(message::MessageError::conversion(
                                 "Cohere currently doesn't support images.".to_owned(),
                             ));
                         }
@@ -481,7 +487,7 @@ impl TryFrom<Message> for message::Message {
                 }));
 
                 let content = OneOrMany::many(content).map_err(|_| {
-                    message::MessageError::ConversionError(
+                    message::MessageError::conversion(
                         "Expected either text content or tool calls".to_string(),
                     )
                 })?;
@@ -498,7 +504,7 @@ impl TryFrom<Message> for message::Message {
                         ToolResultContent::Document { document } => {
                             message::ToolResultContent::text(
                                 serde_json::to_string(&document.data).map_err(|e| {
-                                    message::MessageError::ConversionError(
+                                    message::MessageError::conversion(
                                         format!("Failed to convert tool result document content into text: {e}"),
                                     )
                                 })?,
@@ -649,7 +655,11 @@ where
 
         let req_body = serde_json::to_vec(&request)?;
 
-        let req = self.client.post("/v2/chat")?.body(req_body).unwrap();
+        let req = self
+            .client
+            .post("/v2/chat")?
+            .body(req_body)
+            .map_err(|error| CompletionError::HttpError(error.into()))?;
 
         async {
             let response = self
@@ -679,7 +689,7 @@ where
                     json_response.try_into()?;
                 Ok(completion)
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&body).to_string(),
                 ))
             }
@@ -702,6 +712,7 @@ where
 mod tests {
     use super::*;
     use serde_path_to_error::deserialize;
+    use std::error::Error;
 
     #[test]
     fn test_deserialize_completion_response() {
@@ -740,7 +751,7 @@ mod tests {
         let result: Result<CompletionResponse, _> = deserialize(&mut deserializer);
 
         let response = result.unwrap();
-        let (_, citations, tool_calls) = response.message();
+        let (_, citations, tool_calls) = response.message().unwrap();
         let CompletionResponse {
             id,
             finish_reason,
@@ -806,5 +817,25 @@ mod tests {
 
         let completion_message: completion::Message = message.clone().try_into().unwrap();
         let _converted_back: Vec<Message> = completion_message.try_into().unwrap();
+    }
+
+    #[test]
+    fn completion_response_message_rejects_non_assistant_payloads() -> Result<(), Box<dyn Error>> {
+        let response = CompletionResponse {
+            id: "resp".to_string(),
+            finish_reason: FinishReason::Complete,
+            message: Message::User {
+                content: OneOrMany::one(UserContent::Text {
+                    text: "Hello, world!".to_string(),
+                }),
+            },
+            usage: None,
+        };
+
+        if response.message().is_err() {
+            Ok(())
+        } else {
+            Err("expected non-assistant Cohere payload to return an error".into())
+        }
     }
 }

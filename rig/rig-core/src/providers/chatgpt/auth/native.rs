@@ -1,6 +1,6 @@
 //! Native ChatGPT OAuth and token cache implementation.
 
-use super::{AuthContext, AuthError, DeviceCodeHandler, DeviceCodePrompt};
+use super::{AuthContext, AuthError, AuthFlowError, DeviceCodeHandler, DeviceCodePrompt};
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -160,9 +160,7 @@ impl PlatformAuthenticator {
         let start = std::time::Instant::now();
         let code = loop {
             if start.elapsed().as_secs() as i64 >= DEVICE_CODE_TIMEOUT_SECONDS {
-                return Err(AuthError::Message(
-                    "Timed out waiting for ChatGPT device authorization".into(),
-                ));
+                return Err(AuthError::Flow(AuthFlowError::DeviceAuthorizationTimedOut));
             }
 
             let response = client
@@ -185,10 +183,11 @@ impl PlatformAuthenticator {
                 continue;
             }
 
-            let text = response.text().await.unwrap_or_default();
-            return Err(AuthError::Message(format!(
-                "ChatGPT device authorization failed: {status} {text}"
-            )));
+            let text = response.text().await?;
+            return Err(AuthError::Flow(AuthFlowError::DeviceAuthorizationFailed {
+                status,
+                body: text,
+            }));
         };
 
         let redirect_uri = format!("{CHATGPT_AUTH_BASE}/deviceauth/callback");
@@ -254,7 +253,11 @@ impl PlatformAuthenticator {
             return Ok(build_auth_record(tokens, Some(refresh_token.to_owned())));
         }
 
-        let body = response.text().await.unwrap_or_default();
+        let body = response
+            .text()
+            .await
+            .map_err(AuthError::from)
+            .map_err(RefreshTokensError::Auth)?;
         let oauth_error = serde_json::from_str::<OAuthErrorResponse>(&body).ok();
         if should_reauthenticate_after_refresh(
             status,
@@ -265,8 +268,8 @@ impl PlatformAuthenticator {
             return Err(RefreshTokensError::Reauthenticate);
         }
 
-        Err(RefreshTokensError::Auth(AuthError::Message(
-            format_refresh_error(status, oauth_error.as_ref(), &body),
+        Err(RefreshTokensError::Auth(AuthError::Flow(
+            refresh_failure_error(status, oauth_error.as_ref(), &body),
         )))
     }
 }
@@ -345,33 +348,17 @@ fn should_reauthenticate_after_refresh(
     ) && matches!(error_code, Some("invalid_grant"))
 }
 
-fn format_refresh_error(
+fn refresh_failure_error(
     status: reqwest::StatusCode,
     oauth_error: Option<&OAuthErrorResponse>,
     body: &str,
-) -> String {
-    let error_code = oauth_error.and_then(|error| error.error.as_deref());
-    let description = oauth_error.and_then(|error| error.error_description.as_deref());
-
-    if let Some(description) = description
-        .map(str::trim)
-        .filter(|description| !description.is_empty())
-    {
-        return format!(
-            "ChatGPT token refresh failed: {status} {} ({description})",
-            error_code.unwrap_or("unknown_error")
-        );
+) -> AuthFlowError {
+    AuthFlowError::TokenRefreshFailed {
+        status,
+        error_code: oauth_error.and_then(|error| error.error.clone()),
+        error_description: oauth_error.and_then(|error| error.error_description.clone()),
+        response_body: (!body.trim().is_empty()).then(|| body.to_owned()),
     }
-
-    if let Some(error_code) = error_code {
-        return format!("ChatGPT token refresh failed: {status} {error_code}");
-    }
-
-    if !body.trim().is_empty() {
-        return format!("ChatGPT token refresh failed: {status} {body}");
-    }
-
-    format!("ChatGPT token refresh failed: {status}")
 }
 
 fn token_expired(expires_at: Option<i64>) -> bool {
@@ -419,8 +406,9 @@ where
 mod tests {
     use super::{
         DeviceCodeResponse, OAuthErrorResponse, OAuthTokenResponse, build_auth_record,
-        format_refresh_error, should_reauthenticate_after_refresh,
+        refresh_failure_error, should_reauthenticate_after_refresh,
     };
+    use crate::providers::chatgpt::auth::AuthFlowError;
     use reqwest::StatusCode;
 
     #[test]
@@ -482,10 +470,18 @@ mod tests {
             error_description: Some("please retry".into()),
         };
 
-        assert_eq!(
-            format_refresh_error(StatusCode::BAD_GATEWAY, Some(&oauth_error), ""),
-            "ChatGPT token refresh failed: 502 Bad Gateway temporarily_unavailable (please retry)"
-        );
+        assert!(matches!(
+            refresh_failure_error(StatusCode::BAD_GATEWAY, Some(&oauth_error), ""),
+            AuthFlowError::TokenRefreshFailed {
+                status,
+                error_code,
+                error_description,
+                response_body,
+            } if status == StatusCode::BAD_GATEWAY
+                && error_code.as_deref() == Some("temporarily_unavailable")
+                && error_description.as_deref() == Some("please retry")
+                && response_body.is_none()
+        ));
     }
 
     #[test]

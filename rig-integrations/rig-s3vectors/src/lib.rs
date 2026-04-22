@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 #[macro_use]
 mod document;
 
@@ -15,8 +25,33 @@ use rig::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 use uuid::Uuid;
+
+#[derive(Debug)]
+enum S3VectorStoreError {
+    InvalidFloat,
+    MissingDistance,
+    MissingMetadata,
+}
+
+impl fmt::Display for S3VectorStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            S3VectorStoreError::InvalidFloat => {
+                write!(f, "S3Vectors returned a non-finite floating-point value")
+            }
+            S3VectorStoreError::MissingDistance => {
+                write!(f, "S3Vectors response did not include a vector distance")
+            }
+            S3VectorStoreError::MissingMetadata => {
+                write!(f, "S3Vectors response did not include vector metadata")
+            }
+        }
+    }
+}
+
+impl std::error::Error for S3VectorStoreError {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateRecord {
@@ -149,10 +184,10 @@ where
                         };
                         let document =
                             serde_json::to_value(&document).map_err(VectorStoreError::JsonError)?;
-                        let document = json_value_to_document(&document);
+                        let document = json_value_to_document(&document)?;
                         let vec = y.vec.into_iter().map(|item| item as f32).collect();
                         PutInputVector::builder()
-                            .metadata(document.clone())
+                            .metadata(document)
                             .data(VectorData::Float32(vec))
                             .key(Uuid::new_v4())
                             .build()
@@ -191,59 +226,71 @@ where
     }
 }
 
-fn json_value_to_document(value: &Value) -> Document {
+fn json_value_to_document(value: &Value) -> Result<Document, VectorStoreError> {
     match value {
-        Value::Null => Document::Null,
-        Value::Bool(b) => Document::Bool(*b),
+        Value::Null => Ok(Document::Null),
+        Value::Bool(b) => Ok(Document::Bool(*b)),
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Document::Number(aws_smithy_types::Number::NegInt(i))
+                Ok(Document::Number(aws_smithy_types::Number::NegInt(i)))
             } else if let Some(u) = n.as_u64() {
-                Document::Number(aws_smithy_types::Number::PosInt(u))
+                Ok(Document::Number(aws_smithy_types::Number::PosInt(u)))
             } else if let Some(f) = n.as_f64() {
-                Document::Number(aws_smithy_types::Number::Float(f))
+                Ok(Document::Number(aws_smithy_types::Number::Float(f)))
             } else {
-                Document::Null // fallback, should never happen
+                Err(VectorStoreError::DatastoreError(Box::new(
+                    serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Unsupported JSON number for S3Vectors metadata: {n}"),
+                    )),
+                )))
             }
         }
-        Value::String(s) => Document::String(s.clone()),
-        Value::Array(arr) => Document::Array(arr.iter().map(json_value_to_document).collect()),
-        Value::Object(obj) => Document::Object(
+        Value::String(s) => Ok(Document::String(s.clone())),
+        Value::Array(arr) => Ok(Document::Array(
+            arr.iter()
+                .map(json_value_to_document)
+                .collect::<Result<_, _>>()?,
+        )),
+        Value::Object(obj) => Ok(Document::Object(
             obj.iter()
-                .map(|(k, v)| (k.clone(), json_value_to_document(v)))
-                .collect::<HashMap<_, _>>(),
-        ),
+                .map(|(k, v)| Ok((k.clone(), json_value_to_document(v)?)))
+                .collect::<Result<HashMap<_, _>, VectorStoreError>>()?,
+        )),
     }
 }
 
-fn document_to_json_value(value: &Document) -> Value {
+fn document_to_json_value(value: &Document) -> Result<Value, VectorStoreError> {
     match value {
-        Document::Null => Value::Null,
-        Document::Bool(b) => Value::Bool(*b),
+        Document::Null => Ok(Value::Null),
+        Document::Bool(b) => Ok(Value::Bool(*b)),
         Document::Number(n) => {
             let res = match n {
                 aws_smithy_types::Number::Float(f) => {
-                    serde_json::Number::from_f64(f.to_owned()).unwrap()
+                    serde_json::Number::from_f64(*f).ok_or_else(|| {
+                        VectorStoreError::DatastoreError(Box::new(S3VectorStoreError::InvalidFloat))
+                    })?
                 }
-                aws_smithy_types::Number::NegInt(i) => {
-                    serde_json::Number::from_i128(*i as i128).unwrap()
-                }
-                aws_smithy_types::Number::PosInt(u) => {
-                    serde_json::Number::from_u128(*u as u128).unwrap()
-                }
+                aws_smithy_types::Number::NegInt(i) => serde_json::Number::from(*i),
+                aws_smithy_types::Number::PosInt(u) => serde_json::Number::from(*u),
             };
 
-            serde_json::Value::Number(res)
+            Ok(serde_json::Value::Number(res))
         }
-        Document::String(s) => Value::String(s.clone()),
-        Document::Array(arr) => Value::Array(arr.iter().map(document_to_json_value).collect()),
+        Document::String(s) => Ok(Value::String(s.clone())),
+        Document::Array(arr) => Ok(Value::Array(
+            arr.iter()
+                .map(document_to_json_value)
+                .collect::<Result<_, _>>()?,
+        )),
         Document::Object(obj) => {
             let res = obj
                 .iter()
-                .map(|(k, v)| (k.clone(), document_to_json_value(v)))
-                .collect::<serde_json::Map<String, serde_json::Value>>();
+                .map(|(k, v)| Ok((k.clone(), document_to_json_value(v)?)))
+                .collect::<Result<serde_json::Map<String, serde_json::Value>, VectorStoreError>>(
+                )?;
 
-            serde_json::Value::Object(res)
+            Ok(serde_json::Value::Object(res))
         }
     }
 }
@@ -285,29 +332,37 @@ where
             query_builder = query_builder.filter(filter.inner().clone())
         }
 
-        let query = query_builder.send().await.unwrap();
+        let query = query_builder
+            .send()
+            .await
+            .map_err(|error| VectorStoreError::DatastoreError(Box::new(error)))?;
 
         let res: Vec<(f64, String, T)> = query
             .vectors
             .into_iter()
-            .filter(|vector| {
-                req.threshold().is_none_or(|threshold| {
-                    (vector
-                        .distance()
-                        .expect("vector distance should always exist") as f64)
-                        >= threshold
-                })
-            })
-            .map(|x| {
-                let distance = x.distance.expect("vector distance should always exist") as f64;
-                let val =
-                    document_to_json_value(&x.metadata.expect("metadata should always exist"));
+            .map(|vector| {
+                let distance = vector.distance.ok_or_else(|| {
+                    VectorStoreError::DatastoreError(Box::new(S3VectorStoreError::MissingDistance))
+                })? as f64;
+                if req
+                    .threshold()
+                    .is_some_and(|threshold| distance < threshold)
+                {
+                    return Ok(None);
+                }
 
-                let metadata: T = serde_json::from_value(val)
-                    .expect("converting JSON from S3Vectors to valid T should always work");
+                let metadata = vector.metadata.ok_or_else(|| {
+                    VectorStoreError::DatastoreError(Box::new(S3VectorStoreError::MissingMetadata))
+                })?;
+                let value = document_to_json_value(&metadata)?;
+                let metadata =
+                    serde_json::from_value(value).map_err(VectorStoreError::JsonError)?;
 
-                (distance, x.key, metadata)
+                Ok(Some((distance, vector.key, metadata)))
             })
+            .collect::<Result<Vec<_>, VectorStoreError>>()?
+            .into_iter()
+            .flatten()
             .collect();
 
         Ok(res)
@@ -343,24 +398,30 @@ where
             query_builder = query_builder.filter(filter.inner().clone())
         }
 
-        let query = query_builder.send().await.unwrap();
+        let query = query_builder
+            .send()
+            .await
+            .map_err(|error| VectorStoreError::DatastoreError(Box::new(error)))?;
 
         let res: Vec<(f64, String)> = query
             .vectors
             .into_iter()
-            .filter(|vector| {
-                req.threshold().is_none_or(|threshold| {
-                    (vector
-                        .distance()
-                        .expect("vector distance should always exist") as f64)
-                        >= threshold
-                })
-            })
-            .map(|x| {
-                let distance = x.distance.expect("vector distance should always exist") as f64;
+            .map(|vector| {
+                let distance = vector.distance.ok_or_else(|| {
+                    VectorStoreError::DatastoreError(Box::new(S3VectorStoreError::MissingDistance))
+                })? as f64;
+                if req
+                    .threshold()
+                    .is_some_and(|threshold| distance < threshold)
+                {
+                    return Ok(None);
+                }
 
-                (distance, x.key)
+                Ok(Some((distance, vector.key)))
             })
+            .collect::<Result<Vec<_>, VectorStoreError>>()?
+            .into_iter()
+            .flatten()
             .collect();
 
         Ok(res)

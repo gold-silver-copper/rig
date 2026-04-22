@@ -138,7 +138,7 @@ where
                                 final_interaction = Some(interaction);
                             }
                             InteractionSseEvent::Error { error, .. } => {
-                                yield Err(CompletionError::ProviderError(error.message));
+                                yield Err(CompletionError::transport(error.message));
                                 break;
                             }
                             _ => continue,
@@ -149,7 +149,7 @@ where
                     }
                     Err(error) => {
                         tracing::error!(?error, "SSE error");
-                        yield Err(CompletionError::ProviderError(error.to_string()));
+                        yield Err(CompletionError::transport(error.to_string()));
                         break;
                     }
                 }
@@ -190,7 +190,10 @@ where
 
                     let data = serde_json::from_str::<InteractionSseEvent>(&message.data);
                     let Ok(data) = data else {
-                        let err = data.unwrap_err();
+                        let err = match data {
+                            Ok(_) => continue,
+                            Err(err) => err,
+                        };
                         tracing::debug!("Failed to deserialize interactions SSE event: {err}");
                         continue;
                     };
@@ -200,7 +203,7 @@ where
                 Err(crate::http_client::Error::StreamEnded) => break,
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
-                    yield Err(CompletionError::ProviderError(error.to_string()));
+                    yield Err(CompletionError::transport(error.to_string()));
                     break;
                 }
             }

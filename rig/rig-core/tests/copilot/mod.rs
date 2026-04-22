@@ -14,6 +14,7 @@ mod streaming_tools;
 mod structured_output;
 mod typed_prompt_tools;
 
+use anyhow::Result;
 use rig::providers::copilot;
 use std::borrow::Cow;
 
@@ -84,6 +85,6 @@ pub(crate) fn live_builder() -> copilot::ClientBuilder {
     }
 }
 
-pub(crate) fn live_client() -> copilot::Client {
-    live_builder().build().expect("Copilot client should build")
+pub(crate) fn live_client() -> Result<copilot::Client> {
+    Ok(live_builder().build()?)
 }

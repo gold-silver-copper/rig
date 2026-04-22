@@ -29,19 +29,20 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn client() -> Client {
+fn client() -> rig::http_client::Result<Client> {
     Client::from_env()
 }
 
-async fn partial_agent() -> AgentBuilder<rig_bedrock::completion::CompletionModel> {
-    let client = client();
-    client.agent(AMAZON_NOVA_LITE)
+async fn partial_agent()
+-> Result<AgentBuilder<rig_bedrock::completion::CompletionModel>, anyhow::Error> {
+    let client = client()?;
+    Ok(client.agent(AMAZON_NOVA_LITE))
 }
 
 /// Create an AWS Bedrock agent with a system prompt
 async fn basic() -> Result<(), anyhow::Error> {
     let agent = partial_agent()
-        .await
+        .await?
         .preamble("Answer with json format only")
         .build();
 
@@ -54,7 +55,7 @@ async fn basic() -> Result<(), anyhow::Error> {
 /// Create an AWS Bedrock with tools
 async fn tools() -> Result<(), anyhow::Error> {
     let calculator_agent = partial_agent()
-        .await
+        .await?
         .preamble("You must only do math by using a tool.")
         .max_tokens(1024)
         .tool(common::Adder)
@@ -69,7 +70,7 @@ async fn tools() -> Result<(), anyhow::Error> {
 }
 
 async fn context() -> Result<(), anyhow::Error> {
-    let model = client().completion_model(AMAZON_NOVA_LITE);
+    let model = client()?.completion_model(AMAZON_NOVA_LITE);
 
     // Create an agent with multiple context documents
     let agent = AgentBuilder::new(model)
@@ -92,7 +93,7 @@ async fn context() -> Result<(), anyhow::Error> {
 /// This example loads in all the rust examples from the rig-core crate and uses them as\\
 ///  context for the agent
 async fn loaders() -> Result<(), anyhow::Error> {
-    let model = client().completion_model(AMAZON_NOVA_LITE);
+    let model = client()?.completion_model(AMAZON_NOVA_LITE);
 
     // Load in all the rust examples
     let examples = FileLoader::with_glob("rig-core/examples/*.rs")?

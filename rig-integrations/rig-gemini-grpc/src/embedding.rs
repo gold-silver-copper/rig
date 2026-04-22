@@ -32,8 +32,12 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
 
     type Client = super::Client;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, dims)
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -50,7 +54,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
         let mut grpc_client = self
             .client
             .grpc_client()
-            .map_err(|e| EmbeddingError::ProviderError(e.to_string()))?;
+            .map_err(|e| EmbeddingError::transport(e.to_string()))?;
 
         for doc in documents_vec {
             let request = EmbedContentRequest {
@@ -72,7 +76,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
             let response = grpc_client
                 .embed_content(request)
                 .await
-                .map_err(|e| EmbeddingError::ProviderError(e.to_string()))?
+                .map_err(|e| EmbeddingError::transport(e.to_string()))?
                 .into_inner();
 
             if let Some(embedding) = response.embedding {
@@ -81,9 +85,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
                     vec: embedding.values.into_iter().map(|v| v as f64).collect(),
                 });
             } else {
-                return Err(EmbeddingError::ResponseError(
-                    "No embedding in response".to_string(),
-                ));
+                return Err(EmbeddingError::response("No embedding in response"));
             }
         }
 

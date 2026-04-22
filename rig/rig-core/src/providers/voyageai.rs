@@ -70,13 +70,18 @@ impl ProviderClient for Client {
 
     /// Create a new OpenAI client from the `OPENAI_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("VOYAGE_API_KEY").expect("VOYAGE_API_KEY not set");
-        Self::new(&api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("VOYAGE_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "VOYAGE_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(&api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(&input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(&input)
     }
 }
 
@@ -146,7 +151,7 @@ pub struct ApiErrorResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::ProviderError(err.message)
+        EmbeddingError::transport(err.message)
     }
 }
 
@@ -161,7 +166,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
         }
     }
 }
@@ -188,13 +193,17 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
         let model = model.into();
         let dims = dims
             .or(model_dimensions_from_identifier(&model))
             .unwrap_or_default();
 
-        Self::new(client.clone(), model, dims)
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -232,9 +241,7 @@ where
                     );
 
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
-                        ));
+                        return Err(EmbeddingError::mismatched_embedding_count());
                     }
 
                     Ok(response
@@ -247,10 +254,10 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
-            Err(EmbeddingError::ProviderError(
+            Err(EmbeddingError::transport(
                 String::from_utf8_lossy(&response_body).to_string(),
             ))
         }

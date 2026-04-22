@@ -202,7 +202,7 @@ impl ProviderBuilder for CopilotBuilder {
 impl ProviderClient for Client {
     type Input = CopilotAuth;
 
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let mut builder = Self::builder();
         fn get(name: &str) -> Option<String> {
             std::env::var(name).ok()
@@ -213,16 +213,16 @@ impl ProviderClient for Client {
         }
 
         if let Some(api_key) = env_api_key(&get) {
-            builder.api_key(api_key).build().unwrap()
+            builder.api_key(api_key).build()
         } else if let Some(access_token) = env_github_access_token(&get) {
-            builder.github_access_token(access_token).build().unwrap()
+            builder.github_access_token(access_token).build()
         } else {
-            builder.oauth().build().unwrap()
+            builder.oauth().build()
         }
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::builder().api_key(input).build().unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(input).build()
     }
 }
 
@@ -481,9 +481,10 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
     type Error = CompletionError;
 
     fn try_from(response: ChatCompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(CompletionError::missing_choices)?;
 
         let content = match &choice.message {
             openai::completion::Message::Assistant {
@@ -520,13 +521,13 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
                 );
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = crate::OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -622,7 +623,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::ProviderError(err.to_string()))
+            .map_err(|err| CompletionError::transport(err.to_string()))
     }
 
     fn chat_request(
@@ -713,13 +714,13 @@ where
                             message_id: core.message_id,
                         })
                     }
-                    ChatApiResponse::Err(err) => Err(CompletionError::ProviderError(
-                        err.error_message().to_string(),
-                    )),
+                    ChatApiResponse::Err(err) => {
+                        Err(CompletionError::transport(err.error_message().to_string()))
+                    }
                 }
             } else {
                 let body = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(body))
+                Err(CompletionError::transport(body))
             }
         }
         .instrument(span)
@@ -791,7 +792,7 @@ where
                 })
             } else {
                 let body = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(body))
+                Err(CompletionError::transport(body))
             }
         }
         .instrument(span)
@@ -808,8 +809,16 @@ where
         let auth = self.auth_context().await?;
         let headers = default_headers(&auth.api_key, initiator, has_vision);
         let mut request_json = serde_json::to_value(&request)?;
-        request_json["stream"] = json!(true);
-        request_json["stream_options"] = json!({ "include_usage": true });
+        let request_json_map = request_json.as_object_mut().ok_or_else(|| {
+            CompletionError::RequestError(Box::new(std::io::Error::other(
+                "Copilot chat request payload must be a JSON object",
+            )))
+        })?;
+        request_json_map.insert("stream".to_owned(), json!(true));
+        request_json_map.insert(
+            "stream_options".to_owned(),
+            json!({ "include_usage": true }),
+        );
 
         let req = apply_headers(
             post_with_auth_base(&self.client, &auth, "/chat/completions", Transport::Sse)?,
@@ -997,7 +1006,7 @@ where
                                             .map(|err| err.message.clone())
                                             .unwrap_or_else(|| "Copilot response stream failed".into());
                                         terminated_with_error = true;
-                                        yield Err(CompletionError::ProviderError(error));
+                                        yield Err(CompletionError::transport(error));
                                         break;
                                     }
                                     _ => continue,
@@ -1009,7 +1018,7 @@ where
                         }
                         Err(error) => {
                             terminated_with_error = true;
-                            yield Err(CompletionError::ProviderError(error.to_string()));
+                            yield Err(CompletionError::transport(error.to_string()));
                             break;
                         }
                     }
@@ -1126,14 +1135,18 @@ where
     const MAX_DOCUMENTS: usize = 1024;
     type Client = Client<H>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, ndims: Option<usize>) -> Self {
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        ndims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
         let model = model.into();
         let dims = ndims.unwrap_or(match model.as_str() {
             TEXT_EMBEDDING_3_LARGE => 3072,
             TEXT_EMBEDDING_3_SMALL | TEXT_EMBEDDING_ADA_002 => 1536,
             _ => 0,
         });
-        Self::new(client.clone(), model, dims)
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -1151,7 +1164,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| EmbeddingError::ProviderError(err.to_string()))?;
+            .map_err(|err| EmbeddingError::transport(err.to_string()))?;
 
         let headers = default_headers(&auth.api_key, "user", false);
         let mut body = json!({
@@ -1159,14 +1172,19 @@ where
             "input": documents,
         });
 
+        let body_map = body.as_object_mut().ok_or_else(|| {
+            EmbeddingError::RequestError(Box::new(std::io::Error::other(
+                "Copilot embedding request payload must be a JSON object",
+            )))
+        })?;
         if self.ndims > 0 && self.model.as_str() != TEXT_EMBEDDING_ADA_002 {
-            body["dimensions"] = json!(self.ndims);
+            body_map.insert("dimensions".to_owned(), json!(self.ndims));
         }
         if let Some(encoding_format) = &self.encoding_format {
-            body["encoding_format"] = json!(encoding_format);
+            body_map.insert("encoding_format".to_owned(), json!(encoding_format));
         }
         if let Some(user) = &self.user {
-            body["user"] = json!(user);
+            body_map.insert("user".to_owned(), json!(user));
         }
 
         let req = apply_headers(
@@ -1193,7 +1211,7 @@ where
                 Ok(parsed) => parsed,
                 Err(parse_error) => {
                     if let Ok(err) = serde_json::from_slice::<NestedApiError>(&body) {
-                        return Err(EmbeddingError::ProviderError(err.error.message));
+                        return Err(EmbeddingError::transport(err.error.message));
                     }
 
                     let preview = String::from_utf8_lossy(&body);
@@ -1203,7 +1221,7 @@ where
                         preview.into_owned()
                     };
 
-                    return Err(EmbeddingError::ProviderError(format!(
+                    return Err(EmbeddingError::transport(format!(
                         "Failed to parse Copilot embeddings response: {parse_error}; body: {preview}"
                     )));
                 }
@@ -1224,7 +1242,7 @@ where
                 .collect())
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }
@@ -1779,7 +1797,9 @@ mod tests {
             .http_client(http_client.clone())
             .build()
             .expect("build client");
-        let model = client.embedding_model(TEXT_EMBEDDING_3_SMALL);
+        let model = client
+            .embedding_model(TEXT_EMBEDDING_3_SMALL)
+            .expect("embedding model should build");
 
         let embeddings = model
             .embed_texts(["one".to_string(), "two".to_string()])

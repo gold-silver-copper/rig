@@ -210,7 +210,7 @@ impl ProviderBuilder for ChatGPTBuilder {
 impl ProviderClient for Client {
     type Input = ChatGPTAuth;
 
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let mut builder = Self::builder();
 
         if let Ok(base_url) =
@@ -227,14 +227,13 @@ impl ProviderClient for Client {
                     account_id,
                 })
                 .build()
-                .unwrap()
         } else {
-            builder.oauth().build().unwrap()
+            builder.oauth().build()
         }
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::builder().api_key(input).build().unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(input).build()
     }
 }
 
@@ -421,7 +420,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::ProviderError(err.to_string()))?;
+            .map_err(|err| CompletionError::transport(err.to_string()))?;
 
         let req = self
             .add_auth_headers(self.client.post("/responses")?, &auth)
@@ -434,9 +433,9 @@ where
 
         match raw_response.clone().try_into() {
             Ok(response) => Ok(response),
-            Err(CompletionError::ResponseError(message))
-                if message == "Response contained no parts" =>
-            {
+            Err(CompletionError::ResponseError(
+                crate::completion::CompletionResponseError::MissingParts,
+            )) => {
                 responses_api::streaming::completion_response_from_sse_body(
                     &text,
                     raw_response,
@@ -552,7 +551,7 @@ where
             .auth
             .auth_context()
             .await
-            .map_err(|err| CompletionError::ProviderError(err.to_string()))?;
+            .map_err(|err| CompletionError::transport(err.to_string()))?;
 
         let req = self
             .add_auth_headers(self.client.post("/responses")?, &auth)

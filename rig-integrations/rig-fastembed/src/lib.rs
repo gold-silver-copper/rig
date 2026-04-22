@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 use std::sync::Arc;
 
 pub use fastembed::EmbeddingModel as FastembedModel;
@@ -27,9 +37,7 @@ impl Client {
         Self
     }
 
-    /// Create an embedding model with the given name.
-    /// Note: default embedding dimension of 0 will be used if model is not known.
-    /// If this is the case, it's better to use function `embedding_model_with_ndims`
+    /// Create an embedding model from a known FastEmbed model identifier.
     ///
     /// # Example
     /// ```
@@ -38,37 +46,43 @@ impl Client {
     /// // Initialize the `rig-fastembed` client
     /// let fastembed_client = rig_fastembed::Client::new();
     ///
-    /// let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
+    /// let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q)?;
+    /// # Ok::<_, rig::embeddings::EmbeddingError>(())
     /// ```
     #[cfg(feature = "hf-hub")]
-    pub fn embedding_model(&self, model: &FastembedModel) -> EmbeddingModel {
-        let ndims = TextEmbedding::get_model_info(model).unwrap().dim;
-
+    pub fn embedding_model(
+        &self,
+        model: &FastembedModel,
+    ) -> Result<EmbeddingModel, EmbeddingError> {
+        let ndims = embedding_dimensions(model)?;
         EmbeddingModel::new(model, ndims)
     }
 
     /// Create an embedding builder with the given embedding model.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// use rig_fastembed::{Client, FastembedModel};
     ///
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// // Initialize the Fastembed client
     /// let fastembed_client = Client::new();
     ///
-    /// let embeddings = fastembed_client.embeddings(FastembedModel::AllMiniLML6V2Q)
-    ///     .simple_document("doc0", "Hello, world!")
-    ///     .simple_document("doc1", "Goodbye, world!")
+    /// let embeddings = fastembed_client
+    ///     .embeddings::<String>(&FastembedModel::AllMiniLML6V2Q)?
+    ///     .documents(vec!["Hello, world!".to_string(), "Goodbye, world!".to_string()])?
     ///     .build()
-    ///     .await
-    ///     .expect("Failed to embed documents");
+    ///     .await?;
+    /// # let _ = embeddings;
+    /// # Ok(())
+    /// # }
     /// ```
     #[cfg(feature = "hf-hub")]
     pub fn embeddings<D: Embed>(
         &self,
         model: &fastembed::EmbeddingModel,
-    ) -> EmbeddingsBuilder<EmbeddingModel, D> {
-        EmbeddingsBuilder::new(self.embedding_model(model))
+    ) -> Result<EmbeddingsBuilder<EmbeddingModel, D>, EmbeddingError> {
+        Ok(EmbeddingsBuilder::new(self.embedding_model(model)?))
     }
 }
 
@@ -81,40 +95,46 @@ pub struct EmbeddingModel {
 
 impl EmbeddingModel {
     #[cfg(feature = "hf-hub")]
-    pub fn new(model: &fastembed::EmbeddingModel, ndims: usize) -> Self {
+    pub fn new(model: &fastembed::EmbeddingModel, ndims: usize) -> Result<Self, EmbeddingError> {
         let embedder = Arc::new(
             TextEmbedding::try_new(
                 InitOptions::new(model.to_owned()).with_show_download_progress(true),
             )
-            .unwrap(),
+            .map_err(|error| EmbeddingError::configuration(error.to_string()))?,
         );
 
-        Self {
+        Ok(Self {
             embedder,
             model: model.to_owned(),
             ndims,
-        }
+        })
     }
 
     pub fn new_from_user_defined(
         user_defined_model: UserDefinedEmbeddingModel,
         ndims: usize,
         model_info: &ModelInfo<FastembedModel>,
-    ) -> Self {
+    ) -> Result<Self, EmbeddingError> {
         let fastembed_embedding_model = TextEmbedding::try_new_from_user_defined(
             user_defined_model,
             InitOptionsUserDefined::default(),
         )
-        .unwrap();
+        .map_err(|error| EmbeddingError::configuration(error.to_string()))?;
 
         let embedder = Arc::new(fastembed_embedding_model);
 
-        Self {
+        Ok(Self {
             embedder,
             model: model_info.model.to_owned(),
             ndims,
-        }
+        })
     }
+}
+
+fn embedding_dimensions(model: &FastembedModel) -> Result<usize, EmbeddingError> {
+    TextEmbedding::get_model_info(model)
+        .map(|info| info.dim)
+        .map_err(|error| EmbeddingError::configuration(error.to_string()))
 }
 
 impl embeddings::EmbeddingModel for EmbeddingModel {
@@ -122,9 +142,34 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
 
     type Client = Client;
 
-    /// **PANICS**: FastEmbed models cannot be created via this method, which will panic
-    fn make(_: &Self::Client, _: impl Into<String>, _: Option<usize>) -> Self {
-        panic!("Cannot create a fastembed model via `EmbeddingModel::make`")
+    fn make(
+        _client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        let requested_model = model.into();
+        let model = FastembedModel::try_from(requested_model.clone()).map_err(|error| {
+            EmbeddingError::configuration(format!(
+                "FastEmbed model `{requested_model}` is unavailable: {error}"
+            ))
+        })?;
+        let ndims = match dims {
+            Some(ndims) => ndims,
+            None => embedding_dimensions(&model)?,
+        };
+
+        #[cfg(feature = "hf-hub")]
+        {
+            Self::new(&model, ndims)
+        }
+
+        #[cfg(not(feature = "hf-hub"))]
+        {
+            let _ = ndims;
+            Err(EmbeddingError::configuration(
+                "FastEmbed support requires the `hf-hub` feature",
+            ))
+        }
     }
 
     fn ndims(&self) -> usize {
@@ -140,7 +185,7 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
         let documents_as_vec = self
             .embedder
             .embed(documents_as_strings.clone(), None)
-            .map_err(|err| EmbeddingError::ProviderError(err.to_string()))?;
+            .map_err(|err| EmbeddingError::transport(err.to_string()))?;
 
         let docs = documents_as_strings
             .into_iter()
@@ -152,5 +197,37 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
             .collect::<Vec<embeddings::Embedding>>();
 
         Ok(docs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Client, EmbeddingModel};
+    use rig::embeddings::{self, EmbeddingError};
+
+    #[tokio::test]
+    async fn invalid_model_make_fails_during_construction() {
+        let error = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &Client::new(),
+            "not-a-fastembed-model",
+            None,
+        )
+        .err()
+        .expect("invalid model should fail during construction");
+
+        assert!(matches!(error, EmbeddingError::ConfigurationError(_)));
+    }
+
+    #[test]
+    fn invalid_model_with_explicit_dims_still_fails_construction() {
+        let error = <EmbeddingModel as embeddings::EmbeddingModel>::make(
+            &Client::new(),
+            "not-a-fastembed-model",
+            Some(384),
+        )
+        .err()
+        .expect("explicit dims must not bypass model validation");
+
+        assert!(matches!(error, EmbeddingError::ConfigurationError(_)));
     }
 }

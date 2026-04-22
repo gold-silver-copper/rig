@@ -106,20 +106,25 @@ impl DebugExt for AnthropicExt {}
 impl ProviderClient for Client {
     type Input = String;
 
-    fn from_env() -> Self
+    fn from_env() -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        let key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY not set");
+        let key = std::env::var("ANTHROPIC_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "ANTHROPIC_API_KEY",
+                source,
+            }
+        })?;
 
-        Self::builder().api_key(key).build().unwrap()
+        Self::builder().api_key(key).build()
     }
 
-    fn from_val(input: Self::Input) -> Self
+    fn from_val(input: Self::Input) -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        Self::builder().api_key(input).build().unwrap()
+        Self::builder().api_key(input).build()
     }
 }
 

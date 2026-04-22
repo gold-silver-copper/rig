@@ -27,9 +27,9 @@ impl std::fmt::Display for WordDefinition {
 }
 
 #[tokio::main]
-async fn main() {
-    let openai_model =
-        rig::providers::openai::Client::from_env().embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let openai_model = rig::providers::openai::Client::from_env()?
+        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     let helixdb_client = HelixDB::new(None, Some(6969), None); // Uses default port 6969
     let vector_store = HelixDBVectorStore::new(helixdb_client, openai_model.clone());
@@ -49,13 +49,11 @@ async fn main() {
         }];
 
     let documents = EmbeddingsBuilder::new(openai_model)
-        .documents(words)
-        .unwrap()
+        .documents(words)?
         .build()
-        .await
-        .expect("Failed to create embeddings");
+        .await?;
 
-    vector_store.insert_documents(documents).await.unwrap();
+    vector_store.insert_documents(documents).await?;
 
     let query = "What is a flurbo?";
     let vector_req = VectorSearchRequest::builder()
@@ -63,10 +61,7 @@ async fn main() {
         .samples(5)
         .build();
 
-    let docs = vector_store
-        .top_n::<WordDefinition>(vector_req)
-        .await
-        .unwrap();
+    let docs = vector_store.top_n::<WordDefinition>(vector_req).await?;
 
     for doc in docs {
         println!(
@@ -74,6 +69,8 @@ async fn main() {
             id = doc.1,
             score = doc.0,
             doc = doc.2
-        )
+        );
     }
+
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! Migrated from `examples/agent_with_llamafile.rs`.
 
+use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
 
@@ -9,21 +10,19 @@ use super::support;
 
 #[tokio::test]
 #[ignore = "requires a local llamafile server at http://localhost:8080"]
-async fn completion_smoke() {
+async fn completion_smoke() -> Result<()> {
     if support::skip_if_server_unavailable() {
-        return;
+        return Ok(());
     }
 
-    let client = support::client();
+    let client = support::client()?;
     let agent = client
         .agent(support::model_name())
         .preamble(BASIC_PREAMBLE)
         .build();
 
-    let response = agent
-        .prompt(BASIC_PROMPT)
-        .await
-        .expect("prompt should succeed");
+    let response = agent.prompt(BASIC_PROMPT).await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }

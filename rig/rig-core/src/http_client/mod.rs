@@ -27,6 +27,12 @@ pub enum Error {
     StreamEnded,
     #[error("Invalid content type was returned: {0:?}")]
     InvalidContentType(HeaderValue),
+    #[error("Missing environment variable {name}: {source}")]
+    MissingEnvironmentVariable {
+        name: &'static str,
+        #[source]
+        source: std::env::VarError,
+    },
     #[cfg(not(target_family = "wasm"))]
     #[error("Http client error: {0}")]
     Instance(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
@@ -37,6 +43,13 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub(crate) async fn response_error_message(response: reqwest::Response) -> String {
+    match response.text().await {
+        Ok(body) => body,
+        Err(error) => format!("failed to read error response body: {error}"),
+    }
+}
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn instance_error<E: std::error::Error + Send + Sync + 'static>(error: E) -> Error {
@@ -145,7 +158,7 @@ impl HttpClientExt for reqwest::Client {
             if !response.status().is_success() {
                 return Err(Error::InvalidStatusCodeWithMessage(
                     response.status(),
-                    response.text().await.unwrap(),
+                    response_error_message(response).await,
                 ));
             }
 
@@ -178,19 +191,19 @@ impl HttpClientExt for reqwest::Client {
         U: WasmCompatSend + 'static,
     {
         let (parts, body) = req.into_parts();
-        let body = reqwest::multipart::Form::from(body);
-
-        let req = self
-            .request(parts.method, parts.uri.to_string())
-            .headers(parts.headers)
-            .multipart(body);
+        let method = parts.method;
+        let uri = parts.uri.to_string();
+        let headers = parts.headers;
+        let client = self.clone();
 
         async move {
+            let body = reqwest::multipart::Form::try_from(body).map_err(instance_error)?;
+            let req = client.request(method, uri).headers(headers).multipart(body);
             let response = req.send().await.map_err(instance_error)?;
             if !response.status().is_success() {
                 return Err(Error::InvalidStatusCodeWithMessage(
                     response.status(),
-                    response.text().await.unwrap(),
+                    response_error_message(response).await,
                 ));
             }
 
@@ -228,17 +241,17 @@ impl HttpClientExt for reqwest::Client {
             .headers(parts.headers)
             .body(body.into())
             .build()
-            .map_err(|x| Error::Instance(x.into()))
-            .unwrap();
+            .map_err(instance_error);
 
         let client = self.clone();
 
         async move {
+            let req = req?;
             let response: reqwest::Response = client.execute(req).await.map_err(instance_error)?;
             if !response.status().is_success() {
                 return Err(Error::InvalidStatusCodeWithMessage(
                     response.status(),
-                    response.text().await.unwrap(),
+                    response_error_message(response).await,
                 ));
             }
 
@@ -290,7 +303,7 @@ impl HttpClientExt for reqwest_middleware::ClientWithMiddleware {
             if !response.status().is_success() {
                 return Err(Error::InvalidStatusCodeWithMessage(
                     response.status(),
-                    response.text().await.unwrap(),
+                    response_error_message(response).await,
                 ));
             }
 
@@ -323,19 +336,19 @@ impl HttpClientExt for reqwest_middleware::ClientWithMiddleware {
         U: WasmCompatSend + 'static,
     {
         let (parts, body) = req.into_parts();
-        let body = reqwest::multipart::Form::from(body);
-
-        let req = self
-            .request(parts.method, parts.uri.to_string())
-            .headers(parts.headers)
-            .multipart(body);
+        let method = parts.method;
+        let uri = parts.uri.to_string();
+        let headers = parts.headers;
+        let client = self.clone();
 
         async move {
+            let body = reqwest::multipart::Form::try_from(body).map_err(instance_error)?;
+            let req = client.request(method, uri).headers(headers).multipart(body);
             let response = req.send().await.map_err(instance_error)?;
             if !response.status().is_success() {
                 return Err(Error::InvalidStatusCodeWithMessage(
                     response.status(),
-                    response.text().await.unwrap(),
+                    response_error_message(response).await,
                 ));
             }
 
@@ -373,17 +386,17 @@ impl HttpClientExt for reqwest_middleware::ClientWithMiddleware {
             .headers(parts.headers)
             .body(body.into())
             .build()
-            .map_err(|x| Error::Instance(x.into()))
-            .unwrap();
+            .map_err(instance_error);
 
         let client = self.clone();
 
         async move {
+            let req = req?;
             let response: reqwest::Response = client.execute(req).await.map_err(instance_error)?;
             if !response.status().is_success() {
                 return Err(Error::InvalidStatusCodeWithMessage(
                     response.status(),
-                    response.text().await.unwrap(),
+                    response_error_message(response).await,
                 ));
             }
 

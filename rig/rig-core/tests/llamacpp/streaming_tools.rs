@@ -1,5 +1,6 @@
 //! llama.cpp streaming tools coverage, including the migrated example path.
 
+use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::streaming::StreamingPrompt;
 
@@ -12,8 +13,8 @@ use super::support;
 
 #[tokio::test]
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
-async fn streaming_tools_smoke() {
-    let client = support::completions_client();
+async fn streaming_tools_smoke() -> Result<()> {
+    let client = support::completions_client()?;
     let agent = client
         .agent(support::model_name())
         .preamble(STREAMING_TOOLS_PREAMBLE)
@@ -22,17 +23,16 @@ async fn streaming_tools_smoke() {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
-async fn example_streaming_with_tools() {
-    let client = support::completions_client();
+async fn example_streaming_with_tools() -> Result<()> {
+    let client = support::completions_client()?;
     let agent = client
         .agent(support::model_name())
         .preamble(
@@ -45,9 +45,8 @@ async fn example_streaming_with_tools() {
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tools prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

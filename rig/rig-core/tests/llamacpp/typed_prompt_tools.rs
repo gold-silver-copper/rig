@@ -181,7 +181,7 @@ async fn prompt_typed_with_tool_call_verbatim_roundtrip() -> Result<()> {
     let hook = StepLogger::default();
 
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = support::completions_client();
+    let client = support::completions_client()?;
 
     let agent = client
         .agent(model)

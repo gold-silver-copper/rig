@@ -88,19 +88,24 @@ impl ProviderClient for Client {
     type Input = DeepSeekApiKey;
 
     // If you prefer the environment variable approach:
-    fn from_env() -> Self {
-        let api_key = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("DEEPSEEK_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "DEEPSEEK_API_KEY",
+                source,
+            }
+        })?;
         let mut client_builder = Self::builder();
         client_builder.headers_mut().insert(
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
         let client_builder = client_builder.api_key(&api_key);
-        client_builder.build().unwrap()
+        client_builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 
@@ -118,7 +123,7 @@ enum ApiResponse<T> {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::transport(err.message)
     }
 }
 
@@ -380,9 +385,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(CompletionError::missing_choices)?;
         let content = match &choice.message {
             Message::Assistant {
                 content,
@@ -415,13 +421,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -613,10 +619,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -971,11 +977,9 @@ mod tests {
             1,
             "multiple text items should produce a single user message"
         );
-        match &user_messages[0] {
-            Message::User { content, .. } => {
-                assert_eq!(content, "first part\nsecond part");
-            }
-            _ => unreachable!(),
+        assert!(matches!(user_messages.first(), Some(Message::User { .. })));
+        if let Some(Message::User { content, .. }) = user_messages.first() {
+            assert_eq!(content, "first part\nsecond part");
         }
     }
 

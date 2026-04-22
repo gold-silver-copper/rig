@@ -1,5 +1,6 @@
 //! Gemini embeddings smoke test.
 
+use anyhow::Result;
 #[cfg(feature = "derive")]
 use rig::Embed;
 use rig::client::{EmbeddingsClient, ProviderClient};
@@ -17,36 +18,33 @@ struct Greetings {
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn embeddings_smoke() {
-    let client = gemini::Client::from_env();
-    let model = client.embedding_model(gemini::embedding::EMBEDDING_001);
+async fn embeddings_smoke() -> Result<()> {
+    let client = gemini::Client::from_env()?;
+    let model = client.embedding_model(gemini::embedding::EMBEDDING_001)?;
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))
-        .await
-        .expect("embedding request should succeed");
+        .await?;
 
     assert_embeddings_nonempty_and_consistent(&embeddings, EMBEDDING_INPUTS.len());
+    Ok(())
 }
 
 #[cfg(feature = "derive")]
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY and --features derive"]
-async fn derive_document_embeddings() {
-    let client = gemini::Client::from_env();
+async fn derive_document_embeddings() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let embeddings = client
-        .embeddings(gemini::embedding::EMBEDDING_001)
+        .embeddings(gemini::embedding::EMBEDDING_001)?
         .document(Greetings {
             message: "Hello, world!".to_string(),
-        })
-        .expect("first document should build")
+        })?
         .document(Greetings {
             message: "Goodbye, world!".to_string(),
-        })
-        .expect("second document should build")
+        })?
         .build()
-        .await
-        .expect("embedding request should succeed");
+        .await?;
 
     assert_eq!(embeddings.len(), 2);
     for (_document, embeddings_for_document) in embeddings {
@@ -63,4 +61,5 @@ async fn derive_document_embeddings() {
             }
         }
     }
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! xAI streaming tools smoke test.
 
+use anyhow::{Context, Result};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{CompletionModel, ToolDefinition};
@@ -60,23 +61,24 @@ impl Tool for StatusWordTool {
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
-async fn raw_stream_emits_required_zero_arg_tool_call() {
-    let client = xai::Client::from_env();
+async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
+    let client = xai::Client::from_env()?;
     let model = client.completion_model(xai::completion::GROK_4);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
         .tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
-async fn responses_stream_preserves_tool_result_flow() {
-    let client = xai::Client::from_env();
+async fn responses_stream_preserves_tool_result_flow() -> Result<()> {
+    let client = xai::Client::from_env()?;
     let agent = client
         .agent(xai::completion::GROK_4)
         .preamble(XAI_STATUS_TOOL_PREAMBLE)
@@ -94,12 +96,13 @@ async fn responses_stream_preserves_tool_result_flow() {
         "get_status_word",
         &[XAI_STATUS_TOOL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
-async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
-    let client = xai::Client::from_env();
+async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() -> Result<()> {
+    let client = xai::Client::from_env()?;
     let model = client.completion_model(xai::completion::GROK_4);
     let request = model
         .completion_request(XAI_STATUS_TOOL_PROMPT)
@@ -107,13 +110,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .tool(StatusWordTool.definition(String::new()).await)
         .build();
 
-    let first_turn = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw xAI responses stream should start"),
-    )
-    .await;
+    let first_turn = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_tool_call_precedes_text(&first_turn, "get_status_word");
 
@@ -122,7 +119,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .iter()
         .find(|tool_call| tool_call.function.name == "get_status_word")
         .cloned()
-        .expect("raw xAI responses stream should yield get_status_word");
+        .context("raw xAI responses stream should yield get_status_word")?;
     let assistant_message = Message::Assistant {
         id: None,
         content: OneOrMany::one(AssistantContent::ToolCall(tool_call.clone())),
@@ -136,13 +133,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .message(tool_result_message)
         .build();
 
-    let second_turn = collect_raw_stream_observation(
-        model
-            .stream(followup_request)
-            .await
-            .expect("raw xAI followup stream should start"),
-    )
-    .await;
+    let second_turn = collect_raw_stream_observation(model.stream(followup_request).await?).await;
 
     assert!(
         second_turn.tool_calls.is_empty(),
@@ -154,4 +145,5 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
             .collect::<Vec<_>>()
     );
     assert_raw_stream_text_contains(&second_turn, &[XAI_STATUS_TOOL_OUTPUT]);
+    Ok(())
 }

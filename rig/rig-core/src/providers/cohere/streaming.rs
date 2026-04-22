@@ -134,7 +134,11 @@ where
 
         let body = serde_json::to_vec(&request)?;
 
-        let req = self.client.post("/v2/chat")?.body(body).unwrap();
+        let req = self
+            .client
+            .post("/v2/chat")?
+            .body(body)
+            .map_err(|error| CompletionError::HttpError(error.into()))?;
 
         let mut event_source = GenericEventSource::new(self.client.clone(), req);
 
@@ -255,7 +259,7 @@ where
                     }
                     Err(err) => {
                         tracing::error!(?err, "SSE error");
-                        yield Err(CompletionError::ProviderError(err.to_string()));
+                        yield Err(CompletionError::transport(err.to_string()));
                         break;
                     }
                 }

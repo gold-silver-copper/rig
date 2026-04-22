@@ -1,5 +1,6 @@
 //! ChatGPT reasoning-enabled tool roundtrip tests.
 
+use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -12,9 +13,9 @@ use crate::reasoning::{self, WeatherTool};
 
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
-async fn streaming() {
+async fn streaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let agent = live_client()
+    let agent = live_client()?
         .agent(LIVE_MODEL)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
@@ -39,4 +40,5 @@ async fn streaming() {
             stats.reasoning_content_types
         );
     }
+    Ok(())
 }

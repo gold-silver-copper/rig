@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use serde_json::json;
 
 use arrow_array::RecordBatchIterator;
@@ -19,8 +20,8 @@ mod fixture;
 
 #[tokio::test]
 async fn vector_search_test() {
-    // Setup mock openai API
-    let server = httpmock::MockServer::start();
+    assert_ok(async {
+        let server = httpmock::MockServer::start();
 
     server.mock(|when, then| {
         let mut req_data = vec![
@@ -107,24 +108,23 @@ async fn vector_search_test() {
     });
 
     // Initialize OpenAI client
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(server.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
 
     // Select an embedding model.
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+            .context("embedding model should build")?;
 
     // Initialize LanceDB locally.
-    let db = lancedb::connect("data/lancedb-store")
-        .execute()
-        .await
-        .unwrap();
+        let db = lancedb::connect("data/lancedb-store").execute().await?;
 
     // Generate embeddings for the test data.
-    let embeddings = EmbeddingsBuilder::new(model.clone())
-        .documents(words()).unwrap()
+        let embeddings = EmbeddingsBuilder::new(model.clone())
+        .documents(words())?
         // Note: need at least 256 rows in order to create an index so copy the definition 256 times for testing purposes.
         .documents(
             (0..256)
@@ -132,49 +132,44 @@ async fn vector_search_test() {
                     id: format!("doc{i}"),
                     definition: "Definition of *flumbuzzle (noun)*: A sudden, inexplicable urge to rearrange or reorganize small objects, such as desk items or books, for no apparent reason.".to_string()
                 })
-        ).unwrap()
+        )?
         .build()
-        .await.unwrap();
+        .await?;
 
     let table_name = "definitions";
-    let table = if db
-        .table_names()
-        .execute()
-        .await
-        .unwrap()
-        .contains(&table_name.to_string())
+        let table = if db
+            .table_names()
+            .execute()
+            .await?
+            .contains(&table_name.to_string())
     {
-        db.open_table(table_name).execute().await.unwrap()
+            db.open_table(table_name).execute().await?
     } else {
-        db.create_table(
-            table_name,
-            RecordBatchIterator::new(
-                vec![as_record_batch(embeddings, model.ndims())],
-                Arc::new(schema(model.ndims())),
-            ),
-        )
-        .execute()
-        .await
-        .unwrap()
+            db.create_table(
+                table_name,
+                RecordBatchIterator::new(
+                    vec![as_record_batch(embeddings, model.ndims())],
+                    Arc::new(schema(model.ndims())),
+                ),
+            )
+            .execute()
+            .await?
     };
 
     // See [LanceDB indexing](https://lancedb.github.io/lancedb/concepts/index_ivfpq/#product-quantization) for more information
-    if table.index_stats("embedding").await.unwrap().is_none() {
-        table
-            .create_index(
-                &["embedding"],
-                lancedb::index::Index::IvfPq(IvfPqIndexBuilder::default()),
-            )
-            .execute()
-            .await
-            .unwrap();
-    }
+        if table.index_stats("embedding").await?.is_none() {
+            table
+                .create_index(
+                    &["embedding"],
+                    lancedb::index::Index::IvfPq(IvfPqIndexBuilder::default()),
+                )
+                .execute()
+                .await?;
+        }
 
     // Define search_params params that will be used by the vector store to perform the vector search.
     let search_params = SearchParams::default();
-    let vector_store_index = LanceDbVectorIndex::new(table, model, "id", search_params)
-        .await
-        .unwrap();
+        let vector_store_index = LanceDbVectorIndex::new(table, model, "id", search_params).await?;
 
     let query = "My boss says I zindle too much, what does that mean?";
     let req = VectorSearchRequest::builder()
@@ -183,29 +178,31 @@ async fn vector_search_test() {
         .build();
 
     // Query the index
-    let results = vector_store_index
-        .top_n::<serde_json::Value>(req)
-        .await
-        .unwrap();
+        let results = vector_store_index.top_n::<serde_json::Value>(req).await?;
 
-    let (distance, _, value) = &results.first().unwrap();
+        let (distance, _, value) = results
+            .first()
+            .context("vector search returned no results")?;
 
-    assert_eq!(
-        *value,
-        json!({
-            "_distance": distance,
-            "definition": "Definition of *zindle (verb)*: to pretend to be working on something important while actually doing something completely unrelated or unproductive.",
-            "id": "doc1"
-        })
-    );
+        assert_eq!(
+            *value,
+            json!({
+                "_distance": distance,
+                "definition": "Definition of *zindle (verb)*: to pretend to be working on something important while actually doing something completely unrelated or unproductive.",
+                "id": "doc1"
+            })
+        );
 
-    db.drop_table(table_name, &[]).await.unwrap();
+        db.drop_table(table_name, &[]).await?;
+        Ok(())
+    }
+    .await);
 }
 
 #[tokio::test]
 async fn agent_with_dynamic_context_test() {
-    // Setup mock openai API
-    let server = httpmock::MockServer::start();
+    assert_ok(async {
+        let server = httpmock::MockServer::start();
 
     // Mock embeddings API for initial data ingestion
     server.mock(|when, then| {
@@ -322,24 +319,23 @@ async fn agent_with_dynamic_context_test() {
     });
 
     // Initialize OpenAI client
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(server.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
 
     // Select an embedding model.
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+            .context("embedding model should build")?;
 
     // Initialize LanceDB locally.
-    let db = lancedb::connect("data/lancedb-store")
-        .execute()
-        .await
-        .unwrap();
+        let db = lancedb::connect("data/lancedb-store").execute().await?;
 
     // Generate embeddings for the test data.
-    let embeddings = EmbeddingsBuilder::new(model.clone())
-        .documents(words()).unwrap()
+        let embeddings = EmbeddingsBuilder::new(model.clone())
+        .documents(words())?
         // Note: need at least 256 rows in order to create an index so copy the definition 256 times for testing purposes.
         .documents(
             (0..256)
@@ -347,51 +343,46 @@ async fn agent_with_dynamic_context_test() {
                     id: format!("doc{i}"),
                     definition: "Definition of *flumbuzzle (noun)*: A sudden, inexplicable urge to rearrange or reorganize small objects, such as desk items or books, for no apparent reason.".to_string()
                 })
-        ).unwrap()
+        )?
         .build()
-        .await.unwrap();
+        .await?;
 
     let top_k = embeddings.len();
 
     let table_name = "agent_definitions";
-    let table = if db
-        .table_names()
-        .execute()
-        .await
-        .unwrap()
-        .contains(&table_name.to_string())
+        let table = if db
+            .table_names()
+            .execute()
+            .await?
+            .contains(&table_name.to_string())
     {
-        db.open_table(table_name).execute().await.unwrap()
+            db.open_table(table_name).execute().await?
     } else {
-        db.create_table(
-            table_name,
-            RecordBatchIterator::new(
-                vec![as_record_batch(embeddings, model.ndims())],
-                Arc::new(schema(model.ndims())),
-            ),
-        )
-        .execute()
-        .await
-        .unwrap()
+            db.create_table(
+                table_name,
+                RecordBatchIterator::new(
+                    vec![as_record_batch(embeddings, model.ndims())],
+                    Arc::new(schema(model.ndims())),
+                ),
+            )
+            .execute()
+            .await?
     };
 
     // See [LanceDB indexing](https://lancedb.github.io/lancedb/concepts/index_ivfpq/#product-quantization) for more information
-    if table.index_stats("embedding").await.unwrap().is_none() {
-        table
-            .create_index(
-                &["embedding"],
-                lancedb::index::Index::IvfPq(IvfPqIndexBuilder::default()),
-            )
-            .execute()
-            .await
-            .unwrap();
-    }
+        if table.index_stats("embedding").await?.is_none() {
+            table
+                .create_index(
+                    &["embedding"],
+                    lancedb::index::Index::IvfPq(IvfPqIndexBuilder::default()),
+                )
+                .execute()
+                .await?;
+        }
 
     // Define search_params params that will be used by the vector store to perform the vector search.
     let search_params = SearchParams::default();
-    let vector_store_index = LanceDbVectorIndex::new(table, model, "id", search_params)
-        .await
-        .unwrap();
+        let vector_store_index = LanceDbVectorIndex::new(table, model, "id", search_params).await?;
 
     // Build RAG agent with dynamic context
     let agent = openai_client
@@ -403,10 +394,17 @@ async fn agent_with_dynamic_context_test() {
 
     let query = "My boss says I zindle too much, what does that mean?";
 
-    let response = agent.prompt(query).await.unwrap();
+        let response = agent.prompt(query).await?;
 
     assert!(response.contains("zindle") || response.contains("pretend to be working"));
     assert!(response.contains("important") || response.contains("unproductive"));
 
-    db.drop_table(table_name, &[]).await.unwrap();
+        db.drop_table(table_name, &[]).await?;
+        Ok(())
+    }
+    .await);
+}
+
+fn assert_ok(result: Result<()>) {
+    assert!(result.is_ok(), "{result:?}");
 }

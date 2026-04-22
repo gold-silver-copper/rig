@@ -8,7 +8,6 @@ use std::collections::HashMap;
 #[derive(Clone, Default)]
 pub struct LSH {
     hyperplanes: Vec<Vec<f32>>,
-    num_tables: usize,
     num_hyperplanes: usize,
 }
 
@@ -43,20 +42,18 @@ impl LSH {
 
         Self {
             hyperplanes,
-            num_tables,
             num_hyperplanes,
         }
     }
 
     /// Compute hash for a vector in a specific table
-    pub fn hash(&self, vector: &[f64], table_idx: usize) -> u64 {
+    pub fn hash(&self, vector: &[f64], table_idx: usize) -> Option<u64> {
         let mut hash = 0u64;
         let start = table_idx * self.num_hyperplanes;
+        let end = start.checked_add(self.num_hyperplanes)?;
+        let hyperplanes = self.hyperplanes.get(start..end)?;
 
-        for (i, hyperplane) in self.hyperplanes[start..start + self.num_hyperplanes]
-            .iter()
-            .enumerate()
-        {
+        for (i, hyperplane) in hyperplanes.iter().enumerate() {
             // Dot product (convert f64 to f32)
             let dot: f32 = vector
                 .iter()
@@ -70,7 +67,7 @@ impl LSH {
             }
         }
 
-        hash
+        Some(hash)
     }
 }
 
@@ -94,12 +91,10 @@ impl LSHIndex {
 
     /// Insert a document ID with its embedding
     pub fn insert(&mut self, id: String, embedding: &[f64]) {
-        for table_idx in 0..self.lsh.num_tables {
-            let hash = self.lsh.hash(embedding, table_idx);
-            self.tables[table_idx]
-                .entry(hash)
-                .or_default()
-                .push(id.clone());
+        for (table_idx, table) in self.tables.iter_mut().enumerate() {
+            if let Some(hash) = self.lsh.hash(embedding, table_idx) {
+                table.entry(hash).or_default().push(id.clone());
+            }
         }
     }
 
@@ -110,10 +105,12 @@ impl LSHIndex {
         let mut candidates = HashSet::new();
 
         // Collect candidates from all tables
-        for table_idx in 0..self.lsh.num_tables {
-            let hash = self.lsh.hash(embedding, table_idx);
+        for (table_idx, table) in self.tables.iter().enumerate() {
+            let Some(hash) = self.lsh.hash(embedding, table_idx) else {
+                continue;
+            };
 
-            if let Some(ids) = self.tables[table_idx].get(&hash) {
+            if let Some(ids) = table.get(&hash) {
                 candidates.extend(ids.iter().cloned());
             }
         }
@@ -126,5 +123,17 @@ impl LSHIndex {
         for table in self.tables.iter_mut() {
             table.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LSH;
+
+    #[test]
+    fn hash_returns_none_for_invalid_table_index() {
+        let lsh = LSH::new(2, 1, 2);
+
+        assert_eq!(lsh.hash(&[1.0, 2.0], 1), None);
     }
 }

@@ -1,5 +1,6 @@
 //! DeepSeek streaming tools smoke test.
 
+use anyhow::{Result, anyhow};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
@@ -21,8 +22,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn streaming_chat_with_tools() {
-    let client = deepseek::Client::from_env();
+async fn streaming_chat_with_tools() -> Result<()> {
+    let client = deepseek::Client::from_env()?;
     let agent = client
         .agent(DEEPSEEK_CHAT)
         .preamble("You are a calculator here to help the user perform arithmetic operations.")
@@ -33,32 +34,32 @@ async fn streaming_chat_with_tools() {
 
     let history: &[Message] = &[];
     let mut stream = agent.stream_chat("Calculate 2 - 5", history).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming chat should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn raw_stream_emits_required_zero_arg_tool_call() {
-    let client = deepseek::Client::from_env();
+async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
+    let client = deepseek::Client::from_env()?;
     let model = client.completion_model(DEEPSEEK_CHAT);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
         .tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
-    let client = deepseek::Client::from_env();
+async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() -> Result<()> {
+    let client = deepseek::Client::from_env()?;
     let model = client.completion_model(DEEPSEEK_CHAT);
     let request = model
         .completion_request(TWO_TOOL_STREAM_PROMPT)
@@ -67,24 +68,19 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
         .tool(BetaSignal.definition(String::new()).await)
         .build();
 
-    let observation = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw stream should start"),
-    )
-    .await;
+    let observation = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_contains_distinct_tool_calls_before_text(
         &observation,
         &["lookup_harbor_label", "lookup_orchard_label"],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn streaming_chat_surfaces_two_distinct_tool_calls_before_final_answer() {
-    let client = deepseek::Client::from_env();
+async fn streaming_chat_surfaces_two_distinct_tool_calls_before_final_answer() -> Result<()> {
+    let client = deepseek::Client::from_env()?;
     let agent = client
         .agent(DEEPSEEK_CHAT)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
@@ -104,12 +100,13 @@ async fn streaming_chat_surfaces_two_distinct_tool_calls_before_final_answer() {
         &["lookup_harbor_label", "lookup_orchard_label"],
         &[ALPHA_SIGNAL_OUTPUT, BETA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn streaming_chat_emits_tool_call_before_later_text() {
-    let client = deepseek::Client::from_env();
+async fn streaming_chat_emits_tool_call_before_later_text() -> Result<()> {
+    let client = deepseek::Client::from_env()?;
     let agent = client
         .agent(DEEPSEEK_CHAT)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
@@ -128,12 +125,13 @@ async fn streaming_chat_emits_tool_call_before_later_text() {
         "lookup_harbor_label",
         &[ALPHA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn raw_followup_uses_tool_result_without_new_tool_calls() {
-    let client = deepseek::Client::from_env();
+async fn raw_followup_uses_tool_result_without_new_tool_calls() -> Result<()> {
+    let client = deepseek::Client::from_env()?;
     let model = client.completion_model(DEEPSEEK_CHAT);
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
@@ -141,13 +139,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
         .tool(AlphaSignal.definition(String::new()).await)
         .build();
 
-    let first_turn = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw stream should start"),
-    )
-    .await;
+    let first_turn = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_tool_call_precedes_text(&first_turn, "lookup_harbor_label");
 
@@ -156,7 +148,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
         .iter()
         .find(|tool_call| tool_call.function.name == "lookup_harbor_label")
         .cloned()
-        .expect("raw stream should yield lookup_harbor_label");
+        .ok_or_else(|| anyhow!("raw stream should yield lookup_harbor_label"))?;
     let assistant_message = Message::Assistant {
         id: None,
         content: OneOrMany::one(AssistantContent::ToolCall(tool_call.clone())),
@@ -172,13 +164,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
         .message(tool_result_message)
         .build();
 
-    let second_turn = collect_raw_stream_observation(
-        model
-            .stream(followup_request)
-            .await
-            .expect("raw followup stream should start"),
-    )
-    .await;
+    let second_turn = collect_raw_stream_observation(model.stream(followup_request).await?).await;
 
     assert!(
         second_turn.tool_calls.is_empty(),
@@ -190,4 +176,5 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
             .collect::<Vec<_>>()
     );
     assert_raw_stream_text_contains(&second_turn, &[ALPHA_SIGNAL_OUTPUT]);
+    Ok(())
 }

@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 use std::{fmt::Display, ops::RangeInclusive};
 
 use rig::{
@@ -184,7 +194,7 @@ fn bind_value<S>(
     value: Value,
 ) -> QueryAs<'_, Postgres, S, PgArguments> {
     match value {
-        Value::Null => unreachable!(),
+        Value::Null => builder.bind(Value::Null),
         Value::Bool(b) => builder.bind(b),
         Value::Number(num) => {
             if let Some(n) = num.as_f64() {
@@ -192,7 +202,7 @@ fn bind_value<S>(
             } else if let Some(n) = num.as_i64() {
                 builder.bind(n)
             } else {
-                unreachable!()
+                builder.bind(Value::Number(num))
             }
         }
         Value::String(s) => builder.bind(s),
@@ -341,7 +351,7 @@ where
     ) -> Result<(), VectorStoreError> {
         for (document, embeddings) in documents {
             let id = Uuid::new_v4();
-            let json_document = serde_json::to_value(&document).unwrap();
+            let json_document = serde_json::to_value(&document)?;
 
             for embedding in embeddings {
                 let embedding_text = embedding.document;
@@ -414,8 +424,8 @@ where
 
         let rows: Vec<(f64, String, T)> = rows
             .into_iter()
-            .flat_map(SearchResult::into_result)
-            .collect();
+            .map(SearchResult::into_result)
+            .collect::<Result<_, _>>()?;
 
         Ok(rows)
     }

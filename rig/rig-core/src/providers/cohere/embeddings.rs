@@ -72,13 +72,17 @@ where
     const MAX_DOCUMENTS: usize = 96;
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
         let model = model.into();
         let dims = dims
             .or(super::model_dimensions_from_identifier(&model))
             .unwrap_or_default();
 
-        Self::new(client.clone(), model, "search_document", dims)
+        Ok(Self::new(client.clone(), model, "search_document", dims))
     }
 
     fn ndims(&self) -> usize {
@@ -148,11 +152,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(error) => Err(EmbeddingError::ProviderError(error.message)),
+                ApiResponse::Err(error) => Err(EmbeddingError::transport(error.message)),
             }
         } else {
-            let text = String::from_utf8_lossy(&response.into_body().await?).into();
-            Err(EmbeddingError::ProviderError(text))
+            let text = String::from_utf8_lossy(&response.into_body().await?).into_owned();
+            Err(EmbeddingError::transport(text))
         }
     }
 }

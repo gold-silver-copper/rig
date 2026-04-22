@@ -1,5 +1,6 @@
 //! Hugging Face loaders smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::loaders::FileLoader;
@@ -9,10 +10,9 @@ use crate::support::{LOADERS_GLOB, LOADERS_PROMPT, assert_loader_answer_is_relev
 
 #[tokio::test]
 #[ignore = "requires HUGGINGFACE_API_KEY"]
-async fn loaders_smoke() {
-    let client = huggingface::Client::from_env();
-    let examples = FileLoader::with_glob(LOADERS_GLOB)
-        .expect("examples glob should parse")
+async fn loaders_smoke() -> Result<()> {
+    let client = huggingface::Client::from_env()?;
+    let examples = FileLoader::with_glob(LOADERS_GLOB)?
         .read_with_path()
         .ignore_errors()
         .into_iter();
@@ -26,10 +26,8 @@ async fn loaders_smoke() {
         )
         .build();
 
-    let response = agent
-        .prompt(LOADERS_PROMPT)
-        .await
-        .expect("loader prompt should succeed");
+    let response = agent.prompt(LOADERS_PROMPT).await?;
 
     assert_loader_answer_is_relevant(&response);
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! Migrated from `examples/openai_agent_completions_api.rs`.
 
+use anyhow::{Result, anyhow};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
@@ -21,26 +22,24 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn completions_api_agent_prompt() {
-    let agent = openai::Client::from_env()
+async fn completions_api_agent_prompt() -> Result<()> {
+    let agent = openai::Client::from_env()?
         .completion_model(openai::GPT_4O)
         .completions_api()
         .into_agent_builder()
         .preamble("You are a helpful assistant.")
         .build();
 
-    let response = agent
-        .prompt("Hello world!")
-        .await
-        .expect("completions api prompt should succeed");
+    let response = agent.prompt("Hello world!").await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn completions_api_streams_two_tool_calls_before_final_answer() {
-    let client = openai::Client::from_env().completions_api();
+async fn completions_api_streams_two_tool_calls_before_final_answer() -> Result<()> {
+    let client = openai::Client::from_env()?.completions_api();
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
@@ -59,27 +58,29 @@ async fn completions_api_streams_two_tool_calls_before_final_answer() {
         &["lookup_harbor_label", "lookup_orchard_label"],
         &[ALPHA_SIGNAL_OUTPUT, BETA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn completions_api_raw_stream_emits_required_zero_arg_tool_call() {
-    let client = openai::Client::from_env().completions_api();
+async fn completions_api_raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
+    let client = openai::Client::from_env()?.completions_api();
     let model = client.completion_model(openai::GPT_4O);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
         .tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn completions_api_raw_stream_surfaces_two_distinct_tool_calls_before_text() {
-    let client = openai::Client::from_env().completions_api();
+async fn completions_api_raw_stream_surfaces_two_distinct_tool_calls_before_text() -> Result<()> {
+    let client = openai::Client::from_env()?.completions_api();
     let model = client.completion_model(openai::GPT_4O);
     let request = model
         .completion_request(TWO_TOOL_STREAM_PROMPT)
@@ -88,24 +89,19 @@ async fn completions_api_raw_stream_surfaces_two_distinct_tool_calls_before_text
         .tool(BetaSignal.definition(String::new()).await)
         .build();
 
-    let observation = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw completions api stream should start"),
-    )
-    .await;
+    let observation = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_contains_distinct_tool_calls_before_text(
         &observation,
         &["lookup_harbor_label", "lookup_orchard_label"],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn completions_api_stream_emits_tool_call_before_later_text() {
-    let client = openai::Client::from_env().completions_api();
+async fn completions_api_stream_emits_tool_call_before_later_text() -> Result<()> {
+    let client = openai::Client::from_env()?.completions_api();
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
@@ -123,12 +119,13 @@ async fn completions_api_stream_emits_tool_call_before_later_text() {
         "lookup_harbor_label",
         &[ALPHA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn completions_api_raw_followup_uses_tool_result_without_new_tool_calls() {
-    let client = openai::Client::from_env().completions_api();
+async fn completions_api_raw_followup_uses_tool_result_without_new_tool_calls() -> Result<()> {
+    let client = openai::Client::from_env()?.completions_api();
     let model = client.completion_model(openai::GPT_4O);
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
@@ -136,13 +133,7 @@ async fn completions_api_raw_followup_uses_tool_result_without_new_tool_calls() 
         .tool(AlphaSignal.definition(String::new()).await)
         .build();
 
-    let first_turn = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw completions api stream should start"),
-    )
-    .await;
+    let first_turn = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_tool_call_precedes_text(&first_turn, "lookup_harbor_label");
 
@@ -151,7 +142,7 @@ async fn completions_api_raw_followup_uses_tool_result_without_new_tool_calls() 
         .iter()
         .find(|tool_call| tool_call.function.name == "lookup_harbor_label")
         .cloned()
-        .expect("raw completions api stream should yield lookup_harbor_label");
+        .ok_or_else(|| anyhow!("raw completions api stream should yield lookup_harbor_label"))?;
     let assistant_message = Message::Assistant {
         id: None,
         content: OneOrMany::one(AssistantContent::ToolCall(tool_call.clone())),
@@ -167,13 +158,7 @@ async fn completions_api_raw_followup_uses_tool_result_without_new_tool_calls() 
         .message(tool_result_message)
         .build();
 
-    let second_turn = collect_raw_stream_observation(
-        model
-            .stream(followup_request)
-            .await
-            .expect("raw completions api followup stream should start"),
-    )
-    .await;
+    let second_turn = collect_raw_stream_observation(model.stream(followup_request).await?).await;
 
     assert!(
         second_turn.tool_calls.is_empty(),
@@ -185,4 +170,5 @@ async fn completions_api_raw_followup_uses_tool_result_without_new_tool_calls() 
             .collect::<Vec<_>>()
     );
     assert_raw_stream_text_contains(&second_turn, &[ALPHA_SIGNAL_OUTPUT]);
+    Ok(())
 }

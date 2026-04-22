@@ -61,12 +61,9 @@ where
             let mut as_slice = Vec::new();
             bytes.copy_to_slice(&mut as_slice);
 
-            let text: String = String::from_utf8_lossy(&as_slice).into();
+            let text = String::from_utf8_lossy(&as_slice).into_owned();
 
-            return Err(AudioGenerationError::ProviderError(format!(
-                "{}: {}",
-                status, text
-            )));
+            return Err(AudioGenerationError::transport_status(status, text));
         }
 
         let bytes: Bytes = response.into_body().await?;

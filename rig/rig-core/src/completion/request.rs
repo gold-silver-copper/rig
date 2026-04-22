@@ -80,7 +80,63 @@ use std::collections::HashMap;
 use std::ops::{Add, AddAssign};
 use thiserror::Error;
 
-// Errors
+#[derive(Debug, Error)]
+pub enum CompletionResponseError {
+    #[error("ResponseError: response contained no choices")]
+    MissingChoices,
+
+    #[error("ResponseError: response contained no parts")]
+    MissingParts,
+
+    #[error("ResponseError: response contained no output")]
+    MissingOutput,
+
+    #[error("ResponseError: no content provided")]
+    MissingContent,
+
+    #[error("ResponseError: no response candidates in response")]
+    MissingCandidates,
+
+    #[error("ResponseError: stream completed without assistant content")]
+    StreamEndedWithoutAssistantContent,
+
+    #[error("ResponseError: {context}: {details}")]
+    Context {
+        context: &'static str,
+        details: String,
+    },
+}
+
+impl CompletionResponseError {
+    pub fn context(context: &'static str, details: impl Into<String>) -> Self {
+        Self::Context {
+            context,
+            details: details.into(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum CompletionTransportError {
+    #[error("TransportError: request was aborted")]
+    Aborted,
+
+    #[error("TransportError: {message}")]
+    Message { message: String },
+}
+
+impl CompletionTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+
+    pub fn is_aborted(&self) -> bool {
+        matches!(self, Self::Aborted)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CompletionError {
     /// Http error (e.g.: connection error, timeout, etc.)
@@ -106,12 +162,79 @@ pub enum CompletionError {
     RequestError(#[from] Box<dyn std::error::Error + 'static>),
 
     /// Error parsing the completion response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(CompletionResponseError),
 
-    /// Error returned by the completion model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    /// Error returned while talking to the completion model provider.
+    #[error(transparent)]
+    TransportError(CompletionTransportError),
+
+    /// Error caused by local completion model configuration or initialization.
+    #[error("ConfigurationError: {message}")]
+    ConfigurationError { message: String },
+}
+
+impl CompletionError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
+    pub fn response(message: impl Into<String>) -> Self {
+        Self::response_with_context("invalid response", message)
+    }
+
+    pub fn missing_choices() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingChoices)
+    }
+
+    pub fn missing_parts() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingParts)
+    }
+
+    pub fn missing_output() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingOutput)
+    }
+
+    pub fn missing_content() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingContent)
+    }
+
+    pub fn missing_candidates() -> Self {
+        Self::ResponseError(CompletionResponseError::MissingCandidates)
+    }
+
+    pub fn stream_ended_without_assistant_content() -> Self {
+        Self::ResponseError(CompletionResponseError::StreamEndedWithoutAssistantContent)
+    }
+
+    pub fn response_with_context(context: &'static str, details: impl Into<String>) -> Self {
+        Self::ResponseError(CompletionResponseError::context(context, details))
+    }
+
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(CompletionTransportError::message(message))
+    }
+
+    pub fn aborted() -> Self {
+        Self::TransportError(CompletionTransportError::Aborted)
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError {
+            message: message.into(),
+        }
+    }
+
+    pub fn is_aborted(&self) -> bool {
+        matches!(self, Self::TransportError(transport_error) if transport_error.is_aborted())
+    }
+
+    pub fn is_stream_ended_without_assistant_content(&self) -> bool {
+        matches!(
+            self,
+            Self::ResponseError(CompletionResponseError::StreamEndedWithoutAssistantContent)
+        )
+    }
 }
 
 /// Prompt errors
@@ -145,6 +268,14 @@ pub enum PromptError {
         chat_history: Vec<Message>,
         reason: String,
     },
+
+    /// An I/O operation required by the prompt flow failed.
+    #[error("IoError: {0}")]
+    IoError(#[from] std::io::Error),
+
+    /// An internal invariant required to continue the prompt flow was not satisfied.
+    #[error(transparent)]
+    InvariantError(PromptInvariantError),
 }
 
 impl PromptError {
@@ -157,6 +288,30 @@ impl PromptError {
             reason: reason.into(),
         }
     }
+
+    pub(crate) fn invariant(error: PromptInvariantError) -> Self {
+        Self::InvariantError(error)
+    }
+}
+
+/// Structured invariants enforced by the prompt execution loops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum PromptInvariantError {
+    /// The prompt loop lost the message it was about to send.
+    #[error("InvariantError: prompt loop lost the pending prompt message")]
+    MissingPendingPromptMessage,
+
+    /// The prompt loop lost the prior messages needed to build history.
+    #[error("InvariantError: prompt loop lost the pending prompt history")]
+    MissingPendingPromptHistory,
+
+    /// A non-tool assistant item reached the tool execution queue.
+    #[error("InvariantError: tool execution queue contained non-tool assistant content")]
+    NonToolAssistantContentQueued,
+
+    /// Tool execution finished without producing any tool result items.
+    #[error("InvariantError: tool execution completed without tool results")]
+    MissingToolExecutionResults,
 }
 
 /// Errors that can occur when using typed structured output via [`TypedPrompt::prompt_typed`].
@@ -567,9 +722,9 @@ impl CompletionRequest {
             })
             .collect::<Vec<_>>();
 
-        Some(Message::User {
-            content: OneOrMany::many(messages).expect("There will be atleast one document"),
-        })
+        let content = OneOrMany::from_non_empty_iter(messages)?;
+
+        Some(Message::User { content })
     }
 
     /// Adds a provider-hosted tool by storing it in `additional_params.tools`.
@@ -866,10 +1021,18 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
         if let Some(preamble) = self.preamble {
             chat_history.insert(0, Message::system(preamble));
         }
-        chat_history.push(self.prompt);
-
-        let chat_history =
-            OneOrMany::many(chat_history).expect("There will always be at least the prompt");
+        let prompt = self.prompt;
+        let mut iter = chat_history.into_iter();
+        let chat_history = if let Some(first) = iter.next() {
+            let mut history = OneOrMany::one(first);
+            for message in iter {
+                history.push(message);
+            }
+            history.push(prompt);
+            history
+        } else {
+            OneOrMany::one(prompt)
+        };
         let additional_params = merge_provider_tools_into_additional_params(
             self.additional_params,
             self.provider_tools,
@@ -940,7 +1103,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::ProviderError(
+            Err(CompletionError::transport(
                 "dummy completion model".to_string(),
             ))
         }
@@ -949,7 +1112,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-            Err(CompletionError::ProviderError(
+            Err(CompletionError::transport(
                 "dummy completion model".to_string(),
             ))
         }
@@ -1080,5 +1243,78 @@ mod tests {
         let history = request.chat_history.into_iter().collect::<Vec<_>>();
         assert_eq!(history.len(), 1);
         assert!(matches!(&history[0], Message::User { .. }));
+    }
+
+    #[test]
+    fn completion_error_response_helper_preserves_invalid_response_details() {
+        assert!(matches!(
+            CompletionError::response("provider emitted malformed chunk"),
+            CompletionError::ResponseError(CompletionResponseError::Context {
+                context: "invalid response",
+                details,
+            }) if details == "provider emitted malformed chunk"
+        ));
+    }
+
+    #[test]
+    fn completion_request_errors_are_explicit() {
+        assert_eq!(
+            CompletionError::request("unsupported input").to_string(),
+            "RequestError: unsupported input"
+        );
+    }
+
+    #[test]
+    fn completion_error_typed_response_constructors_are_structured() {
+        assert!(matches!(
+            CompletionError::missing_choices(),
+            CompletionError::ResponseError(CompletionResponseError::MissingChoices)
+        ));
+        assert!(matches!(
+            CompletionError::missing_parts(),
+            CompletionError::ResponseError(CompletionResponseError::MissingParts)
+        ));
+        assert!(matches!(
+            CompletionError::missing_output(),
+            CompletionError::ResponseError(CompletionResponseError::MissingOutput)
+        ));
+        assert!(matches!(
+            CompletionError::missing_content(),
+            CompletionError::ResponseError(CompletionResponseError::MissingContent)
+        ));
+        assert!(matches!(
+            CompletionError::missing_candidates(),
+            CompletionError::ResponseError(CompletionResponseError::MissingCandidates)
+        ));
+        assert!(matches!(
+            CompletionError::stream_ended_without_assistant_content(),
+            CompletionError::ResponseError(
+                CompletionResponseError::StreamEndedWithoutAssistantContent
+            )
+        ));
+    }
+
+    #[test]
+    fn completion_transport_error_classifies_abort_messages() {
+        assert!(matches!(
+            CompletionError::aborted(),
+            CompletionError::TransportError(CompletionTransportError::Aborted)
+        ));
+        assert!(CompletionError::aborted().is_aborted());
+        assert!(matches!(
+            CompletionError::transport("provider unavailable"),
+            CompletionError::TransportError(CompletionTransportError::Message { message })
+                if message == "provider unavailable"
+        ));
+        assert!(!CompletionError::transport("provider unavailable").is_aborted());
+    }
+
+    #[test]
+    fn completion_configuration_errors_are_explicit() {
+        assert!(matches!(
+            CompletionError::configuration("missing provider configuration"),
+            CompletionError::ConfigurationError { message }
+                if message == "missing provider configuration"
+        ));
     }
 }

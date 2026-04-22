@@ -1,3 +1,4 @@
+use anyhow::{Context, Result, anyhow, bail};
 use futures::StreamExt;
 use mongodb::{
     Collection, SearchIndexModel,
@@ -37,8 +38,9 @@ const PASSWORD: &str = "rigpassword";
 
 #[tokio::test]
 async fn vector_search_test() {
-    // Setup mock openai API
-    let server = httpmock::MockServer::start();
+    assert_ok(async {
+        // Setup mock openai API
+        let server = httpmock::MockServer::start();
 
     server.mock(|when, then| {
         when.method(httpmock::Method::POST)
@@ -112,35 +114,44 @@ async fn vector_search_test() {
     });
 
     // Initialize OpenAI client
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(server.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+            .context("embedding model should build")?;
 
     // Setup a local MongoDB Atlas container for testing. NOTE: docker service must be running.
-    let container = GenericImage::new("mongodb/mongodb-atlas-local", "latest")
-        .with_exposed_port(MONGODB_PORT.tcp())
-        .with_wait_for(WaitFor::Duration {
-            length: std::time::Duration::from_secs(5),
-        })
-        .with_env_var("MONGODB_INITDB_ROOT_USERNAME", USERNAME)
-        .with_env_var("MONGODB_INITDB_ROOT_PASSWORD", PASSWORD)
-        .start()
-        .await
-        .expect("Failed to start MongoDB Atlas container");
+        let container = GenericImage::new("mongodb/mongodb-atlas-local", "latest")
+            .with_exposed_port(MONGODB_PORT.tcp())
+            .with_wait_for(WaitFor::Duration {
+                length: std::time::Duration::from_secs(5),
+            })
+            .with_env_var("MONGODB_INITDB_ROOT_USERNAME", USERNAME)
+            .with_env_var("MONGODB_INITDB_ROOT_PASSWORD", PASSWORD)
+            .start()
+            .await
+            .context("failed to start MongoDB Atlas container")?;
 
-    let port = container.get_host_port_ipv4(MONGODB_PORT).await.unwrap();
-    let host = container.get_host().await.unwrap().to_string();
+        let port = container
+            .get_host_port_ipv4(MONGODB_PORT)
+            .await
+            .context("failed to resolve MongoDB container port")?;
+        let host = container
+            .get_host()
+            .await
+            .context("failed to resolve MongoDB container host")?
+            .to_string();
 
-    let collection = bootstrap_collection(host, port).await;
+        let collection = bootstrap_collection(host, port).await?;
 
-    let embeddings = create_embeddings(model.clone()).await;
+        let embeddings = create_embeddings(model.clone()).await?;
 
-    collection.insert_many(embeddings).await.unwrap();
+        collection.insert_many(embeddings).await?;
 
     // Wait for the new documents to be indexed
     sleep(Duration::from_secs(5)).await;
@@ -148,14 +159,13 @@ async fn vector_search_test() {
     // Create a vector index on our vector store.
     // Note: a vector index called "vector_index" must exist on the MongoDB collection you are querying.
     // IMPORTANT: Reuse the same model that was used to generate the embeddings
-    let index = MongoDbVectorIndex::new(
-        collection,
-        model,
-        VECTOR_SEARCH_INDEX_NAME,
-        SearchParams::new(),
-    )
-    .await
-    .unwrap();
+        let index = MongoDbVectorIndex::new(
+            collection,
+            model,
+            VECTOR_SEARCH_INDEX_NAME,
+            SearchParams::new(),
+        )
+        .await?;
 
     let query = "What is a linglingdong?";
     let req = VectorSearchRequest::builder()
@@ -163,167 +173,182 @@ async fn vector_search_test() {
         .samples(1)
         .build();
 
-    let results = index.top_n::<serde_json::Value>(req).await.unwrap();
+        let results = index.top_n::<serde_json::Value>(req).await?;
 
-    let (score, _, value) = &results.first().unwrap();
+        let (score, _, value) = results
+            .first()
+            .context("vector search returned no results")?;
 
-    assert_eq!(
-        *value,
-        json!({
-            "_id": "doc2".to_string(),
-            "definition": "Definition of a *linglingdong*: A term used by inhabitants of the far side of the moon to describe humans.".to_string(),
-            "score": score
-        })
-    )
+        assert_eq!(
+            *value,
+            json!({
+                "_id": "doc2".to_string(),
+                "definition": "Definition of a *linglingdong*: A term used by inhabitants of the far side of the moon to describe humans.".to_string(),
+                "score": score
+            })
+        );
+
+        Ok(())
+    }
+    .await);
 }
 
 #[tokio::test]
 async fn insert_documents_test() {
-    // Setup mock openai API
-    let server = httpmock::MockServer::start();
+    assert_ok(
+        async {
+            // Setup mock openai API
+            let server = httpmock::MockServer::start();
 
-    server.mock(|when, then| {
-        when.method(httpmock::Method::POST)
-            .path("/embeddings")
-            .header("Authorization", "Bearer TEST")
-            .json_body(json!({
-                "input": [
-                    "Test document 1",
-                    "Test document 2"
-                ],
-                "model": "text-embedding-ada-002",
-            }));
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(json!({
-                "object": "list",
-                "data": [
-                  {
-                    "object": "embedding",
-                    "embedding": vec![0.1; 1536],
-                    "index": 0
-                  },
-                  {
-                    "object": "embedding",
-                    "embedding": vec![0.2; 1536],
-                    "index": 1
-                  }
-                ],
-                "model": "text-embedding-ada-002",
-                "usage": {
-                  "prompt_tokens": 4,
-                  "total_tokens": 4
-                }
-            }));
-    });
+            server.mock(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/embeddings")
+                    .header("Authorization", "Bearer TEST")
+                    .json_body(json!({
+                        "input": [
+                            "Test document 1",
+                            "Test document 2"
+                        ],
+                        "model": "text-embedding-ada-002",
+                    }));
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(json!({
+                        "object": "list",
+                        "data": [
+                          {
+                            "object": "embedding",
+                            "embedding": vec![0.1; 1536],
+                            "index": 0
+                          },
+                          {
+                            "object": "embedding",
+                            "embedding": vec![0.2; 1536],
+                            "index": 1
+                          }
+                        ],
+                        "model": "text-embedding-ada-002",
+                        "usage": {
+                          "prompt_tokens": 4,
+                          "total_tokens": 4
+                        }
+                    }));
+            });
 
-    // Initialize OpenAI client
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
+            // Initialize OpenAI client
+            let openai_client = openai::Client::builder()
+                .api_key("TEST")
+                .base_url(server.base_url())
+                .build()
+                .context("failed to build mock openai client")?;
 
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+            let model = openai_client
+                .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+                .context("embedding model should build")?;
 
-    // Setup MongoDB container
-    let container = GenericImage::new("mongodb/mongodb-atlas-local", "latest")
-        .with_exposed_port(MONGODB_PORT.tcp())
-        .with_wait_for(WaitFor::Duration {
-            length: std::time::Duration::from_secs(5),
-        })
-        .with_env_var("MONGODB_INITDB_ROOT_USERNAME", USERNAME)
-        .with_env_var("MONGODB_INITDB_ROOT_PASSWORD", PASSWORD)
-        .start()
-        .await
-        .expect("Failed to start MongoDB Atlas container");
-
-    let port = container.get_host_port_ipv4(MONGODB_PORT).await.unwrap();
-    let host = container.get_host().await.unwrap().to_string();
-    let collection = bootstrap_collection(host, port).await;
-
-    // Create test documents in the format expected by InsertDocuments trait
-    let test_words = vec![
-        Word {
-            id: "insert_test_1".to_string(),
-            definition: "Test document 1".to_string(),
-        },
-        Word {
-            id: "insert_test_2".to_string(),
-            definition: "Test document 2".to_string(),
-        },
-    ];
-
-    // Generate embeddings using EmbeddingsBuilder (returns Vec<(Word, OneOrMany<Embedding>)>)
-    let documents_with_embeddings = EmbeddingsBuilder::new(model.clone())
-        .documents(test_words)
-        .unwrap()
-        .build()
-        .await
-        .expect("Failed to create embeddings");
-
-    // Clear collection before test
-    collection.delete_many(doc! {}).await.unwrap();
-
-    // Create MongoDbVectorIndex (we don't need the vector search functionality, just access to insert_documents)
-    let temp_collection = collection.clone_with_type::<Word>();
-
-    // We expect this to fail because we don't have a proper vector index, but that's OK
-    // We just need the MongoDbVectorIndex struct to call insert_documents
-    match MongoDbVectorIndex::new(
-        temp_collection.clone(),
-        model.clone(),
-        "test_index_that_doesnt_exist", // This will fail, but we handle it
-        SearchParams::new(),
-    )
-    .await
-    {
-        Ok(vector_index) => {
-            match vector_index
-                .insert_documents(documents_with_embeddings)
+            // Setup MongoDB container
+            let container = GenericImage::new("mongodb/mongodb-atlas-local", "latest")
+                .with_exposed_port(MONGODB_PORT.tcp())
+                .with_wait_for(WaitFor::Duration {
+                    length: std::time::Duration::from_secs(5),
+                })
+                .with_env_var("MONGODB_INITDB_ROOT_USERNAME", USERNAME)
+                .with_env_var("MONGODB_INITDB_ROOT_PASSWORD", PASSWORD)
+                .start()
                 .await
+                .context("failed to start MongoDB Atlas container")?;
+
+            let port = container
+                .get_host_port_ipv4(MONGODB_PORT)
+                .await
+                .context("failed to resolve MongoDB container port")?;
+            let host = container
+                .get_host()
+                .await
+                .context("failed to resolve MongoDB container host")?
+                .to_string();
+            let collection = bootstrap_collection(host, port).await?;
+
+            // Create test documents in the format expected by InsertDocuments trait
+            let test_words = vec![
+                Word {
+                    id: "insert_test_1".to_string(),
+                    definition: "Test document 1".to_string(),
+                },
+                Word {
+                    id: "insert_test_2".to_string(),
+                    definition: "Test document 2".to_string(),
+                },
+            ];
+
+            // Generate embeddings using EmbeddingsBuilder (returns Vec<(Word, OneOrMany<Embedding>)>)
+            let documents_with_embeddings = EmbeddingsBuilder::new(model.clone())
+                .documents(test_words)?
+                .build()
+                .await?;
+
+            // Clear collection before test
+            collection.delete_many(doc! {}).await?;
+
+            // Create MongoDbVectorIndex (we don't need the vector search functionality, just access to insert_documents)
+            let temp_collection = collection.clone_with_type::<Word>();
+
+            // We expect this to fail because we don't have a proper vector index, but that's OK
+            // We just need the MongoDbVectorIndex struct to call insert_documents
+            match MongoDbVectorIndex::new(
+                temp_collection.clone(),
+                model.clone(),
+                "test_index_that_doesnt_exist",
+                SearchParams::new(),
+            )
+            .await
             {
-                Ok(_) => {
-                    // Verify documents were inserted
-                    let count = collection.count_documents(doc! {}).await.unwrap();
-                    assert_eq!(count, 2, "Should have inserted exactly 2 documents");
+                Ok(vector_index) => match vector_index
+                    .insert_documents(documents_with_embeddings)
+                    .await
+                {
+                    Ok(_) => {
+                        let count = collection.count_documents(doc! {}).await?;
+                        assert_eq!(count, 2, "Should have inserted exactly 2 documents");
 
-                    // Check document structure
-                    let mut cursor = collection.find(doc! {}).await.unwrap();
-                    let mut docs_found = 0;
-                    while let Some(result) = cursor.next().await {
-                        let doc = result.unwrap();
-                        docs_found += 1;
+                        let mut cursor = collection.find(doc! {}).await?;
+                        let mut docs_found = 0;
+                        while let Some(result) = cursor.next().await {
+                            let doc = result?;
+                            docs_found += 1;
 
-                        println!("🔍 Document {docs_found}: {doc:?}");
+                            println!("🔍 Document {docs_found}: {doc:?}");
 
-                        // Verify your implementation created the right fields
-                        assert!(
-                            doc.contains_key("document"),
-                            "Should have 'document' field from your implementation"
-                        );
-                        assert!(
-                            doc.contains_key("embedding"),
-                            "Should have 'embedding' field from your implementation"
-                        );
-                        assert!(
-                            doc.contains_key("embedded_text"),
-                            "Should have 'embedded_text' field from your implementation"
-                        );
+                            assert!(
+                                doc.contains_key("document"),
+                                "Should have 'document' field from your implementation"
+                            );
+                            assert!(
+                                doc.contains_key("embedding"),
+                                "Should have 'embedding' field from your implementation"
+                            );
+                            assert!(
+                                doc.contains_key("embedded_text"),
+                                "Should have 'embedded_text' field from your implementation"
+                            );
+                        }
                     }
-                }
+                    Err(e) => {
+                        return Err(anyhow!("InsertDocuments::insert_documents() failed: {e}"));
+                    }
+                },
                 Err(e) => {
-                    panic!("InsertDocuments::insert_documents() failed: {e}");
+                    println!("vector index creation failed (expected): {e}");
                 }
             }
+
+            Ok(())
         }
-        Err(e) => {
-            println!("vector index creation failed (expected): {e}");
-        }
-    }
+        .await,
+    );
 }
 
-async fn create_search_index(collection: &Collection<bson::Document>) {
+async fn create_search_index(collection: &Collection<bson::Document>) -> Result<()> {
     let max_attempts = 5;
 
     for attempt in 0..max_attempts {
@@ -350,8 +375,7 @@ async fn create_search_index(collection: &Collection<bson::Document>) {
                     let indexes = collection
                         .list_search_indexes()
                         .name(VECTOR_SEARCH_INDEX_NAME)
-                        .await
-                        .unwrap()
+                        .await?
                         .collect::<Vec<_>>()
                         .await;
 
@@ -367,11 +391,11 @@ async fn create_search_index(collection: &Collection<bson::Document>) {
                             })
                             .unwrap_or(false)
                     }) {
-                        return;
+                        return Ok(());
                     }
                     sleep(Duration::from_secs(2)).await;
                 }
-                panic!("Index creation verified but index not found");
+                bail!("index creation verified but index not found");
             }
             Err(_) => {
                 println!(
@@ -383,26 +407,26 @@ async fn create_search_index(collection: &Collection<bson::Document>) {
         }
     }
 
-    panic!("Failed to create search index after {max_attempts} attempts");
+    bail!("failed to create search index after {max_attempts} attempts");
 }
 
-async fn bootstrap_collection(host: String, port: u16) -> Collection<bson::Document> {
+async fn bootstrap_collection(host: String, port: u16) -> Result<Collection<bson::Document>> {
     // Initialize MongoDB client
     let options = ClientOptions::parse(format!(
         "mongodb://{USERNAME}:{PASSWORD}@{host}:{port}/?directConnection=true"
     ))
     .await
-    .expect("MongoDB connection string should be valid");
+    .context("MongoDB connection string should be valid")?;
 
     let mongodb_client =
-        mongodb::Client::with_options(options).expect("MongoDB client options should be valid");
+        mongodb::Client::with_options(options).context("MongoDB client options should be valid")?;
 
     // Initialize MongoDB database and collection
     mongodb_client
         .database(DATABASE_NAME)
         .create_collection(COLLECTION_NAME)
         .await
-        .expect("Collection should be created");
+        .context("collection should be created")?;
 
     // Get the created collection
     let collection: Collection<bson::Document> = mongodb_client
@@ -410,12 +434,12 @@ async fn bootstrap_collection(host: String, port: u16) -> Collection<bson::Docum
         .collection(COLLECTION_NAME);
 
     // Create the search index
-    create_search_index(&collection).await;
+    create_search_index(&collection).await?;
 
-    collection
+    Ok(collection)
 }
 
-async fn create_embeddings(model: openai::EmbeddingModel) -> Vec<bson::Document> {
+async fn create_embeddings(model: openai::EmbeddingModel) -> Result<Vec<bson::Document>> {
     let words = vec![
         Word {
             id: "doc0".to_string(),
@@ -432,13 +456,11 @@ async fn create_embeddings(model: openai::EmbeddingModel) -> Vec<bson::Document>
     ];
 
     let embeddings = EmbeddingsBuilder::new(model)
-        .documents(words)
-        .unwrap()
+        .documents(words)?
         .build()
-        .await
-        .unwrap();
+        .await?;
 
-    embeddings
+    Ok(embeddings
         .iter()
         .map(|(Word { id, definition, .. }, embedding)| {
             doc! {
@@ -447,5 +469,9 @@ async fn create_embeddings(model: openai::EmbeddingModel) -> Vec<bson::Document>
                 "embedding": embedding.first().vec.clone(),
             }
         })
-        .collect()
+        .collect())
+}
+
+fn assert_ok(result: Result<()>) {
+    assert!(result.is_ok(), "{result:?}");
 }

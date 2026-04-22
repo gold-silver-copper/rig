@@ -59,10 +59,13 @@ pub trait ProviderClient {
     type Input;
 
     /// Create a client from the process's environment.
-    /// Panics if an environment is improperly configured.
-    fn from_env() -> Self;
+    fn from_env() -> http_client::Result<Self>
+    where
+        Self: Sized;
 
-    fn from_val(input: Self::Input) -> Self;
+    fn from_val(input: Self::Input) -> http_client::Result<Self>
+    where
+        Self: Sized;
 }
 
 /// A trait for API keys. This determines whether the key is inserted into a [Client]'s default
@@ -438,11 +441,11 @@ where
             }
             StatusCode::INTERNAL_SERVER_ERROR => {
                 let text = http_client::text(response).await?;
-                Err(VerifyError::ProviderError(text))
+                Err(VerifyError::internal_server(text))
             }
             status if status.as_u16() == 529 => {
                 let text = http_client::text(response).await?;
-                Err(VerifyError::ProviderError(text))
+                Err(VerifyError::overloaded(text))
             }
             _ => {
                 let status = response.status();
@@ -451,9 +454,7 @@ where
                     Ok(())
                 } else {
                     let text: String = String::from_utf8_lossy(&response.into_body().await?).into();
-                    Err(VerifyError::HttpError(http_client::Error::Instance(
-                        format!("Failed with '{status}': {text}").into(),
-                    )))
+                    Err(VerifyError::unexpected_status(status, text))
                 }
             }
         }
@@ -636,7 +637,10 @@ where
 {
     type EmbeddingModel = M;
 
-    fn embedding_model(&self, model: impl Into<String>) -> Self::EmbeddingModel {
+    fn embedding_model(
+        &self,
+        model: impl Into<String>,
+    ) -> Result<Self::EmbeddingModel, crate::embeddings::EmbeddingError> {
         M::make(self, model, None)
     }
 
@@ -644,7 +648,7 @@ where
         &self,
         model: impl Into<String>,
         ndims: usize,
-    ) -> Self::EmbeddingModel {
+    ) -> Result<Self::EmbeddingModel, crate::embeddings::EmbeddingError> {
         M::make(self, model, Some(ndims))
     }
 }

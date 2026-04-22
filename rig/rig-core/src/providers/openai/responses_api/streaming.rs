@@ -245,7 +245,7 @@ pub(crate) fn parse_sse_completion_body(
     }
 
     completed.ok_or_else(|| {
-        CompletionError::ProviderError(
+        CompletionError::transport(
             provider_error.unwrap_or_else(|| {
                 format!("{provider_name} stream did not yield response.completed")
             }),
@@ -257,6 +257,7 @@ struct RawChoiceAccumulator {
     final_usage: ResponsesUsage,
     tool_calls: Vec<StreamingRawChoice>,
     tool_call_internal_ids: std::collections::HashMap<String, String>,
+    saw_assistant_output: bool,
 }
 
 impl RawChoiceAccumulator {
@@ -265,6 +266,7 @@ impl RawChoiceAccumulator {
             final_usage: initial_usage,
             tool_calls: Vec::new(),
             tool_call_internal_ids: std::collections::HashMap::new(),
+            saw_assistant_output: false,
         }
     }
 
@@ -325,6 +327,18 @@ impl RawChoiceAccumulator {
             _ => {}
         }
 
+        if immediate.iter().any(|choice| {
+            matches!(
+                choice,
+                streaming::RawStreamingChoice::Message(_)
+                    | streaming::RawStreamingChoice::ToolCall(_)
+                    | streaming::RawStreamingChoice::Reasoning { .. }
+                    | streaming::RawStreamingChoice::ReasoningDelta { .. }
+            )
+        }) {
+            self.saw_assistant_output = true;
+        }
+
         immediate
     }
 
@@ -334,22 +348,32 @@ impl RawChoiceAccumulator {
         response: CompletionResponse,
         provider_name: &str,
         options: ResponsesStreamOptions,
-    ) -> Result<(), CompletionError> {
+    ) -> Result<Vec<StreamingRawChoice>, CompletionError> {
         match kind {
             ResponseChunkKind::ResponseCompleted => {
+                let mut recovered = Vec::new();
                 if let Some(usage) = response.usage {
                     self.final_usage = usage;
                 }
-                Ok(())
+                if !self.saw_assistant_output {
+                    for item in response.output {
+                        self.push_output_item_done(item, &mut recovered, true);
+                    }
+                }
+                Ok(recovered)
             }
             ResponseChunkKind::ResponseFailed | ResponseChunkKind::ResponseIncomplete
                 if options.errors_on_terminal_response() =>
             {
                 let error_message = response_chunk_error_message(&kind, &response, provider_name)
-                    .expect("terminal response should have an error message");
-                Err(CompletionError::ProviderError(error_message))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{provider_name} returned a terminal response without an error message"
+                        )
+                    });
+                Err(CompletionError::transport(error_message))
             }
-            _ => Ok(()),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -374,6 +398,7 @@ impl RawChoiceAccumulator {
                 if emit_completed_tool_calls_immediately {
                     immediate.push(streaming::RawStreamingChoice::ToolCall(tool_call));
                 } else {
+                    self.saw_assistant_output = true;
                     self.tool_calls
                         .push(streaming::RawStreamingChoice::ToolCall(tool_call));
                 }
@@ -389,8 +414,25 @@ impl RawChoiceAccumulator {
                     &summary,
                     encrypted_content.as_deref(),
                 ));
+                self.saw_assistant_output = true;
             }
             Output::Message(message) => {
+                let mut emitted_content = false;
+                for content in message.content {
+                    match content {
+                        super::AssistantContent::OutputText(text) => {
+                            emitted_content = true;
+                            immediate.push(streaming::RawStreamingChoice::Message(text.text));
+                        }
+                        super::AssistantContent::Refusal { refusal } => {
+                            emitted_content = true;
+                            immediate.push(streaming::RawStreamingChoice::Message(refusal));
+                        }
+                    }
+                }
+                if emitted_content {
+                    self.saw_assistant_output = true;
+                }
                 immediate.push(streaming::RawStreamingChoice::MessageId(message.id));
             }
             Output::Unknown => {}
@@ -434,7 +476,12 @@ pub(crate) fn raw_choices_from_sse_body(
                 }
                 StreamingCompletionChunk::Response(chunk) => {
                     let ResponseChunk { kind, response, .. } = *chunk;
-                    accumulator.record_response_chunk(kind, response, provider_name, options)?;
+                    raw_choices.extend(accumulator.record_response_chunk(
+                        kind,
+                        response,
+                        provider_name,
+                        options,
+                    )?);
                 }
             }
             continue;
@@ -511,9 +558,18 @@ pub(crate) fn raw_choices_from_sse_body(
                         Some("response.completed") => ResponseChunkKind::ResponseCompleted,
                         Some("response.failed") => ResponseChunkKind::ResponseFailed,
                         Some("response.incomplete") => ResponseChunkKind::ResponseIncomplete,
-                        _ => unreachable!("filtered above"),
+                        _ => {
+                            return Err(CompletionError::response(
+                                "unexpected OpenAI Responses terminal event type",
+                            ));
+                        }
                     };
-                    accumulator.record_response_chunk(kind, response, provider_name, options)?;
+                    raw_choices.extend(accumulator.record_response_chunk(
+                        kind,
+                        response,
+                        provider_name,
+                        options,
+                    )?);
                 }
             }
             Some("error") => {
@@ -522,7 +578,7 @@ pub(crate) fn raw_choices_from_sse_body(
                     .and_then(|error| error.get("message"))
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(data);
-                return Err(CompletionError::ProviderError(message.to_owned()));
+                return Err(CompletionError::transport(message.to_owned()));
             }
             _ => {}
         }
@@ -557,10 +613,12 @@ pub(crate) async fn completion_response_from_sse_body(
         item?;
     }
 
-    if choice_is_empty(&stream.choice) {
-        return Err(CompletionError::ResponseError(
-            "Response contained no parts".to_owned(),
-        ));
+    let Some(choice) = stream.choice().cloned() else {
+        return Err(CompletionError::missing_parts());
+    };
+
+    if choice_is_empty(&choice) {
+        return Err(CompletionError::missing_parts());
     }
 
     Ok(completion::CompletionResponse {
@@ -573,7 +631,7 @@ pub(crate) async fn completion_response_from_sse_body(
             .message_id
             .clone()
             .or_else(|| message_id_from_response(&raw_response)),
-        choice: stream.choice,
+        choice,
         raw_response,
     })
 }
@@ -649,7 +707,12 @@ where
                     let data = serde_json::from_str::<StreamingCompletionChunk>(&evt.data);
 
                     let Ok(data) = data else {
-                        debug!("Couldn't deserialize SSE data as StreamingCompletionChunk: {:?}", data.unwrap_err());
+                        if let Err(error) = data {
+                            debug!(
+                                "Couldn't deserialize SSE data as StreamingCompletionChunk: {:?}",
+                                error
+                            );
+                        }
                         continue;
                     };
 
@@ -665,12 +728,22 @@ where
                                 span.record("gen_ai.response.id", response.id.as_str());
                                 span.record("gen_ai.response.model", response.model.as_str());
                             }
-                            if let Err(error) =
-                                accumulator.record_response_chunk(kind, response, provider_name, options)
-                            {
-                                terminated_with_error = true;
-                                yield Err(error);
-                                break;
+                            match accumulator.record_response_chunk(
+                                kind,
+                                response,
+                                provider_name,
+                                options,
+                            ) {
+                                Ok(choices) => {
+                                    for choice in choices {
+                                        yield Ok(choice);
+                                    }
+                                }
+                                Err(error) => {
+                                    terminated_with_error = true;
+                                    yield Err(error);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -681,7 +754,7 @@ where
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
                     terminated_with_error = true;
-                    yield Err(CompletionError::ProviderError(error.to_string()));
+                    yield Err(CompletionError::transport(error.to_string()));
                     break;
                 }
             }
@@ -909,8 +982,9 @@ mod tests {
     use crate::message::ReasoningContent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::sse_bytes_from_json_events;
     use crate::providers::openai::responses_api::{
-        AdditionalParameters, CompletionResponse, IncompleteDetailsReason, OutputTokensDetails,
-        ReasoningSummary, ResponseError, ResponseObject, ResponseStatus, ResponsesUsage,
+        AdditionalParameters, AssistantContent, CompletionResponse, IncompleteDetailsReason,
+        Output, OutputMessage, OutputRole, OutputTokensDetails, ReasoningSummary, ResponseError,
+        ResponseObject, ResponseStatus, ResponsesUsage,
     };
     use crate::streaming::{RawStreamingChoice, StreamedAssistantContent};
     use bytes::Bytes;
@@ -958,6 +1032,19 @@ mod tests {
             tools: Vec::new(),
             additional_parameters: AdditionalParameters::default(),
         }
+    }
+
+    fn sample_response_with_text(status: ResponseStatus, text: &str) -> CompletionResponse {
+        let mut response = sample_response(status);
+        response.output = vec![Output::Message(OutputMessage {
+            id: "msg_123".to_string(),
+            role: OutputRole::Assistant,
+            status: ResponseStatus::Completed,
+            content: vec![AssistantContent::OutputText(crate::message::Text {
+                text: text.to_string(),
+            })],
+        })];
+        response
     }
 
     async fn first_error_from_event(
@@ -1300,7 +1387,7 @@ mod tests {
 
     #[tokio::test]
     async fn response_completed_chunk_populates_final_usage() {
-        let mut response = sample_response(ResponseStatus::Completed);
+        let mut response = sample_response_with_text(ResponseStatus::Completed, "done");
         response.usage = Some(ResponsesUsage {
             input_tokens: 10,
             input_tokens_details: None,
@@ -1345,7 +1432,7 @@ mod tests {
             }
         }
 
-        let mut response = sample_response(ResponseStatus::Completed);
+        let mut response = sample_response_with_text(ResponseStatus::Completed, "done");
         response.usage = Some(ResponsesUsage {
             input_tokens: 4,
             input_tokens_details: None,

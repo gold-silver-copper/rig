@@ -31,8 +31,7 @@ impl Tool for Adder {
         ToolDefinition {
             name: "add".to_string(),
             description: "Add x and y together".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("converting JSON schema to JSON value should never fail"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -48,7 +47,7 @@ async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt().with_target(false).init();
 
     // Create Vertex AI client using implicit credentials
-    let client = Client::from_env();
+    let client = Client::from_env()?;
 
     // Create agent with a calculator tool
     let calculator_agent = client

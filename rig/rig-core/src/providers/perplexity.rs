@@ -87,13 +87,18 @@ impl ProviderClient for Client {
 
     /// Create a new Perplexity client from the `PERPLEXITY_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("PERPLEXITY_API_KEY").expect("PERPLEXITY_API_KEY not set");
-        Self::new(&api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("PERPLEXITY_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "PERPLEXITY_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(&api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(&input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(&input)
     }
 }
 
@@ -176,9 +181,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(CompletionError::missing_choices)?;
 
         match &choice.message {
             Message {
@@ -196,7 +202,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 raw_response: response,
                 message_id: None,
             }),
-            _ => Err(CompletionError::ResponseError(
+            _ => Err(CompletionError::response(
                 "Response contained no assistant message".to_owned(),
             )),
         }
@@ -286,7 +292,7 @@ impl TryFrom<message::Message> for Message {
                     .into_iter()
                     .map(|content| match content {
                         message::UserContent::Text(message::Text { text }) => Ok(text),
-                        _ => Err(MessageError::ConversionError(
+                        _ => Err(MessageError::conversion(
                             "Only text content is supported by Perplexity".to_owned(),
                         )),
                     })
@@ -305,7 +311,7 @@ impl TryFrom<message::Message> for Message {
                     .map(|content| {
                         Ok(match content {
                             message::AssistantContent::Text(message::Text { text }) => text,
-                            _ => return Err(MessageError::ConversionError(
+                            _ => return Err(MessageError::conversion(
                                 "Only text assistant message content is supported by Perplexity"
                                     .to_owned(),
                             )),
@@ -423,10 +429,10 @@ where
                         }
                         Ok(response.try_into()?)
                     }
-                    ApiResponse::Err(error) => Err(CompletionError::ProviderError(error.message)),
+                    ApiResponse::Err(error) => Err(CompletionError::transport(error.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

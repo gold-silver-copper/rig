@@ -1,5 +1,6 @@
 //! Copilot OAuth and bootstrap smoke tests.
 
+use anyhow::{Context, Result};
 use assert_fs::TempDir;
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
@@ -14,13 +15,13 @@ use crate::copilot::{
 };
 use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 
-fn required_copilot_api_key() -> String {
-    copilot_api_key().expect("GITHUB_COPILOT_API_KEY or COPILOT_API_KEY should be set")
+fn required_copilot_api_key() -> Result<String> {
+    copilot_api_key().context("GITHUB_COPILOT_API_KEY or COPILOT_API_KEY should be set")
 }
 
-fn required_copilot_github_access_token() -> String {
+fn required_copilot_github_access_token() -> Result<String> {
     copilot_github_access_token()
-        .expect("COPILOT_GITHUB_ACCESS_TOKEN or GITHUB_TOKEN should be set")
+        .context("COPILOT_GITHUB_ACCESS_TOKEN or GITHUB_TOKEN should be set")
 }
 
 fn oauth_builder_with_token_dir(path: &Path) -> copilot::ClientBuilder {
@@ -29,64 +30,49 @@ fn oauth_builder_with_token_dir(path: &Path) -> copilot::ClientBuilder {
 
 #[tokio::test]
 #[ignore = "requires GITHUB_COPILOT_API_KEY or COPILOT_API_KEY"]
-async fn api_key_completion_smoke() {
-    let client = api_key_builder(required_copilot_api_key())
-        .build()
-        .expect("Copilot API key client should build");
+async fn api_key_completion_smoke() -> Result<()> {
+    let client = api_key_builder(required_copilot_api_key()?).build()?;
 
-    client
-        .authorize()
-        .await
-        .expect("api key auth should succeed");
+    client.authorize().await?;
 
     let response = client
         .agent(LIVE_MODEL)
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
-        .await
-        .expect("api key-backed completion should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires COPILOT_GITHUB_ACCESS_TOKEN or GITHUB_TOKEN"]
-async fn github_access_token_completion_smoke() {
-    let client = github_access_token_builder(required_copilot_github_access_token())
-        .build()
-        .expect("Copilot bootstrap-token client should build");
+async fn github_access_token_completion_smoke() -> Result<()> {
+    let client = github_access_token_builder(required_copilot_github_access_token()?).build()?;
 
-    client
-        .authorize()
-        .await
-        .expect("bootstrap-token auth should succeed");
+    client.authorize().await?;
 
     let response = client
         .agent(LIVE_MODEL)
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
-        .await
-        .expect("bootstrap-token-backed completion should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires interactive GitHub Copilot OAuth device flow"]
-async fn oauth_device_flow_authorize_and_cached_completion_smoke() {
-    let temp = TempDir::new().expect("temp dir");
+async fn oauth_device_flow_authorize_and_cached_completion_smoke() -> Result<()> {
+    let temp = TempDir::new()?;
     let token_dir = temp.path();
 
-    let client = oauth_builder_with_token_dir(token_dir)
-        .build()
-        .expect("Copilot OAuth client should build");
+    let client = oauth_builder_with_token_dir(token_dir).build()?;
 
-    client
-        .authorize()
-        .await
-        .expect("device authorization should succeed");
+    client.authorize().await?;
 
     assert!(
         token_dir.join("access-token").is_file(),
@@ -97,72 +83,53 @@ async fn oauth_device_flow_authorize_and_cached_completion_smoke() {
         "device flow should cache the Copilot API key"
     );
 
-    client
-        .authorize()
-        .await
-        .expect("cached oauth auth should succeed");
+    client.authorize().await?;
 
     let response = client
         .agent(LIVE_MODEL)
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
-        .await
-        .expect("authorized completion should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
 
-    let cached_client = oauth_builder_with_token_dir(token_dir)
-        .build()
-        .expect("cached Copilot client should build");
-    cached_client
-        .authorize()
-        .await
-        .expect("cached oauth auth should succeed");
+    let cached_client = oauth_builder_with_token_dir(token_dir).build()?;
+    cached_client.authorize().await?;
     let cached_response = cached_client
         .agent(LIVE_MODEL)
         .build()
         .prompt("Reply with the single word cached.")
-        .await
-        .expect("cached completion should succeed");
+        .await?;
 
     assert_nonempty_response(&cached_response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires COPILOT_GITHUB_ACCESS_TOKEN or GITHUB_TOKEN"]
-async fn access_token_bootstrap_refresh_and_completion_smoke() {
-    let temp = TempDir::new().expect("temp dir");
+async fn access_token_bootstrap_refresh_and_completion_smoke() -> Result<()> {
+    let temp = TempDir::new()?;
     let token_dir = temp.path();
 
     fs::write(
         token_dir.join("access-token"),
-        required_copilot_github_access_token(),
-    )
-    .expect("access token should be written");
+        required_copilot_github_access_token()?,
+    )?;
     fs::write(
         token_dir.join("api-key.json"),
         serde_json::to_vec_pretty(&json!({
             "token": "expired-token",
             "expires_at": 0,
-        }))
-        .expect("expired api key record"),
-    )
-    .expect("expired api key record should be written");
+        }))?,
+    )?;
 
-    let client = oauth_builder_with_token_dir(token_dir)
-        .build()
-        .expect("Copilot OAuth client should build");
+    let client = oauth_builder_with_token_dir(token_dir).build()?;
 
-    client
-        .authorize()
-        .await
-        .expect("bootstrap refresh should succeed");
+    client.authorize().await?;
 
-    let api_key_record: serde_json::Value = serde_json::from_slice(
-        &fs::read(token_dir.join("api-key.json")).expect("api key record should exist"),
-    )
-    .expect("api key record should deserialize");
+    let api_key_record: serde_json::Value =
+        serde_json::from_slice(&fs::read(token_dir.join("api-key.json"))?)?;
 
     assert!(
         api_key_record
@@ -188,8 +155,8 @@ async fn access_token_bootstrap_refresh_and_completion_smoke() {
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
-        .await
-        .expect("bootstrap-backed completion should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }

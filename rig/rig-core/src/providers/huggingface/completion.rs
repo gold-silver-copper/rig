@@ -212,12 +212,12 @@ impl TryFrom<message::UserContent> for UserContent {
                 message::DocumentSourceKind::Url(url) => Ok(UserContent::ImageUrl {
                     image_url: ImageUrl { url },
                 }),
-                _ => Err(message::MessageError::ConversionError(
-                    "Huggingface only supports images as urls".into(),
+                _ => Err(message::MessageError::conversion(
+                    "Huggingface only supports images as urls",
                 )),
             },
-            _ => Err(message::MessageError::ConversionError(
-                "Huggingface only supports text and images".into(),
+            _ => Err(message::MessageError::conversion(
+                "Huggingface only supports text and images",
             )),
         }
     }
@@ -302,18 +302,22 @@ impl TryFrom<message::Message> for Vec<Message> {
                                     message::ToolResultContent::Text(message::Text { text }) => {
                                         Ok(text)
                                     }
-                                    _ => Err(message::MessageError::ConversionError(
-                                        "Tool result content does not support non-text".into(),
+                                    _ => Err(message::MessageError::conversion(
+                                        "Tool result content does not support non-text",
                                     )),
                                 })?,
                             }),
-                            _ => unreachable!(),
+                            _ => Err(message::MessageError::conversion(
+                                "HuggingFace tool-result partition contained non-tool content",
+                            )),
                         })
                         .collect::<Result<Vec<_>, _>>()
                 } else {
-                    let other_content = OneOrMany::many(other_content).expect(
-                        "There must be other content here if there were no tool result content",
-                    );
+                    let other_content = OneOrMany::many(other_content).map_err(|_| {
+                        message::MessageError::conversion(
+                            "HuggingFace user message did not contain convertible content",
+                        )
+                    })?;
 
                     Ok(vec![Message::User {
                         content: other_content.try_map(|content| match content {
@@ -338,8 +342,8 @@ impl TryFrom<message::Message> for Vec<Message> {
                             }) => {
                                 Ok(UserContent::Text { text })
                             }
-                            _ => Err(message::MessageError::ConversionError(
-                                "Huggingface inputs only support text and image URLs (both base64-encoded images and regular URLs)".into(),
+                            _ => Err(message::MessageError::conversion(
+                                "Huggingface inputs only support text and image URLs (both base64-encoded images and regular URLs)",
                             )),
                         })?,
                     }])
@@ -360,7 +364,9 @@ impl TryFrom<message::Message> for Vec<Message> {
                             // Silently skip unsupported reasoning content.
                         }
                         message::AssistantContent::Image(_) => {
-                            panic!("Image content is not supported on HuggingFace via Rig");
+                            return Err(message::MessageError::conversion(
+                                "Image content is not supported on HuggingFace via Rig",
+                            ));
                         }
                     }
                 }
@@ -414,7 +420,7 @@ impl TryFrom<Message> for message::Message {
                 message::Message::Assistant {
                     id: None,
                     content: OneOrMany::many(content).map_err(|_| {
-                        message::MessageError::ConversionError(
+                        message::MessageError::conversion(
                             "Neither `content` nor `tool_calls` was provided to the Message"
                                 .to_owned(),
                         )
@@ -549,9 +555,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(CompletionError::missing_choices)?;
 
         let content = match &choice.message {
             Message::Assistant {
@@ -580,13 +587,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 );
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -787,17 +794,14 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.to_string())),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.to_string())),
                 }
             } else {
                 let status = response.status();
                 let text: Vec<u8> = response.into_body().await?;
                 let text: String = String::from_utf8_lossy(&text).into();
 
-                Err(CompletionError::ProviderError(format!(
-                    "{}: {}",
-                    status, text
-                )))
+                Err(CompletionError::transport(format!("{}: {}", status, text)))
             }
         }
         .instrument(span)

@@ -29,6 +29,10 @@ use std::sync::atomic::AtomicBool;
 use std::task::{Context, Poll};
 use tokio::sync::watch;
 
+#[derive(Debug, thiserror::Error)]
+#[error("PauseControlError: {0}")]
+pub struct PauseControlError(#[from] watch::error::SendError<bool>);
+
 /// Control for pausing and resuming a streaming response
 pub struct PauseControl {
     pub(crate) paused_tx: watch::Sender<bool>,
@@ -44,12 +48,12 @@ impl PauseControl {
         }
     }
 
-    pub fn pause(&self) {
-        self.paused_tx.send(true).unwrap();
+    pub fn pause(&self) -> Result<(), PauseControlError> {
+        self.paused_tx.send(true).map_err(PauseControlError::from)
     }
 
-    pub fn resume(&self) {
-        self.paused_tx.send(false).unwrap();
+    pub fn resume(&self) -> Result<(), PauseControlError> {
+        self.paused_tx.send(false).map_err(PauseControlError::from)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -202,18 +206,20 @@ where
     pub(crate) inner: Abortable<StreamingResult<R>>,
     pub(crate) abort_handle: AbortHandle,
     pub(crate) pause_control: PauseControl,
+    cancelled: AtomicBool,
     assistant_items: Vec<AssistantContent>,
     text_item_index: Option<usize>,
     reasoning_item_index: Option<usize>,
     /// The final aggregated message from the stream
     /// contains all text and tool calls generated
-    pub choice: OneOrMany<AssistantContent>,
+    choice: Option<OneOrMany<AssistantContent>>,
     /// The final response from the stream, may be `None`
     /// if the provider didn't yield it during the stream
     pub response: Option<R>,
-    pub final_response_yielded: AtomicBool,
+    final_response_yielded: bool,
     /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
     pub message_id: Option<String>,
+    finished: bool,
 }
 
 impl<R> StreamingCompletionResponse<R>
@@ -228,30 +234,50 @@ where
             inner: abortable_stream,
             abort_handle,
             pause_control,
+            cancelled: AtomicBool::new(false),
             assistant_items: vec![],
             text_item_index: None,
             reasoning_item_index: None,
-            choice: OneOrMany::one(AssistantContent::text("")),
+            choice: None,
             response: None,
-            final_response_yielded: AtomicBool::new(false),
+            final_response_yielded: false,
             message_id: None,
+            finished: false,
         }
     }
 
     pub fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.abort_handle.abort();
     }
 
-    pub fn pause(&self) {
-        self.pause_control.pause();
+    pub fn pause(&self) -> Result<(), PauseControlError> {
+        self.pause_control.pause()
     }
 
-    pub fn resume(&self) {
-        self.pause_control.resume();
+    pub fn resume(&self) -> Result<(), PauseControlError> {
+        self.pause_control.resume()
     }
 
     pub fn is_paused(&self) -> bool {
         self.pause_control.is_paused()
+    }
+
+    pub fn choice(&self) -> Option<&OneOrMany<AssistantContent>> {
+        self.choice.as_ref()
+    }
+
+    pub fn into_choice(self) -> Option<OneOrMany<AssistantContent>> {
+        self.choice
+    }
+
+    fn finalize_choice_from_assistant_items(&mut self) {
+        if self.choice.is_some() {
+            return;
+        }
+
+        self.choice = OneOrMany::from_non_empty_iter(std::mem::take(&mut self.assistant_items));
     }
 
     fn append_text_chunk(&mut self, text: &str) {
@@ -294,17 +320,30 @@ where
     }
 }
 
-impl<R> From<StreamingCompletionResponse<R>> for CompletionResponse<Option<R>>
+impl<R> TryFrom<StreamingCompletionResponse<R>> for CompletionResponse<Option<R>>
 where
     R: Clone + Unpin + GetTokenUsage,
 {
-    fn from(value: StreamingCompletionResponse<R>) -> CompletionResponse<Option<R>> {
-        CompletionResponse {
-            choice: value.choice,
+    type Error = CompletionError;
+
+    fn try_from(value: StreamingCompletionResponse<R>) -> Result<Self, Self::Error> {
+        let choice = if let Some(choice) = value.choice {
+            choice
+        } else if value.finished {
+            return Err(CompletionError::stream_ended_without_assistant_content());
+        } else {
+            return Err(CompletionError::response_with_context(
+                "streaming response",
+                "assistant content is not finalized; drain the stream before converting",
+            ));
+        };
+
+        Ok(CompletionResponse {
+            choice,
             usage: Usage::new(), // Usage is not tracked in streaming responses
             raw_response: value.response,
             message_id: value.message_id,
-        }
+        })
     }
 }
 
@@ -317,6 +356,10 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let stream = self.get_mut();
 
+        if stream.finished {
+            return Poll::Ready(None);
+        }
+
         if stream.is_paused() {
             cx.waker().wake_by_ref();
             return Poll::Pending;
@@ -327,21 +370,41 @@ where
             Poll::Ready(None) => {
                 // This is run at the end of the inner stream to collect all tokens into
                 // a single unified `Message`.
-                if stream.assistant_items.is_empty() {
-                    stream.assistant_items.push(AssistantContent::text(""));
+                if stream.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    stream.finalize_choice_from_assistant_items();
+                    stream.finished = true;
+                    return Poll::Ready(None);
                 }
 
-                stream.choice = OneOrMany::many(std::mem::take(&mut stream.assistant_items))
-                    .expect("There should be at least one assistant message");
+                stream.finalize_choice_from_assistant_items();
 
+                if stream.choice.is_none() {
+                    stream.finished = true;
+                    return Poll::Ready(Some(Err(
+                        CompletionError::stream_ended_without_assistant_content(),
+                    )));
+                }
+
+                if !stream.final_response_yielded
+                    && let Some(response) = stream.response.clone()
+                {
+                    stream.final_response_yielded = true;
+                    return Poll::Ready(Some(Ok(StreamedAssistantContent::final_response(
+                        response,
+                    ))));
+                }
+
+                stream.finished = true;
                 Poll::Ready(None)
             }
             Poll::Ready(Some(Err(err))) => {
-                if matches!(err, CompletionError::ProviderError(ref e) if e.to_string().contains("aborted"))
-                {
-                    return Poll::Ready(None); // Treat cancellation as stream termination
+                stream.finalize_choice_from_assistant_items();
+                stream.finished = true;
+                if err.is_aborted() {
+                    Poll::Ready(None)
+                } else {
+                    Poll::Ready(Some(Err(err)))
                 }
-                Poll::Ready(Some(Err(err)))
             }
             Poll::Ready(Some(Ok(choice))) => match choice {
                 RawStreamingChoice::Message(text) => {
@@ -393,20 +456,8 @@ where
                     })))
                 }
                 RawStreamingChoice::FinalResponse(response) => {
-                    if stream
-                        .final_response_yielded
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                    {
-                        stream.poll_next_unpin(cx)
-                    } else {
-                        // Set the final response field and return the next item in the stream
-                        stream.response = Some(response.clone());
-                        stream
-                            .final_response_yielded
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
-                        let final_response = StreamedAssistantContent::final_response(response);
-                        Poll::Ready(Some(Ok(final_response)))
-                    }
+                    stream.response = Some(response);
+                    stream.poll_next_unpin(cx)
                 }
                 RawStreamingChoice::MessageId(id) => {
                     stream.message_id = Some(id);
@@ -571,7 +622,8 @@ where
                 println!("\nResult: {res}");
             }
             Ok(StreamedAssistantContent::Final(res)) => {
-                let json_res = serde_json::to_string_pretty(&res).unwrap();
+                let json_res = serde_json::to_string_pretty(&res)
+                    .unwrap_or_else(|error| format!("{{\"serialization_error\":\"{error}\"}}"));
                 println!();
                 tracing::info!("Final result: {json_res}");
             }
@@ -587,7 +639,7 @@ where
                 std::io::Write::flush(&mut std::io::stdout())?;
             }
             Err(e) => {
-                if e.to_string().contains("aborted") {
+                if e.is_aborted() {
                     println!("\nStream cancelled.");
                     break;
                 }
@@ -680,6 +732,29 @@ mod tests {
                 content: ReasoningContent::Summary("hidden summary".to_string()),
             });
             yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 2 }));
+        };
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
+    fn create_final_only_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream = stream! {
+            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 1 }));
+        };
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
+    fn create_empty_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream =
+            futures::stream::empty::<Result<RawStreamingChoice<MockResponse>, CompletionError>>();
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
+    fn create_aborted_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream = stream! {
+            yield Err(CompletionError::aborted());
         };
 
         StreamingCompletionResponse::stream(to_stream_result(stream))
@@ -793,11 +868,11 @@ mod tests {
         let stream = create_mock_stream();
 
         // Test pause
-        stream.pause();
+        stream.pause().expect("pause should succeed");
         assert!(stream.is_paused());
 
         // Test resume
-        stream.resume();
+        stream.resume().expect("resume should succeed");
         assert!(!stream.is_paused());
     }
 
@@ -806,7 +881,12 @@ mod tests {
         let mut stream = create_reasoning_stream();
         while stream.next().await.is_some() {}
 
-        let choice_items: Vec<AssistantContent> = stream.choice.clone().into_iter().collect();
+        let choice_items: Vec<AssistantContent> = stream
+            .choice()
+            .expect("reasoning stream should finalize a choice")
+            .clone()
+            .into_iter()
+            .collect();
 
         assert!(choice_items.iter().any(|item| matches!(
             item,
@@ -829,7 +909,12 @@ mod tests {
         let mut stream = create_reasoning_only_stream();
         while stream.next().await.is_some() {}
 
-        let choice_items: Vec<AssistantContent> = stream.choice.clone().into_iter().collect();
+        let choice_items: Vec<AssistantContent> = stream
+            .choice()
+            .expect("reasoning-only stream should finalize a choice")
+            .clone()
+            .into_iter()
+            .collect();
         assert_eq!(choice_items.len(), 1);
         assert!(matches!(
             choice_items.first(),
@@ -838,11 +923,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_stream_errors_when_provider_finishes_with_final_response_only() {
+        let mut stream = create_final_only_stream();
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(CompletionError::ResponseError(
+                crate::completion::CompletionResponseError::StreamEndedWithoutAssistantContent
+            )))
+        ));
+        assert!(stream.next().await.is_none());
+        assert!(matches!(
+            stream.response.as_ref(),
+            Some(MockResponse { token_count: 1 })
+        ));
+        assert!(stream.choice().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stream_errors_when_provider_finishes_without_assistant_content_or_final_response()
+    {
+        let mut stream = create_empty_stream();
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(CompletionError::ResponseError(
+                crate::completion::CompletionResponseError::StreamEndedWithoutAssistantContent
+            )))
+        ));
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stream_terminates_cleanly_when_provider_reports_abort() {
+        let mut stream = create_aborted_stream();
+
+        assert!(stream.next().await.is_none());
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stream_preserves_partial_choice_before_provider_error() {
+        let stream = stream! {
+            yield Ok(RawStreamingChoice::Message("partial".to_string()));
+            yield Err(CompletionError::transport("provider blew up"));
+        };
+        let mut stream = StreamingCompletionResponse::stream(to_stream_result(stream));
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(StreamedAssistantContent::Text(Text { text }))) if text == "partial"
+        ));
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(CompletionError::TransportError(_)))
+        ));
+        assert!(stream.next().await.is_none());
+
+        let choice_items: Vec<AssistantContent> = stream
+            .choice()
+            .expect("partial stream should preserve finalized choice")
+            .clone()
+            .into_iter()
+            .collect();
+        assert_eq!(choice_items.len(), 1);
+        assert!(matches!(
+            choice_items.first(),
+            Some(AssistantContent::Text(Text { text })) if text == "partial"
+        ));
+    }
+
+    #[tokio::test]
     async fn test_stream_aggregates_assistant_items_in_arrival_order() {
         let mut stream = create_interleaved_stream();
         while stream.next().await.is_some() {}
 
-        let choice_items: Vec<AssistantContent> = stream.choice.clone().into_iter().collect();
+        let choice_items: Vec<AssistantContent> = stream
+            .choice()
+            .expect("interleaved stream should finalize a choice")
+            .clone()
+            .into_iter()
+            .collect();
         assert_eq!(choice_items.len(), 3);
         assert!(matches!(
             choice_items.first(),
@@ -863,7 +1024,12 @@ mod tests {
         let mut stream = create_text_tool_text_stream();
         while stream.next().await.is_some() {}
 
-        let choice_items: Vec<AssistantContent> = stream.choice.clone().into_iter().collect();
+        let choice_items: Vec<AssistantContent> = stream
+            .choice()
+            .expect("text/tool/text stream should finalize a choice")
+            .clone()
+            .into_iter()
+            .collect();
         assert_eq!(choice_items.len(), 3);
         assert!(matches!(
             choice_items.first(),

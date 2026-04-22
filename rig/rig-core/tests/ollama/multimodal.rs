@@ -1,5 +1,6 @@
 //! Migrated from `examples/image_ollama.rs`.
 
+use anyhow::Result;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
@@ -14,22 +15,23 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires a local Ollama server with a multimodal model"]
-async fn multimodal_image_prompt() {
-    let client = ollama::Client::from_env();
+async fn multimodal_image_prompt() -> Result<()> {
+    let client = ollama::Client::from_env()?;
     let agent = client
         .agent("llava")
         .preamble("Describe this image and include anything notable about it.")
         .temperature(0.5)
         .build();
 
-    let image_bytes = std::fs::read(IMAGE_FIXTURE_PATH).expect("fixture image should be readable");
+    let image_bytes = std::fs::read(IMAGE_FIXTURE_PATH)?;
     let image = Image {
         data: DocumentSourceKind::base64(&BASE64_STANDARD.encode(image_bytes)),
         media_type: Some(ImageMediaType::JPEG),
         ..Default::default()
     };
-    let response = agent.prompt(image).await.expect("prompt should succeed");
+    let response = agent.prompt(image).await?;
 
     assert_nonempty_response(&response);
     assert_contains_any_case_insensitive(&response, &["ant", "insect"]);
+    Ok(())
 }

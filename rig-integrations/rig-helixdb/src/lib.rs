@@ -1,9 +1,35 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 use helix_rs::HelixDBClient;
 use rig::{
     embeddings::EmbeddingModel,
     vector_store::{InsertDocuments, VectorStoreError, VectorStoreIndex, request::Filter},
 };
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+#[derive(Debug)]
+enum HelixDbVectorStoreError {
+    Query(String),
+}
+
+impl fmt::Display for HelixDbVectorStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HelixDbVectorStoreError::Query(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for HelixDbVectorStoreError {}
 
 /// A client for easily carrying out Rig-related vector store operations.
 ///
@@ -88,8 +114,8 @@ where
         }
 
         for (document, embeddings) in documents {
-            let json_document = serde_json::to_value(&document).unwrap();
-            let json_document_as_string = serde_json::to_string(&json_document).unwrap();
+            let json_document = serde_json::to_value(&document)?;
+            let json_document_as_string = serde_json::to_string(&json_document)?;
 
             for embedding in embeddings {
                 let embedded_text = embedding.document;
@@ -104,8 +130,11 @@ where
                 self.client
                     .query::<QueryInput, QueryOutput>("InsertVector", &query)
                     .await
-                    .inspect_err(|x| println!("Error: {x}"))
-                    .map_err(|x| VectorStoreError::DatastoreError(x.to_string().into()))?;
+                    .map_err(|error| {
+                        VectorStoreError::DatastoreError(Box::new(HelixDbVectorStoreError::Query(
+                            error.to_string(),
+                        )))
+                    })?;
             }
         }
         Ok(())
@@ -137,36 +166,33 @@ where
             .client
             .query::<QueryInput, VecResult>("VectorSearch", &query_input)
             .await
-            .unwrap();
+            .map_err(|error| {
+                VectorStoreError::DatastoreError(Box::new(HelixDbVectorStoreError::Query(
+                    error.to_string(),
+                )))
+            })?;
 
-        let docs = result
-            .vec_docs
-            .into_iter()
-            .filter(|x| {
-                let is_threshold = req
-                    .threshold()
-                    .map(|t| -(x.score - 1.) >= t)
-                    .unwrap_or(true);
+        let mut docs = Vec::new();
+        for item in result.vec_docs {
+            let score = -(item.score - 1.);
+            if req.threshold().is_some_and(|threshold| score < threshold) {
+                continue;
+            }
 
-                is_threshold
-                    && req
-                        .filter()
-                        .clone()
-                        .zip(serde_json::from_str(&x.json_payload).ok())
-                        .map(
-                            |(filter, payload): (Filter<serde_json::Value>, serde_json::Value)| {
-                                filter.satisfies(&payload)
-                            },
-                        )
-                        .unwrap_or(true)
-            })
-            .map(|x| {
-                let doc: T = serde_json::from_str(&x.json_payload)?;
+            let payload: serde_json::Value = serde_json::from_str(&item.json_payload)?;
+            if req
+                .filter()
+                .as_ref()
+                .is_some_and(|filter| !filter.satisfies(&payload))
+            {
+                continue;
+            }
 
-                // HelixDB gives us the cosine distance, so we need to use `-(cosine_dist - 1)` to get the cosine similarity score.
-                Ok((-(x.score - 1.), x.id, doc))
-            })
-            .collect::<Result<Vec<_>, VectorStoreError>>()?;
+            let doc: T = serde_json::from_value(payload)?;
+
+            // HelixDB gives us the cosine distance, so we need to use `-(cosine_dist - 1)` to get the cosine similarity score.
+            docs.push((score, item.id, doc));
+        }
 
         Ok(docs)
     }
@@ -189,15 +215,29 @@ where
             .client
             .query::<QueryInput, VecResult>("VectorSearch", &query_input)
             .await
-            .unwrap();
+            .map_err(|error| {
+                VectorStoreError::DatastoreError(Box::new(HelixDbVectorStoreError::Query(
+                    error.to_string(),
+                )))
+            })?;
 
         // HelixDB gives us the cosine distance, so we need to use `-(cosine_dist - 1)` to get the cosine similarity score.
-        let docs = result
-            .vec_docs
-            .into_iter()
-            .filter(|x| -(x.score - 1.) >= req.threshold().unwrap_or_default())
-            .map(|x| Ok((-(x.score - 1.), x.id)))
-            .collect::<Result<Vec<_>, VectorStoreError>>()?;
+        let mut docs = Vec::new();
+        for item in result.vec_docs {
+            let score = -(item.score - 1.);
+            if req.threshold().is_some_and(|threshold| score < threshold) {
+                continue;
+            }
+
+            if let Some(filter) = req.filter() {
+                let payload: serde_json::Value = serde_json::from_str(&item.json_payload)?;
+                if !filter.satisfies(&payload) {
+                    continue;
+                }
+            }
+
+            docs.push((score, item.id));
+        }
 
         Ok(docs)
     }

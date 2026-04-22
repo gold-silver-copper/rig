@@ -2,8 +2,52 @@
 //! Rig allows calling a number of different providers (that support image generation) using the [ImageGenerationModel] trait.
 use crate::http_client;
 use crate::markers::{Missing, Provided};
+use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
+use http::StatusCode;
 use serde_json::Value;
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ImageGenerationResponseError {
+    #[error("ResponseError: {provider} image response contained no images")]
+    MissingImages { provider: &'static str },
+
+    #[error("ResponseError: failed to decode {provider} image payload: {source}")]
+    Base64Decode {
+        provider: &'static str,
+        #[source]
+        source: base64::DecodeError,
+    },
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+#[derive(Debug, Error)]
+pub enum ImageGenerationTransportError {
+    #[error("TransportError: request failed with status {status}: {body}")]
+    Status { status: StatusCode, body: String },
+
+    #[error("TransportError: {message}")]
+    Message { message: String },
+}
+
+impl ImageGenerationTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ImageGenerationConfigurationError {
+    #[error("ConfigurationError: image generation endpoint is not supported yet for {provider}")]
+    UnsupportedEndpoint { provider: String },
+
+    #[error("ConfigurationError: {message}")]
+    Message { message: String },
+}
 
 #[derive(Debug, Error)]
 pub enum ImageGenerationError {
@@ -15,17 +59,70 @@ pub enum ImageGenerationError {
     #[error("JsonError: {0}")]
     JsonError(#[from] serde_json::Error),
 
+    #[cfg(not(target_family = "wasm"))]
     /// Error building the transcription request
     #[error("RequestError: {0}")]
     RequestError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
-    /// Error parsing the transcription response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[cfg(target_family = "wasm")]
+    /// Error building the transcription request
+    #[error("RequestError: {0}")]
+    RequestError(#[from] Box<dyn std::error::Error + 'static>),
 
-    /// Error returned by the transcription model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    /// Error parsing the transcription response
+    #[error(transparent)]
+    ResponseError(ImageGenerationResponseError),
+
+    /// Error returned while talking to the image generation provider.
+    #[error(transparent)]
+    TransportError(ImageGenerationTransportError),
+
+    /// Error caused by local image generation configuration or initialization.
+    #[error(transparent)]
+    ConfigurationError(ImageGenerationConfigurationError),
+}
+
+impl ImageGenerationError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
+    pub fn missing_images(provider: &'static str) -> Self {
+        Self::ResponseError(ImageGenerationResponseError::MissingImages { provider })
+    }
+
+    pub fn decode_payload(provider: &'static str, source: base64::DecodeError) -> Self {
+        Self::ResponseError(ImageGenerationResponseError::Base64Decode { provider, source })
+    }
+
+    pub fn response_message(message: impl Into<String>) -> Self {
+        Self::ResponseError(ImageGenerationResponseError::Message {
+            message: message.into(),
+        })
+    }
+
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(ImageGenerationTransportError::message(message))
+    }
+
+    pub fn transport_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::TransportError(ImageGenerationTransportError::Status {
+            status,
+            body: body.into(),
+        })
+    }
+
+    pub fn unsupported_endpoint(provider: impl Into<String>) -> Self {
+        Self::ConfigurationError(ImageGenerationConfigurationError::UnsupportedEndpoint {
+            provider: provider.into(),
+        })
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(ImageGenerationConfigurationError::Message {
+            message: message.into(),
+        })
+    }
 }
 pub trait ImageGeneration<M>
 where
@@ -45,7 +142,7 @@ where
         size: &(u32, u32),
     ) -> impl std::future::Future<
         Output = Result<ImageGenerationRequestBuilder<M, Provided<String>>, ImageGenerationError>,
-    > + Send;
+    > + WasmCompatSend;
 }
 
 /// A unified response for a model image generation, returning both the image and the raw response.
@@ -55,8 +152,8 @@ pub struct ImageGenerationResponse<T> {
     pub response: T,
 }
 
-pub trait ImageGenerationModel: Clone + Send + Sync {
-    type Response: Send + Sync;
+pub trait ImageGenerationModel: Clone + WasmCompatSend + WasmCompatSync {
+    type Response: WasmCompatSend + WasmCompatSync;
 
     type Client;
 
@@ -67,7 +164,7 @@ pub trait ImageGenerationModel: Clone + Send + Sync {
         request: ImageGenerationRequest,
     ) -> impl std::future::Future<
         Output = Result<ImageGenerationResponse<Self::Response>, ImageGenerationError>,
-    > + Send;
+    > + WasmCompatSend;
 
     fn image_generation_request(&self) -> ImageGenerationRequestBuilder<Self, Missing> {
         ImageGenerationRequestBuilder::new(self.clone())
@@ -162,5 +259,43 @@ where
         let model = self.model.clone();
 
         model.image_generation(self.build()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ImageGenerationConfigurationError, ImageGenerationError, ImageGenerationResponseError,
+        ImageGenerationTransportError,
+    };
+    use http::StatusCode;
+
+    #[test]
+    fn image_generation_error_builders_preserve_structure() {
+        assert!(matches!(
+            ImageGenerationError::missing_images("OpenAI"),
+            ImageGenerationError::ResponseError(ImageGenerationResponseError::MissingImages {
+                provider: "OpenAI"
+            })
+        ));
+        assert!(matches!(
+            ImageGenerationError::transport_status(StatusCode::BAD_GATEWAY, "bad gateway"),
+            ImageGenerationError::TransportError(ImageGenerationTransportError::Status {
+                status,
+                body,
+            }) if status == StatusCode::BAD_GATEWAY && body == "bad gateway"
+        ));
+        assert!(matches!(
+            ImageGenerationError::unsupported_endpoint("custom-subprovider"),
+            ImageGenerationError::ConfigurationError(
+                ImageGenerationConfigurationError::UnsupportedEndpoint { provider }
+            ) if provider == "custom-subprovider"
+        ));
+        assert!(matches!(
+            ImageGenerationError::configuration("missing image backend"),
+            ImageGenerationError::ConfigurationError(
+                ImageGenerationConfigurationError::Message { message }
+            ) if message == "missing image backend"
+        ));
     }
 }

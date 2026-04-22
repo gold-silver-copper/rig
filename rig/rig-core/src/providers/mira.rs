@@ -120,7 +120,7 @@ impl TryFrom<RawMessage> for message::Message {
                     text: raw.content,
                 })),
             }),
-            _ => Err(CompletionError::ResponseError(format!(
+            _ => Err(CompletionError::response(format!(
                 "Unsupported message role: {}",
                 raw.role
             ))),
@@ -200,13 +200,18 @@ impl ProviderClient for Client {
 
     /// Create a new Mira client from the `MIRA_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("MIRA_API_KEY").expect("MIRA_API_KEY not set");
-        Self::new(&api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("MIRA_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "MIRA_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(&api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(&input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(&input)
     }
 }
 
@@ -392,7 +397,7 @@ where
                 .client
                 .send::<_, bytes::Bytes>(req)
                 .await
-                .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+                .map_err(|e| CompletionError::transport(e.to_string()))?;
 
             let status = response.status();
             let response_body = response.into_body().into_future().await?.to_vec();
@@ -400,7 +405,7 @@ where
             if !status.is_success() {
                 let status = status.as_u16();
                 let error_text = String::from_utf8_lossy(&response_body).to_string();
-                return Err(CompletionError::ProviderError(format!(
+                return Err(CompletionError::transport(format!(
                     "API error: {status} - {error_text}"
                 )));
             }
@@ -501,7 +506,7 @@ where
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::transport(err.message)
     }
 }
 
@@ -511,9 +516,9 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
         let (content, usage) = match &response {
             CompletionResponse::Structured { choices, usage, .. } => {
-                let choice = choices.first().ok_or_else(|| {
-                    CompletionError::ResponseError("Response contained no choices".to_owned())
-                })?;
+                let choice = choices
+                    .first()
+                    .ok_or_else(CompletionError::missing_choices)?;
 
                 let usage = usage
                     .as_ref()
@@ -532,7 +537,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 let content = match message {
                     Message::Assistant { content, .. } => {
                         if content.is_empty() {
-                            return Err(CompletionError::ResponseError(
+                            return Err(CompletionError::response(
                                 "Response contained empty content".to_owned(),
                             ));
                         }
@@ -549,7 +554,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         content.iter().map(|c| {
                             match c {
                                 AssistantContent::Text(text) => Ok(completion::AssistantContent::text(&text.text)),
-                                other => Err(CompletionError::ResponseError(
+                                other => Err(CompletionError::response(
                                     format!("Unsupported content type: {other:?}. The Mira provider currently only supports text content")
                                 ))
                             }
@@ -557,13 +562,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     }
                     Message::User { .. } => {
                         tracing::warn!(target: "rig", "Received user message in response where assistant message was expected");
-                        return Err(CompletionError::ResponseError(
+                        return Err(CompletionError::response(
                             "Received user message in response where assistant message was expected".to_owned()
                         ));
                     }
                     Message::System { .. } => {
                         tracing::warn!(target: "rig", "Received system message in response where assistant message was expected");
-                        return Err(CompletionError::ResponseError(
+                        return Err(CompletionError::response(
                             "Received system message in response where assistant message was expected".to_owned(),
                         ));
                     }
@@ -578,7 +583,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
         };
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -651,9 +656,10 @@ impl TryFrom<serde_json::Value> for Message {
     type Error = CompletionError;
 
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
-        let role = value["role"].as_str().ok_or_else(|| {
-            CompletionError::ResponseError("Message missing role field".to_owned())
-        })?;
+        let role = value
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CompletionError::response("Message missing role field".to_owned()))?;
 
         // Handle both string and array content formats
         let content = match value.get("content") {
@@ -669,13 +675,13 @@ impl TryFrom<serde_json::Value> for Message {
                     .collect::<Vec<_>>()
                     .join("\n"),
                 _ => {
-                    return Err(CompletionError::ResponseError(
+                    return Err(CompletionError::response(
                         "Message content must be string or array".to_owned(),
                     ));
                 }
             },
             None => {
-                return Err(CompletionError::ResponseError(
+                return Err(CompletionError::response(
                     "Message missing content field".to_owned(),
                 ));
             }
@@ -690,7 +696,7 @@ impl TryFrom<serde_json::Value> for Message {
                 id: None,
                 content: OneOrMany::one(AssistantContent::Text(message::Text { text: content })),
             }),
-            _ => Err(CompletionError::ResponseError(format!(
+            _ => Err(CompletionError::response(format!(
                 "Unsupported message role: {role}"
             ))),
         }

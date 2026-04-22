@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 extern crate proc_macro;
 
 use convert_case::{Case, Casing};
@@ -17,6 +27,10 @@ mod custom;
 mod embed;
 
 pub(crate) const EMBED: &str = "embed";
+
+fn compile_error(error: syn::Error) -> TokenStream {
+    error.into_compile_error().into()
+}
 
 #[proc_macro_derive(ProviderClient, attributes(client))]
 pub fn derive_provider_client(input: TokenStream) -> TokenStream {
@@ -165,8 +179,14 @@ impl Parse for MacroArgs {
                                         ..
                                     }) = nv.value
                                 {
-                                    let param_name = nv.path.get_ident().unwrap().to_string();
-                                    param_descriptions.insert(param_name, lit_str.value());
+                                    let param_name = nv.path.get_ident().ok_or_else(|| {
+                                        syn::Error::new_spanned(
+                                            &nv.path,
+                                            "parameter descriptions require an identifier key",
+                                        )
+                                    })?;
+                                    param_descriptions
+                                        .insert(param_name.to_string(), lit_str.value());
                                 }
                             }
                         }
@@ -210,13 +230,15 @@ impl Parse for MacroArgs {
 fn get_json_type(ty: &Type) -> proc_macro2::TokenStream {
     match ty {
         Type::Path(type_path) => {
-            let segment = &type_path.path.segments[0];
+            let Some(segment) = type_path.path.segments.first() else {
+                return quote! { "type": "string" };
+            };
             let type_name = segment.ident.to_string();
 
             // Handle Vec types
             if type_name == "Vec" {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-                    && let syn::GenericArgument::Type(inner_type) = &args.args[0]
+                    && let Some(syn::GenericArgument::Type(inner_type)) = args.args.first()
                 {
                     let inner_json_type = get_json_type(inner_type);
                     return quote! {
@@ -328,33 +350,67 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
     // Extract return type and get Output and Error types from Result<T, E>
     let return_type = &input_fn.sig.output;
     let (output_type, error_type) = match return_type {
-        ReturnType::Type(_, ty) => {
-            if let Type::Path(type_path) = ty.deref() {
-                if let Some(last_segment) = type_path.path.segments.last() {
-                    if last_segment.ident == "Result" {
-                        if let PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                            if args.args.len() == 2 {
-                                let output = args.args.first().unwrap();
-                                let error = args.args.last().unwrap();
+        ReturnType::Type(_, ty) => match ty.deref() {
+            Type::Path(type_path) => match type_path.path.segments.last() {
+                Some(last_segment) if last_segment.ident == "Result" => {
+                    match &last_segment.arguments {
+                        PathArguments::AngleBracketed(args) if args.args.len() == 2 => {
+                            let mut type_args = args.args.iter();
+                            let output = match type_args.next() {
+                                Some(output) => output,
+                                None => {
+                                    return compile_error(syn::Error::new_spanned(
+                                        &last_segment.arguments,
+                                        "Result return type must specify an output type",
+                                    ));
+                                }
+                            };
+                            let error = match type_args.next() {
+                                Some(error) => error,
+                                None => {
+                                    return compile_error(syn::Error::new_spanned(
+                                        &last_segment.arguments,
+                                        "Result return type must specify an error type",
+                                    ));
+                                }
+                            };
 
-                                (quote!(#output), quote!(#error))
-                            } else {
-                                panic!("Expected Result with two type parameters");
-                            }
-                        } else {
-                            panic!("Expected angle bracketed type parameters for Result");
+                            (quote!(#output), quote!(#error))
                         }
-                    } else {
-                        panic!("Return type must be a Result");
+                        PathArguments::AngleBracketed(args) => {
+                            return compile_error(syn::Error::new_spanned(
+                                args,
+                                "Expected Result with two type parameters",
+                            ));
+                        }
+                        _ => {
+                            return compile_error(syn::Error::new_spanned(
+                                &last_segment.arguments,
+                                "Expected angle bracketed type parameters for Result",
+                            ));
+                        }
                     }
-                } else {
-                    panic!("Invalid return type");
                 }
-            } else {
-                panic!("Invalid return type");
+                Some(last_segment) => {
+                    return compile_error(syn::Error::new_spanned(
+                        last_segment,
+                        "Return type must be a Result",
+                    ));
+                }
+                None => {
+                    return compile_error(syn::Error::new_spanned(ty, "Invalid return type"));
+                }
+            },
+            _ => {
+                return compile_error(syn::Error::new_spanned(ty, "Invalid return type"));
             }
+        },
+        _ => {
+            return compile_error(syn::Error::new_spanned(
+                &input_fn.sig,
+                "Function must have a return type",
+            ));
         }
-        _ => panic!("Function must have a return type"),
     };
 
     // Generate PascalCase struct name from the function name

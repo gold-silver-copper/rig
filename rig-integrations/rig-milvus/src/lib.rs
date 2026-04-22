@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 mod filter;
 
 use reqwest::StatusCode;
@@ -207,7 +217,7 @@ where
 
         let insert_request = self.create_insert_request(data);
 
-        let body = serde_json::to_string(&insert_request).unwrap();
+        let body = serde_json::to_string(&insert_request)?;
 
         let res = client.body(body).send().await?;
 

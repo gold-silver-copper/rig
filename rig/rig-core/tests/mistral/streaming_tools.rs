@@ -1,5 +1,6 @@
 //! Mistral streaming tools coverage, including the migrated example path.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
 use rig::providers::mistral;
@@ -16,8 +17,8 @@ use super::TOOL_MODEL;
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn streaming_tools_smoke() {
-    let client = mistral::Client::from_env();
+async fn streaming_tools_smoke() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let agent = client
         .agent(TOOL_MODEL)
         .preamble(STREAMING_TOOLS_PREAMBLE)
@@ -27,17 +28,16 @@ async fn streaming_tools_smoke() {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn example_streaming_with_tools() {
-    let client = mistral::Client::from_env();
+async fn example_streaming_with_tools() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let agent = client
         .agent(TOOL_MODEL)
         .preamble(
@@ -50,17 +50,16 @@ async fn example_streaming_with_tools() {
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tools prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn stream_prompt_tool_roundtrip_preserves_streaming_contract() {
-    let client = mistral::Client::from_env();
+async fn stream_prompt_tool_roundtrip_preserves_streaming_contract() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let agent = client
         .agent(TOOL_MODEL)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
@@ -79,12 +78,13 @@ async fn stream_prompt_tool_roundtrip_preserves_streaming_contract() {
         "lookup_harbor_label",
         &[ALPHA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
-async fn stream_chat_tool_roundtrip_preserves_streaming_contract() {
-    let client = mistral::Client::from_env();
+async fn stream_chat_tool_roundtrip_preserves_streaming_contract() -> Result<()> {
+    let client = mistral::Client::from_env()?;
     let agent = client
         .agent(TOOL_MODEL)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
@@ -103,4 +103,5 @@ async fn stream_chat_tool_roundtrip_preserves_streaming_contract() {
         "lookup_harbor_label",
         &[ALPHA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }

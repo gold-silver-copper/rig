@@ -13,6 +13,17 @@ use crate::{
     },
 };
 
+fn pair_embeddings_with_ids(
+    ids: Vec<usize>,
+    embeddings: Vec<Embedding>,
+) -> Result<Vec<(usize, Embedding)>, EmbeddingError> {
+    if ids.len() != embeddings.len() {
+        return Err(EmbeddingError::mismatched_embedding_count());
+    }
+
+    Ok(ids.into_iter().zip(embeddings).collect())
+}
+
 /// Builder for creating embeddings from one or more documents of type `T`.
 /// Note: `T` can be any type that implements the [Embed] trait.
 ///
@@ -122,7 +133,7 @@ where
                 let (ids, docs): (Vec<_>, Vec<_>) = text.into_iter().unzip();
 
                 let embeddings = self.model.embed_texts(docs).await?;
-                Ok::<_, EmbeddingError>(ids.into_iter().zip(embeddings).collect::<Vec<_>>())
+                pair_embeddings_with_ids(ids, embeddings)
             })
             // Parallelize the embeddings generation over 10 concurrent requests
             .buffer_unordered(max(1, 1024 / M::MAX_DOCUMENTS))
@@ -142,15 +153,14 @@ where
             .await?;
 
         // Merge the embeddings with their respective documents
-        Ok(docs
-            .into_iter()
+        docs.into_iter()
             .map(|(i, doc)| {
-                (
-                    doc,
-                    embeddings.remove(&i).expect("Document should be present"),
-                )
+                let embeddings = embeddings
+                    .remove(&i)
+                    .ok_or(EmbeddingError::MissingEmbeddingForDocument { index: i })?;
+                Ok((doc, embeddings))
             })
-            .collect())
+            .collect::<Result<Vec<_>, EmbeddingError>>()
     }
 }
 
@@ -160,7 +170,7 @@ mod tests {
         Embed,
         client::Nothing,
         embeddings::{
-            Embedding, EmbeddingModel,
+            Embedding, EmbeddingModel, EmbeddingResponseError,
             embed::{EmbedError, TextEmbedder},
         },
     };
@@ -175,8 +185,12 @@ mod tests {
 
         type Client = Nothing;
 
-        fn make(_: &Self::Client, _: impl Into<String>, _: Option<usize>) -> Self {
-            Self {}
+        fn make(
+            _: &Self::Client,
+            _: impl Into<String>,
+            _: Option<usize>,
+        ) -> Result<Self, crate::embeddings::EmbeddingError> {
+            Ok(Self {})
         }
 
         fn ndims(&self) -> usize {
@@ -268,6 +282,81 @@ mod tests {
                 definition: "An ancient tool used by the ancestors of the inhabitants of planet Jiro to farm the land.".to_string(),
             }
         ]
+    }
+
+    #[derive(Clone)]
+    struct MissingEmbeddingModel;
+
+    impl EmbeddingModel for MissingEmbeddingModel {
+        const MAX_DOCUMENTS: usize = 5;
+
+        type Client = Nothing;
+
+        fn make(
+            _: &Self::Client,
+            _: impl Into<String>,
+            _: Option<usize>,
+        ) -> Result<Self, crate::embeddings::EmbeddingError> {
+            Ok(Self)
+        }
+
+        fn ndims(&self) -> usize {
+            10
+        }
+
+        async fn embed_texts(
+            &self,
+            documents: impl IntoIterator<Item = String> + Send,
+        ) -> Result<Vec<crate::embeddings::Embedding>, crate::embeddings::EmbeddingError> {
+            let mut embeddings = documents
+                .into_iter()
+                .map(|doc| Embedding {
+                    document: doc,
+                    vec: vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                })
+                .collect::<Vec<_>>();
+            embeddings.pop();
+            Ok(embeddings)
+        }
+    }
+
+    #[derive(Clone)]
+    struct ExtraEmbeddingModel;
+
+    impl EmbeddingModel for ExtraEmbeddingModel {
+        const MAX_DOCUMENTS: usize = 5;
+
+        type Client = Nothing;
+
+        fn make(
+            _: &Self::Client,
+            _: impl Into<String>,
+            _: Option<usize>,
+        ) -> Result<Self, crate::embeddings::EmbeddingError> {
+            Ok(Self)
+        }
+
+        fn ndims(&self) -> usize {
+            10
+        }
+
+        async fn embed_texts(
+            &self,
+            documents: impl IntoIterator<Item = String> + Send,
+        ) -> Result<Vec<crate::embeddings::Embedding>, crate::embeddings::EmbeddingError> {
+            let mut embeddings = documents
+                .into_iter()
+                .map(|doc| Embedding {
+                    document: doc,
+                    vec: vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                })
+                .collect::<Vec<_>>();
+            embeddings.push(Embedding {
+                document: "unexpected extra".to_string(),
+                vec: vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+            });
+            Ok(embeddings)
+        }
     }
 
     #[tokio::test]
@@ -406,5 +495,43 @@ mod tests {
         assert_eq!(
             second_definition.1.rest()[0].document, "A fictional creature found in the distant, swampy marshlands of the planet Glibbo in the Andromeda galaxy.".to_string()
         )
+    }
+
+    #[tokio::test]
+    async fn test_build_returns_error_when_backend_omits_embedding() {
+        let fake_definitions = definitions_single_text();
+
+        let err = EmbeddingsBuilder::new(MissingEmbeddingModel)
+            .documents(fake_definitions)
+            .unwrap()
+            .build()
+            .await
+            .expect_err("backend should not be allowed to omit embeddings");
+
+        assert!(matches!(
+            err,
+            crate::embeddings::EmbeddingError::ResponseError(
+                EmbeddingResponseError::MismatchedEmbeddingCount
+            )
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_build_returns_error_when_backend_returns_extra_embedding() {
+        let fake_definitions = definitions_single_text();
+
+        let err = EmbeddingsBuilder::new(ExtraEmbeddingModel)
+            .documents(fake_definitions)
+            .unwrap()
+            .build()
+            .await
+            .expect_err("backend should not be allowed to return extra embeddings");
+
+        assert!(matches!(
+            err,
+            crate::embeddings::EmbeddingError::ResponseError(
+                EmbeddingResponseError::MismatchedEmbeddingCount
+            )
+        ));
     }
 }

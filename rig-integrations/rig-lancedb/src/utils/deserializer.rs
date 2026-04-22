@@ -25,6 +25,10 @@ fn arrow_to_rig_error(e: ArrowError) -> VectorStoreError {
     VectorStoreError::DatastoreError(Box::new(e))
 }
 
+fn invalid_batch_shape_error(message: impl Into<String>) -> VectorStoreError {
+    VectorStoreError::DatastoreError(Box::new(std::io::Error::other(message.into())))
+}
+
 /// Trait used to deserialize data returned from LanceDB queries into a serde_json::Value vector.
 /// Data returned by LanceDB is a vector of `RecordBatch` items.
 pub(crate) trait RecordBatchDeserializer {
@@ -59,18 +63,32 @@ impl RecordBatchDeserializer for RecordBatch {
             .map(type_matcher)
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok((0..self.num_rows())
+        (0..self.num_rows())
             .map(|row_i| {
-                columns
-                    .iter()
-                    .enumerate()
-                    .fold(serde_json::Map::new(), |mut acc, (col_i, col)| {
-                        acc.insert(column_names[col_i].to_string(), col[row_i].clone());
-                        acc
-                    })
+                columns.iter().enumerate().try_fold(
+                    serde_json::Map::new(),
+                    |mut acc, (col_i, col)| {
+                        let column_name = column_names.get(col_i).ok_or_else(|| {
+                            invalid_batch_shape_error(format!(
+                                "missing LanceDB column name at index {col_i}"
+                            ))
+                        })?;
+                        let value = col.get(row_i).cloned().ok_or_else(|| {
+                            invalid_batch_shape_error(format!(
+                                "missing LanceDB value at row {row_i}, column {col_i}"
+                            ))
+                        })?;
+                        acc.insert((*column_name).to_string(), value);
+                        Ok(acc)
+                    },
+                )
             })
-            .map(Value::Object)
-            .collect())
+            .map(
+                |row: Result<serde_json::Map<String, Value>, VectorStoreError>| {
+                    row.map(Value::Object)
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 
@@ -218,7 +236,7 @@ fn type_matcher(column: &Arc<dyn Array>) -> Result<Vec<Value>, VectorStoreError>
                 .map(type_matcher)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok(struct_columns.build_struct(struct_array.num_rows(), struct_array.column_names()))
+            struct_columns.build_struct(struct_array.num_rows(), struct_array.column_names())
         }
         DataType::Map(..) => {
             let map_columns = column
@@ -229,7 +247,7 @@ fn type_matcher(column: &Arc<dyn Array>) -> Result<Vec<Value>, VectorStoreError>
                 .map(type_matcher)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok(map_columns.build_map())
+            map_columns.build_map()
         }
         DataType::Dictionary(keys_type, ..) => {
             let (keys, v) = match **keys_type {
@@ -542,7 +560,7 @@ impl DeserializeStructArray for StructArray {
     }
 
     fn num_rows(&self) -> usize {
-        self.column(0).into_data().len()
+        self.len()
     }
 }
 
@@ -564,31 +582,54 @@ where
 }
 
 trait RebuildObject {
-    fn build_struct(&self, num_rows: usize, col_names: Vec<&str>) -> Vec<Value>;
+    fn build_struct(
+        &self,
+        num_rows: usize,
+        col_names: Vec<&str>,
+    ) -> Result<Vec<Value>, VectorStoreError>;
 
-    fn build_map(&self) -> Vec<Value>;
+    fn build_map(&self) -> Result<Vec<Value>, VectorStoreError>;
 }
 
 impl RebuildObject for Vec<Vec<Value>> {
-    fn build_struct(&self, num_rows: usize, col_names: Vec<&str>) -> Vec<Value> {
+    fn build_struct(
+        &self,
+        num_rows: usize,
+        col_names: Vec<&str>,
+    ) -> Result<Vec<Value>, VectorStoreError> {
         (0..num_rows)
             .map(|row_i| {
                 self.iter()
                     .enumerate()
-                    .fold(serde_json::Map::new(), |mut acc, (col_i, col)| {
-                        acc.insert(col_names[col_i].to_string(), col[row_i].clone());
-                        acc
+                    .try_fold(serde_json::Map::new(), |mut acc, (col_i, col)| {
+                        let column_name = col_names.get(col_i).ok_or_else(|| {
+                            invalid_batch_shape_error(format!(
+                                "missing struct column name at index {col_i}"
+                            ))
+                        })?;
+                        let value = col.get(row_i).cloned().ok_or_else(|| {
+                            invalid_batch_shape_error(format!(
+                                "missing struct value at row {row_i}, column {col_i}"
+                            ))
+                        })?;
+                        acc.insert((*column_name).to_string(), value);
+                        Ok(acc)
                     })
+                    .map(Value::Object)
             })
-            .map(Value::Object)
             .collect()
     }
 
-    fn build_map(&self) -> Vec<Value> {
-        let keys = &self[0];
-        let values = &self[1];
+    fn build_map(&self) -> Result<Vec<Value>, VectorStoreError> {
+        let keys = self.first().ok_or_else(|| {
+            invalid_batch_shape_error("map reconstruction requires a key column".to_string())
+        })?;
+        let values = self.get(1).ok_or_else(|| {
+            invalid_batch_shape_error("map reconstruction requires a value column".to_string())
+        })?;
 
-        keys.iter()
+        Ok(keys
+            .iter()
             .zip(values)
             .map(|(k, v)| {
                 let mut map = serde_json::Map::new();
@@ -602,12 +643,13 @@ impl RebuildObject for Vec<Vec<Value>> {
                 map
             })
             .map(Value::Object)
-            .collect()
+            .collect())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{DeserializeStructArray, RebuildObject};
     use std::sync::Arc;
 
     use arrow_array::{
@@ -622,6 +664,7 @@ mod tests {
         types::{Float64Type, Int8Type, Int16Type, Int32Type},
     };
     use lancedb::arrow::arrow_schema::{DataType, Field, Fields};
+    use rig::vector_store::VectorStoreError;
     use serde_json::json;
 
     use crate::utils::deserializer::RecordBatchDeserializer;
@@ -1095,5 +1138,43 @@ mod tests {
                 })
             ]
         )
+    }
+
+    #[tokio::test]
+    async fn test_empty_struct_deserialization() {
+        let struct_array = StructArray::new_empty_fields(2, None);
+        let record_batch =
+            RecordBatch::try_from_iter(vec![("empty_struct", Arc::new(struct_array) as ArrayRef)])
+                .unwrap();
+
+        assert_eq!(
+            record_batch.deserialize().unwrap(),
+            vec![
+                json!({
+                    "empty_struct": {}
+                }),
+                json!({
+                    "empty_struct": {}
+                })
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_struct_num_rows_uses_array_length() {
+        let struct_array = StructArray::new_empty_fields(3, None);
+
+        assert_eq!(struct_array.num_rows(), 3);
+    }
+
+    #[test]
+    fn build_map_returns_error_when_value_column_is_missing() {
+        let columns = vec![vec![json!("only-key-column")]];
+
+        let err = columns
+            .build_map()
+            .expect_err("missing value column should fail");
+
+        assert!(matches!(err, VectorStoreError::DatastoreError(_)));
     }
 }

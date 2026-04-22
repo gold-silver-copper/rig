@@ -251,9 +251,12 @@ where
                         if let Some(existing) = tool_calls.get(&incoming.index)
                             && profile.should_evict(existing, &incoming)
                         {
-                            let evicted = tool_calls
-                                .remove(&incoming.index)
-                                .expect("checked above");
+                            let Some(evicted) = tool_calls.remove(&incoming.index) else {
+                                yield Err(CompletionError::response(
+                                    "streaming tool call disappeared before eviction",
+                                ));
+                                return;
+                            };
                             yield Ok(RawStreamingChoice::ToolCall(
                                 finalize_completed_streaming_tool_call(evicted),
                             ));
@@ -341,7 +344,7 @@ where
                 Err(error) => {
                     tracing::error!(?error, "SSE error");
                     terminated_with_error = true;
-                    yield Err(CompletionError::ProviderError(error.to_string()));
+                    yield Err(CompletionError::transport(error.to_string()));
                     break;
                 }
             }
@@ -675,9 +678,7 @@ mod tests {
                     CompatibleFinishReason::Other,
                     vec![tool_call_chunk(0, Some("call_123"), Some("ping"), Some(""))],
                 )))),
-                "bad" => Err(CompletionError::ProviderError(
-                    "normalize failed".to_owned(),
-                )),
+                "bad" => Err(CompletionError::transport("normalize failed".to_owned())),
                 _ => Ok(None),
             }
         }
@@ -767,10 +768,13 @@ mod tests {
                         Some("{\"x\":"),
                     )],
                 )),
-                "finish" => Some(tool_call_choice(
-                    CompatibleFinishReason::ToolCalls,
-                    Vec::new(),
-                )),
+                "finish" => Some(CompatibleChoice {
+                    finish_reason: CompatibleFinishReason::ToolCalls,
+                    text: Some("done".to_owned()),
+                    reasoning: None,
+                    tool_calls: Vec::new(),
+                    details: Vec::new(),
+                }),
                 _ => None,
             };
 
@@ -960,11 +964,16 @@ mod tests {
             .expect("stream should start");
 
         let mut saw_final = false;
+        let mut saw_text = false;
         let mut saw_tool_call = false;
 
         while let Some(item) = stream.next().await {
             match item.expect("stream item should be ok") {
                 StreamedAssistantContent::ToolCallDelta { .. } => {}
+                StreamedAssistantContent::Text(text) => {
+                    assert_eq!(text.text, "done");
+                    saw_text = true;
+                }
                 StreamedAssistantContent::Final(_) => saw_final = true,
                 StreamedAssistantContent::ToolCall { .. } => saw_tool_call = true,
                 other => panic!(
@@ -976,6 +985,10 @@ mod tests {
         assert!(
             saw_final,
             "stream should still yield a final response after dropping the partial tool call"
+        );
+        assert!(
+            saw_text,
+            "stream should yield replacement assistant text after dropping the partial tool call"
         );
         assert!(
             !saw_tool_call,

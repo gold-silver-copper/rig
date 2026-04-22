@@ -57,7 +57,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     // Initialize OpenAI client
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     // Initialize the `sqlite-vec`extension
     // See: https://alexgarcia.xyz/sqlite-vec/rust.html
@@ -71,7 +71,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let conn = Connection::open("vector_store.db").await?;
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     let documents = vec![
         Document {

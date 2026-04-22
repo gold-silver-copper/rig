@@ -77,7 +77,7 @@ fn test_nested_objects() {
     let tool_def = ToolDefinition {
         name: "submit".to_string(),
         description: "Submit".to_string(),
-        parameters: serde_json::to_value(schema).unwrap(),
+        parameters: serde_json::json!(schema),
     };
     let response = ResponsesToolDefinition::from(tool_def);
 
@@ -93,7 +93,7 @@ fn test_array_items() {
     let tool_def = ToolDefinition {
         name: "submit".to_string(),
         description: "Submit".to_string(),
-        parameters: serde_json::to_value(schema).unwrap(),
+        parameters: serde_json::json!(schema),
     };
     let response = ResponsesToolDefinition::from(tool_def);
 
@@ -109,7 +109,7 @@ fn test_enum_schemas() {
     let tool_def = ToolDefinition {
         name: "submit".to_string(),
         description: "Submit".to_string(),
-        parameters: serde_json::to_value(schema).unwrap(),
+        parameters: serde_json::json!(schema),
     };
     let response = ResponsesToolDefinition::from(tool_def);
 

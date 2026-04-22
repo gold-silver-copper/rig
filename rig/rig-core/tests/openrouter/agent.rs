@@ -1,5 +1,6 @@
 //! OpenRouter agent completion smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::openrouter;
@@ -10,14 +11,12 @@ use super::DEFAULT_MODEL;
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn completion_smoke() {
-    let client = openrouter::Client::from_env();
+async fn completion_smoke() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let agent = client.agent(DEFAULT_MODEL).preamble(BASIC_PREAMBLE).build();
 
-    let response = agent
-        .prompt(BASIC_PROMPT)
-        .await
-        .expect("completion should succeed");
+    let response = agent.prompt(BASIC_PROMPT).await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }

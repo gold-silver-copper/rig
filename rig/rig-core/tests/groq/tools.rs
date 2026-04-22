@@ -1,5 +1,6 @@
 //! Groq tools smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::groq;
@@ -10,8 +11,8 @@ use super::TOOLS_MODEL;
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn tools_smoke() {
-    let client = groq::Client::from_env();
+async fn tools_smoke() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let agent = client
         .agent(TOOLS_MODEL)
         .preamble(
@@ -25,8 +26,8 @@ async fn tools_smoke() {
     let response = agent
         .prompt("Calculate 2 - 5. Call `subtract` exactly once, then answer with just the result.")
         .max_turns(3)
-        .await
-        .expect("tool prompt should succeed");
+        .await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

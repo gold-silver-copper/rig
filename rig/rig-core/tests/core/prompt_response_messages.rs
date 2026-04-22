@@ -1,6 +1,7 @@
 //! Integration tests for `PromptResponse.messages` using mock models.
 //! Exercises the real agent loop code path with mocked LLM responses.
 
+use anyhow::{Context, Result, anyhow};
 use rig::OneOrMany;
 use rig::agent::AgentBuilder;
 use rig::completion::{
@@ -176,30 +177,73 @@ impl CompletionModel for AlwaysToolCallModel {
     }
 }
 
+fn user_text(message: &Message) -> Result<String> {
+    match message {
+        Message::User { content } => match content.first() {
+            UserContent::Text(text) => Ok(text.text.clone()),
+            other => Err(anyhow!("expected text user content, got: {other:?}")),
+        },
+        other => Err(anyhow!("expected User message, got: {other:?}")),
+    }
+}
+
+fn assistant_text(message: &Message) -> Result<String> {
+    match message {
+        Message::Assistant { content, .. } => match content.first() {
+            AssistantContent::Text(text) => Ok(text.text.clone()),
+            other => Err(anyhow!("expected text assistant content, got: {other:?}")),
+        },
+        other => Err(anyhow!("expected Assistant message, got: {other:?}")),
+    }
+}
+
+fn assert_assistant_tool_call(message: &Message) -> Result<()> {
+    match message {
+        Message::Assistant { content, .. } => {
+            assert!(
+                matches!(content.first(), AssistantContent::ToolCall(_)),
+                "expected tool call, got: {content:?}"
+            );
+            Ok(())
+        }
+        other => Err(anyhow!("expected Assistant with tool call, got: {other:?}")),
+    }
+}
+
+fn assert_user_tool_result(message: &Message) -> Result<()> {
+    match message {
+        Message::User { content } => {
+            assert!(
+                matches!(content.first(), UserContent::ToolResult(_)),
+                "expected tool result, got: {content:?}"
+            );
+            Ok(())
+        }
+        other => Err(anyhow!("expected User with tool result, got: {other:?}")),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 /// Test 1: Standard path still returns a plain String (backward compat).
 #[tokio::test]
-async fn standard_prompt_returns_string() {
+async fn standard_prompt_returns_string() -> Result<()> {
     let agent = AgentBuilder::new(SimpleTextModel).build();
 
-    let result: String = agent.prompt("hi").await.expect("prompt should succeed");
+    let result: String = agent.prompt("hi").await?;
 
     assert_eq!(result, "hello from mock");
+    Ok(())
 }
 
 /// Test 2: `extended_details()` returns a `PromptResponse` with `messages: Some(...)`.
 #[tokio::test]
-async fn extended_details_populates_messages() {
+async fn extended_details_populates_messages() -> Result<()> {
     let agent = AgentBuilder::new(SimpleTextModel).build();
 
-    let resp = agent
-        .prompt("hi")
-        .extended_details()
-        .await
-        .expect("prompt should succeed");
+    let resp = agent.prompt("hi").extended_details().await?;
 
     assert_eq!(resp.output, "hello from mock");
     assert_eq!(resp.usage.input_tokens, 10);
@@ -208,34 +252,29 @@ async fn extended_details_populates_messages() {
     // Messages should be populated
     let messages = resp
         .messages
-        .expect("messages should be Some for extended_details");
+        .context("messages should be Some for extended_details")?;
 
     // Should contain: [User("hi"), Assistant("hello from mock")]
     assert_eq!(messages.len(), 2);
 
     // First message: User
-    match &messages[0] {
-        Message::User { content } => match content.first() {
-            UserContent::Text(t) => assert_eq!(t.text, "hi"),
-            other => panic!("expected text user content, got: {other:?}"),
-        },
-        other => panic!("expected User message, got: {other:?}"),
-    }
+    assert_eq!(
+        user_text(messages.first().context("missing user message")?)?,
+        "hi"
+    );
 
     // Second message: Assistant
-    match &messages[1] {
-        Message::Assistant { content, .. } => match content.first() {
-            AssistantContent::Text(t) => assert_eq!(t.text, "hello from mock"),
-            other => panic!("expected text assistant content, got: {other:?}"),
-        },
-        other => panic!("expected Assistant message, got: {other:?}"),
-    }
+    assert_eq!(
+        assistant_text(messages.get(1).context("missing assistant message")?)?,
+        "hello from mock"
+    );
+    Ok(())
 }
 
 /// Test 3: `with_history()` + `extended_details()` — the response messages
 /// should contain the full conversation including any provided history.
 #[tokio::test]
-async fn extended_with_history_both_populated() {
+async fn extended_with_history_both_populated() -> Result<()> {
     let agent = AgentBuilder::new(SimpleTextModel).build();
 
     let initial_history: Vec<Message> = Vec::new();
@@ -244,63 +283,59 @@ async fn extended_with_history_both_populated() {
         .prompt("hello")
         .with_history(&initial_history)
         .extended_details()
-        .await
-        .expect("prompt should succeed");
+        .await?;
 
-    let response_messages = resp.messages.expect("messages should be Some");
+    let response_messages = resp.messages.context("messages should be Some")?;
 
     // Response should contain the full conversation (User + Assistant)
     assert_eq!(response_messages.len(), 2);
 
     // First message: User
-    match &response_messages[0] {
-        Message::User { .. } => {}
-        other => panic!("expected User, got: {other:?}"),
-    }
+    assert!(matches!(
+        response_messages.first(),
+        Some(Message::User { .. })
+    ));
 
     // Second message: Assistant
-    match &response_messages[1] {
-        Message::Assistant { .. } => {}
-        other => panic!("expected Assistant, got: {other:?}"),
-    }
+    assert!(matches!(
+        response_messages.get(1),
+        Some(Message::Assistant { .. })
+    ));
+    Ok(())
 }
 
 /// Test 4: Standard path with `with_history()` — verify the API works with
 /// an immutable history reference.
 #[tokio::test]
-async fn standard_with_history_works() {
+async fn standard_with_history_works() -> Result<()> {
     let agent = AgentBuilder::new(SimpleTextModel).build();
 
     let history: Vec<Message> = Vec::new();
 
-    let result = agent
-        .prompt("test")
-        .with_history(&history)
-        .await
-        .expect("prompt should succeed");
+    let result = agent.prompt("test").with_history(&history).await?;
 
     assert_eq!(result, "hello from mock");
 
     // Note: The input history is not mutated. To get the updated history,
     // use `.extended_details()` and access `response.messages`.
+    Ok(())
 }
 
 /// Test 5: Multi-turn agent loop with tool calls — messages should contain the
 /// full conversation: User → Assistant(tool_call) → User(tool_result) → Assistant(text).
 #[tokio::test]
-async fn multi_turn_messages_include_tool_calls() {
+async fn multi_turn_messages_include_tool_calls() -> Result<()> {
     let agent = AgentBuilder::new(ToolThenTextModel::new()).build();
 
     let resp = agent
         .prompt("What is 2 + 3?")
         .max_turns(5)
         .extended_details()
-        .await
-        .expect("prompt should succeed");
+        .await?;
 
     assert_eq!(resp.output, "The answer is 5");
 
-    let messages = resp.messages.expect("messages should be Some");
+    let messages = resp.messages.context("messages should be Some")?;
 
     // Expected sequence:
     // [0] User: "What is 2 + 3?"
@@ -310,42 +345,24 @@ async fn multi_turn_messages_include_tool_calls() {
     assert_eq!(messages.len(), 4, "expected 4 messages, got: {messages:#?}");
 
     // [0] User prompt
-    assert!(matches!(&messages[0], Message::User { .. }));
+    assert!(matches!(messages.first(), Some(Message::User { .. })));
 
     // [1] Assistant with tool call
-    match &messages[1] {
-        Message::Assistant { content, .. } => {
-            assert!(
-                matches!(content.first(), AssistantContent::ToolCall(_)),
-                "expected tool call, got: {content:?}"
-            );
-        }
-        other => panic!("expected Assistant with tool call, got: {other:?}"),
-    }
+    assert_assistant_tool_call(messages.get(1).context("missing assistant tool call")?)?;
 
     // [2] User with tool result
-    match &messages[2] {
-        Message::User { content } => {
-            assert!(
-                matches!(content.first(), UserContent::ToolResult(_)),
-                "expected tool result, got: {content:?}"
-            );
-        }
-        other => panic!("expected User with tool result, got: {other:?}"),
-    }
+    assert_user_tool_result(messages.get(2).context("missing tool result")?)?;
 
     // [3] Assistant with text
-    match &messages[3] {
-        Message::Assistant { content, .. } => match content.first() {
-            AssistantContent::Text(t) => assert_eq!(t.text, "The answer is 5"),
-            other => panic!("expected text, got: {other:?}"),
-        },
-        other => panic!("expected Assistant with text, got: {other:?}"),
-    }
+    assert_eq!(
+        assistant_text(messages.get(3).context("missing final assistant text")?)?,
+        "The answer is 5"
+    );
 
     // Usage should be aggregated across both turns
     assert_eq!(resp.usage.input_tokens, 35); // 15 + 20
     assert_eq!(resp.usage.output_tokens, 12); // 8 + 4
+    Ok(())
 }
 
 /// Test 6: `PromptResponse::new()` backward compatibility — 2-argument constructor
@@ -374,7 +391,7 @@ async fn prompt_response_display_shows_output() {
 
 /// Test 7: `PromptResponse::with_messages()` builder works correctly.
 #[tokio::test]
-async fn prompt_response_with_messages_builder() {
+async fn prompt_response_with_messages_builder() -> Result<()> {
     use rig::agent::PromptResponse;
 
     let messages = vec![Message::user("hello"), Message::assistant("world")];
@@ -382,13 +399,20 @@ async fn prompt_response_with_messages_builder() {
     let resp = PromptResponse::new("output", Usage::new()).with_messages(messages.clone());
 
     assert!(resp.messages.is_some());
-    assert_eq!(resp.messages.as_ref().unwrap().len(), 2);
+    assert_eq!(
+        resp.messages
+            .as_ref()
+            .context("messages should be present")?
+            .len(),
+        2
+    );
+    Ok(())
 }
 
 /// Test 8: MaxTurnsError still works — the error should contain the chat history.
 /// This verifies the error path isn't broken by our changes.
 #[tokio::test]
-async fn max_turns_error_still_contains_history() {
+async fn max_turns_error_still_contains_history() -> Result<()> {
     use rig::completion::PromptError;
 
     let agent = AgentBuilder::new(AlwaysToolCallModel).build();
@@ -399,28 +423,28 @@ async fn max_turns_error_still_contains_history() {
         .extended_details()
         .await;
 
-    match result {
-        Err(PromptError::MaxTurnsError {
+    let error = result.err().context("expected MaxTurnsError, got Ok")?;
+    match error {
+        PromptError::MaxTurnsError {
             max_turns,
             chat_history,
             ..
-        }) => {
+        } => {
             assert_eq!(max_turns, 2);
-            // Chat history should have accumulated messages
             assert!(
                 !chat_history.is_empty(),
                 "chat_history in error should not be empty"
             );
         }
-        Ok(_) => panic!("expected MaxTurnsError, got Ok"),
-        Err(other) => panic!("expected MaxTurnsError, got: {other:?}"),
+        other => return Err(anyhow!("expected MaxTurnsError, got: {other:?}")),
     }
+    Ok(())
 }
 
 /// Test 9: Extended details without `with_history()` — messages should still
 /// be populated (this is the core feature: no need for &mut borrow).
 #[tokio::test]
-async fn extended_details_works_without_with_history() {
+async fn extended_details_works_without_with_history() -> Result<()> {
     let agent = AgentBuilder::new(ToolThenTextModel::new()).build();
 
     // Note: NO .with_history() call — this is the new use case
@@ -428,57 +452,48 @@ async fn extended_details_works_without_with_history() {
         .prompt("compute 2+3")
         .max_turns(5)
         .extended_details()
-        .await
-        .expect("prompt should succeed");
+        .await?;
 
     let messages = resp
         .messages
-        .expect("messages should be Some even without with_history()");
+        .context("messages should be Some even without with_history()")?;
 
     // Should have full multi-turn history
     assert_eq!(messages.len(), 4);
     assert_eq!(resp.output, "The answer is 5");
+    Ok(())
 }
 
 /// Test 10: Multiple sequential prompts each return independent message histories.
 #[tokio::test]
-async fn sequential_prompts_have_independent_histories() {
+async fn sequential_prompts_have_independent_histories() -> Result<()> {
     let agent = AgentBuilder::new(SimpleTextModel).build();
 
-    let resp1 = agent
-        .prompt("first")
-        .extended_details()
-        .await
-        .expect("first prompt should succeed");
+    let resp1 = agent.prompt("first").extended_details().await?;
 
-    let resp2 = agent
-        .prompt("second")
-        .extended_details()
-        .await
-        .expect("second prompt should succeed");
+    let resp2 = agent.prompt("second").extended_details().await?;
 
-    let msgs1 = resp1.messages.expect("messages should be Some");
-    let msgs2 = resp2.messages.expect("messages should be Some");
+    let msgs1 = resp1.messages.context("messages should be Some")?;
+    let msgs2 = resp2.messages.context("messages should be Some")?;
 
     // Each should have exactly 2 messages (user + assistant)
     assert_eq!(msgs1.len(), 2);
     assert_eq!(msgs2.len(), 2);
 
     // First prompt's user message should be "first"
-    match &msgs1[0] {
-        Message::User { content } => match content.first() {
-            UserContent::Text(t) => assert_eq!(t.text, "first"),
-            other => panic!("unexpected: {other:?}"),
-        },
-        other => panic!("unexpected: {other:?}"),
-    }
+    assert_eq!(
+        user_text(msgs1.first().context("missing first prompt user message")?)?,
+        "first"
+    );
 
     // Second prompt's user message should be "second"
-    match &msgs2[0] {
-        Message::User { content } => match content.first() {
-            UserContent::Text(t) => assert_eq!(t.text, "second"),
-            other => panic!("unexpected: {other:?}"),
-        },
-        other => panic!("unexpected: {other:?}"),
-    }
+    assert_eq!(
+        user_text(
+            msgs2
+                .first()
+                .context("missing second prompt user message")?
+        )?,
+        "second"
+    );
+    Ok(())
 }

@@ -1,5 +1,6 @@
 //! OpenRouter streaming tools smoke test.
 
+use anyhow::{Result, anyhow};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
@@ -24,8 +25,8 @@ use super::TOOL_MODEL;
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn streaming_tools_smoke() {
-    let client = openrouter::Client::from_env();
+async fn streaming_tools_smoke() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let agent = client
         .agent(openrouter::GEMINI_FLASH_2_0)
         .preamble(STREAMING_TOOLS_PREAMBLE)
@@ -34,17 +35,16 @@ async fn streaming_tools_smoke() {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn raw_stream_decorates_reasoning_tool_call_metadata() {
-    let client = openrouter::Client::from_env();
+async fn raw_stream_decorates_reasoning_tool_call_metadata() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let model = client.completion_model("openai/o4-mini");
     let tool_definition = WeatherTool::new(Arc::new(AtomicUsize::new(0)))
         .definition(String::new())
@@ -60,7 +60,7 @@ async fn raw_stream_decorates_reasoning_tool_call_metadata() {
         }))
         .build();
 
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
     let observation = collect_raw_stream_observation(stream).await;
     assert!(
         observation.errors.is_empty(),
@@ -72,13 +72,13 @@ async fn raw_stream_decorates_reasoning_tool_call_metadata() {
         .tool_call_records
         .iter()
         .find(|record| record.name == "get_weather")
-        .expect("expected a streamed get_weather tool call");
+        .ok_or_else(|| anyhow!("expected a streamed get_weather tool call"))?;
 
     if record.signature.is_none() && record.additional_params.is_none() {
         eprintln!(
             "openrouter did not emit encrypted reasoning metadata for the tool call in this run; skipping strict decoration assertion"
         );
-        return;
+        return Ok(());
     }
 
     assert!(
@@ -87,12 +87,13 @@ async fn raw_stream_decorates_reasoning_tool_call_metadata() {
         record.signature,
         record.additional_params
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
-    let client = openrouter::Client::from_env();
+async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let model = client.completion_model(TOOL_MODEL);
     let request = model
         .completion_request(TWO_TOOL_STREAM_PROMPT)
@@ -101,24 +102,19 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
         .tool(BetaSignal.definition(String::new()).await)
         .build();
 
-    let observation = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw stream should start"),
-    )
-    .await;
+    let observation = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_contains_distinct_tool_calls_before_text(
         &observation,
         &["lookup_harbor_label", "lookup_orchard_label"],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn raw_followup_uses_tool_result_without_new_tool_calls() {
-    let client = openrouter::Client::from_env();
+async fn raw_followup_uses_tool_result_without_new_tool_calls() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     let model = client.completion_model(TOOL_MODEL);
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
@@ -126,13 +122,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
         .tool(AlphaSignal.definition(String::new()).await)
         .build();
 
-    let first_turn = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw stream should start"),
-    )
-    .await;
+    let first_turn = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_tool_call_precedes_text(&first_turn, "lookup_harbor_label");
 
@@ -141,7 +131,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
         .iter()
         .find(|tool_call| tool_call.function.name == "lookup_harbor_label")
         .cloned()
-        .expect("raw stream should yield lookup_harbor_label");
+        .ok_or_else(|| anyhow!("raw stream should yield lookup_harbor_label"))?;
     let assistant_message = Message::Assistant {
         id: None,
         content: OneOrMany::one(AssistantContent::ToolCall(tool_call.clone())),
@@ -157,13 +147,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
         .message(tool_result_message)
         .build();
 
-    let second_turn = collect_raw_stream_observation(
-        model
-            .stream(followup_request)
-            .await
-            .expect("raw followup stream should start"),
-    )
-    .await;
+    let second_turn = collect_raw_stream_observation(model.stream(followup_request).await?).await;
 
     assert!(
         second_turn.tool_calls.is_empty(),
@@ -175,4 +159,5 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
             .collect::<Vec<_>>()
     );
     assert_raw_stream_text_contains(&second_turn, &[ALPHA_SIGNAL_OUTPUT]);
+    Ok(())
 }

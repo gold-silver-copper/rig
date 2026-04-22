@@ -92,9 +92,9 @@ where
                     self.usage = final_response.usage();
                 }
                 Err(e) => {
-                    break Err(PromptError::CompletionError(
-                        CompletionError::ResponseError(e.to_string()),
-                    ));
+                    break Err(PromptError::CompletionError(CompletionError::response(
+                        e.to_string(),
+                    )));
                 }
                 _ => continue,
             }
@@ -182,7 +182,7 @@ where
 
         loop {
             print!("> ");
-            stdout.flush().unwrap();
+            stdout.flush()?;
 
             let mut input = String::new();
             match stdin.read_line(&mut input) {
@@ -204,12 +204,13 @@ where
                     println!("================================================================");
                     println!();
 
-                    if self.0.show_usage() {
-                        let Usage {
+                    if self.0.show_usage()
+                        && let Some(Usage {
                             input_tokens,
                             output_tokens,
                             ..
-                        } = self.0.usage().unwrap();
+                        }) = self.0.usage()
+                    {
                         println!("Input {input_tokens} tokens\nOutput {output_tokens} tokens");
                     }
                 }

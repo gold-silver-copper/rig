@@ -1,5 +1,6 @@
 //! DeepSeek reasoning-enabled tool roundtrip tests.
 
+use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -12,9 +13,9 @@ use crate::reasoning::{self, WeatherTool};
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn streaming() {
+async fn streaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = deepseek::Client::from_env();
+    let client = deepseek::Client::from_env()?;
     let agent = client
         .agent(deepseek::DEEPSEEK_REASONER)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -37,13 +38,14 @@ async fn streaming() {
             stats.reasoning_content_types
         );
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]
-async fn nonstreaming() {
+async fn nonstreaming() -> Result<()> {
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = deepseek::Client::from_env();
+    let client = deepseek::Client::from_env()?;
     let agent = client
         .agent(deepseek::DEEPSEEK_REASONER)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
@@ -53,8 +55,8 @@ async fn nonstreaming() {
 
     let result = agent
         .chat(reasoning::TOOL_USER_PROMPT, Vec::<Message>::new())
-        .await
-        .expect("[deepseek] Non-streaming chat failed - likely 400 from dropped reasoning");
+        .await?;
 
     reasoning::assert_nonstreaming_universal(&result, &call_count, "deepseek");
+    Ok(())
 }

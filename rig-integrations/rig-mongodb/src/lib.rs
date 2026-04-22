@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 use futures::StreamExt;
 use mongodb::bson::{self, Bson, Document, doc, to_bson};
 
@@ -11,6 +21,34 @@ use rig::{
     wasm_compat::WasmBoxedFuture,
 };
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+#[derive(Debug)]
+enum MongoDbSearchResultError {
+    MissingField(&'static str),
+    InvalidFieldType {
+        field: &'static str,
+        expected: &'static str,
+    },
+}
+
+impl fmt::Display for MongoDbSearchResultError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MongoDbSearchResultError::MissingField(field) => {
+                write!(f, "MongoDB search result is missing `{field}`")
+            }
+            MongoDbSearchResultError::InvalidFieldType { field, expected } => {
+                write!(
+                    f,
+                    "MongoDB search result field `{field}` had an unexpected type, expected {expected}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for MongoDbSearchResultError {}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +98,28 @@ struct Field {
 
 fn mongodb_to_rig_error(e: mongodb::error::Error) -> VectorStoreError {
     VectorStoreError::DatastoreError(Box::new(e))
+}
+
+fn read_score(doc: &serde_json::Value) -> Result<f64, VectorStoreError> {
+    doc.get("score")
+        .ok_or_else(|| {
+            VectorStoreError::DatastoreError(Box::new(MongoDbSearchResultError::MissingField(
+                "score",
+            )))
+        })?
+        .as_f64()
+        .ok_or_else(|| {
+            VectorStoreError::DatastoreError(Box::new(MongoDbSearchResultError::InvalidFieldType {
+                field: "score",
+                expected: "f64",
+            }))
+        })
+}
+
+fn read_id(doc: &serde_json::Value) -> Result<String, VectorStoreError> {
+    doc.get("_id").map(ToString::to_string).ok_or_else(|| {
+        VectorStoreError::DatastoreError(Box::new(MongoDbSearchResultError::MissingField("_id")))
+    })
 }
 
 /// A vector index for a MongoDB collection.
@@ -378,8 +438,8 @@ where
         let mut results = Vec::new();
         while let Some(doc) = cursor.next().await {
             let doc = doc.map_err(mongodb_to_rig_error)?;
-            let score = doc.get("score").expect("score").as_f64().expect("f64");
-            let id = doc.get("_id").expect("_id").to_string();
+            let score = read_score(&doc)?;
+            let id = read_id(&doc)?;
             let doc_t: T = serde_json::from_value(doc).map_err(VectorStoreError::JsonError)?;
             results.push((score, id, doc_t));
         }
@@ -423,8 +483,8 @@ where
         let mut results = Vec::new();
         while let Some(doc) = cursor.next().await {
             let doc = doc.map_err(mongodb_to_rig_error)?;
-            let score = doc.get("score").expect("score").as_f64().expect("f64");
-            let id = doc.get("_id").expect("_id").to_string();
+            let score = read_score(&doc)?;
+            let id = read_id(&doc)?;
             results.push((score, id));
         }
 
@@ -507,5 +567,35 @@ where
             .map_err(mongodb_to_rig_error)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_id, read_score};
+    use serde_json::json;
+
+    #[test]
+    fn read_score_rejects_missing_field() {
+        let error = read_score(&json!({ "_id": "abc" }))
+            .expect_err("missing score should be reported as an error");
+
+        assert!(error.to_string().contains("missing `score`"));
+    }
+
+    #[test]
+    fn read_score_rejects_wrong_type() {
+        let error = read_score(&json!({ "_id": "abc", "score": "bad" }))
+            .expect_err("non-numeric scores should be rejected");
+
+        assert!(error.to_string().contains("expected f64"));
+    }
+
+    #[test]
+    fn read_id_rejects_missing_field() {
+        let error = read_id(&json!({ "score": 0.9 }))
+            .expect_err("missing _id should be reported as an error");
+
+        assert!(error.to_string().contains("missing `_id`"));
     }
 }

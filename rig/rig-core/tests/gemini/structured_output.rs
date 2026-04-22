@@ -1,5 +1,6 @@
 //! Gemini structured output smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::gemini;
@@ -10,19 +11,16 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn structured_output_smoke() {
-    let client = gemini::Client::from_env();
+async fn structured_output_smoke() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent("gemini-3-flash-preview")
         .output_schema::<SmokeStructuredOutput>()
         .build();
 
-    let response = agent
-        .prompt(STRUCTURED_OUTPUT_PROMPT)
-        .await
-        .expect("structured output prompt should succeed");
-    let structured: SmokeStructuredOutput =
-        serde_json::from_str(&response).expect("structured output should deserialize");
+    let response = agent.prompt(STRUCTURED_OUTPUT_PROMPT).await?;
+    let structured: SmokeStructuredOutput = serde_json::from_str(&response)?;
 
     assert_smoke_structured_output(&structured);
+    Ok(())
 }

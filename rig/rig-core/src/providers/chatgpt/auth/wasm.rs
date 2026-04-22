@@ -1,6 +1,6 @@
 //! WASM ChatGPT auth implementation.
 
-use super::{AuthContext, AuthError, DeviceCodeHandler};
+use super::{AuthContext, AuthError, AuthFlowError, DeviceCodeHandler};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Default)]
@@ -15,8 +15,6 @@ impl PlatformAuthenticator {
     }
 
     pub(super) async fn auth_context_oauth(&self) -> Result<AuthContext, AuthError> {
-        Err(AuthError::Message(
-            "ChatGPT OAuth is not supported on wasm targets".into(),
-        ))
+        Err(AuthError::Flow(AuthFlowError::UnsupportedOnWasm))
     }
 }

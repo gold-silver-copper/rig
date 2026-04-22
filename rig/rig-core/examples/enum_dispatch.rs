@@ -7,6 +7,8 @@ use rig::providers::anthropic::completion::CLAUDE_SONNET_4_6;
 use rig::providers::openai::GPT_4O;
 use rig::providers::{anthropic, openai};
 
+type ExampleResult<T> = Result<T, Box<dyn std::error::Error>>;
+
 enum Agents {
     Anthropic(Agent<anthropic::completion::CompletionModel>),
     OpenAI(Agent<openai::completion::CompletionModel>),
@@ -28,44 +30,54 @@ struct AgentConfig<'a> {
 
 // In production you would likely want to create some sort of `RegistryKey` type instead of
 // allowing arbitrary strings, for improved type safety
-struct ProviderRegistry(HashMap<&'static str, fn(AgentConfig) -> Agents>);
+struct ProviderRegistry(HashMap<&'static str, fn(AgentConfig) -> ExampleResult<Agents>>);
 
-fn anthropic_agent(AgentConfig { name, preamble }: AgentConfig) -> Agents {
-    let agent = anthropic::Client::from_env()
+fn anthropic_agent(AgentConfig { name, preamble }: AgentConfig) -> ExampleResult<Agents> {
+    let agent = anthropic::Client::from_env()?
         .agent(CLAUDE_SONNET_4_6)
         .name(name)
         .preamble(preamble)
         .build();
 
-    Agents::Anthropic(agent)
+    Ok(Agents::Anthropic(agent))
 }
 
-fn openai_agent(AgentConfig { name, preamble }: AgentConfig) -> Agents {
-    let agent = openai::Client::from_env()
+fn openai_agent(AgentConfig { name, preamble }: AgentConfig) -> ExampleResult<Agents> {
+    let agent = openai::Client::from_env()?
         .completions_api()
         .agent(GPT_4O)
         .name(name)
         .preamble(preamble)
         .build();
 
-    Agents::OpenAI(agent)
+    Ok(Agents::OpenAI(agent))
 }
 
 impl ProviderRegistry {
     pub fn new() -> Self {
         Self(HashMap::from_iter([
-            ("anthropic", anthropic_agent as fn(AgentConfig) -> Agents),
-            ("openai", openai_agent as fn(AgentConfig) -> Agents),
+            (
+                "anthropic",
+                anthropic_agent as fn(AgentConfig) -> ExampleResult<Agents>,
+            ),
+            (
+                "openai",
+                openai_agent as fn(AgentConfig) -> ExampleResult<Agents>,
+            ),
         ]))
     }
 
-    pub fn agent(&self, provider: &str, agent_config: AgentConfig) -> Option<Agents> {
+    pub fn agent(
+        &self,
+        provider: &str,
+        agent_config: AgentConfig,
+    ) -> Option<ExampleResult<Agents>> {
         self.0.get(provider).map(|p| p(agent_config))
     }
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExampleResult<()> {
     let registry = ProviderRegistry::new();
 
     let openai_agent = registry
@@ -76,7 +88,8 @@ async fn main() {
                 preamble: "You are a helpful assistant",
             },
         )
-        .unwrap();
+        .transpose()?
+        .ok_or("openai provider is not registered")?;
 
     let anthropic_agent = registry
         .agent(
@@ -86,19 +99,20 @@ async fn main() {
                 preamble: "You are an unhelpful assistant",
             },
         )
-        .unwrap();
+        .transpose()?
+        .ok_or("anthropic provider is not registered")?;
 
     let oai_response = openai_agent
         .prompt("How much does 4oz of parmesan cheese weigh")
-        .await
-        .unwrap();
+        .await?;
 
     println!("Helpful: {oai_response}");
 
     let anthropic_response = anthropic_agent
         .prompt("How much does 4oz of parmesan cheese weigh")
-        .await
-        .unwrap();
+        .await?;
 
     println!("Unhelpful: {anthropic_response}");
+
+    Ok(())
 }

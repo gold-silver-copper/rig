@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 //! A Rig vector store for Neo4j.
 //!
 //! This crate is a companion crate to the [rig-core crate](https://github.com/0xPlaygrounds/rig).
@@ -368,8 +378,14 @@ impl Neo4jClient {
                     model.ndims()
                 );
             }
+            let embedding_property = index.properties.first().ok_or_else(|| {
+                VectorStoreError::DatastoreError(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Index `{index_name}` does not expose any indexed properties"),
+                )))
+            })?;
             IndexConfig::new(index.name.clone())
-                .embedding_property(index.properties.first().unwrap())
+                .embedding_property(embedding_property)
                 .similarity_function(VectorSimilarityFunction::from_str(
                     &index.options.index_config.vector_similarity_function,
                 )?)

@@ -1,5 +1,6 @@
 //! OpenAI streaming tools coverage, including the migrated example path.
 
+use anyhow::{Result, anyhow};
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
@@ -18,8 +19,8 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn streaming_tools_smoke() {
-    let client = openai::Client::from_env();
+async fn streaming_tools_smoke() -> Result<()> {
+    let client = openai::Client::from_env()?;
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(STREAMING_TOOLS_PREAMBLE)
@@ -28,17 +29,16 @@ async fn streaming_tools_smoke() {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn example_streaming_with_tools() {
-    let client = openai::Client::from_env();
+async fn example_streaming_with_tools() -> Result<()> {
+    let client = openai::Client::from_env()?;
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(
@@ -51,17 +51,16 @@ async fn example_streaming_with_tools() {
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tools prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn responses_stream_preserves_tool_result_flow() {
-    let client = openai::Client::from_env();
+async fn responses_stream_preserves_tool_result_flow() -> Result<()> {
+    let client = openai::Client::from_env()?;
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
@@ -79,12 +78,13 @@ async fn responses_stream_preserves_tool_result_flow() {
         "lookup_harbor_label",
         &[ALPHA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]
-async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
-    let client = openai::Client::from_env();
+async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() -> Result<()> {
+    let client = openai::Client::from_env()?;
     let model = client.completion_model(openai::GPT_4O);
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
@@ -92,13 +92,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .tool(AlphaSignal.definition(String::new()).await)
         .build();
 
-    let first_turn = collect_raw_stream_observation(
-        model
-            .stream(request)
-            .await
-            .expect("raw responses stream should start"),
-    )
-    .await;
+    let first_turn = collect_raw_stream_observation(model.stream(request).await?).await;
 
     assert_raw_stream_tool_call_precedes_text(&first_turn, "lookup_harbor_label");
 
@@ -107,7 +101,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .iter()
         .find(|tool_call| tool_call.function.name == "lookup_harbor_label")
         .cloned()
-        .expect("raw responses stream should yield lookup_harbor_label");
+        .ok_or_else(|| anyhow!("raw responses stream should yield lookup_harbor_label"))?;
     let assistant_message = Message::Assistant {
         id: None,
         content: OneOrMany::one(AssistantContent::ToolCall(tool_call.clone())),
@@ -123,13 +117,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .message(tool_result_message)
         .build();
 
-    let second_turn = collect_raw_stream_observation(
-        model
-            .stream(followup_request)
-            .await
-            .expect("raw followup responses stream should start"),
-    )
-    .await;
+    let second_turn = collect_raw_stream_observation(model.stream(followup_request).await?).await;
 
     assert!(
         second_turn.tool_calls.is_empty(),
@@ -141,4 +129,5 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
             .collect::<Vec<_>>()
     );
     assert_raw_stream_text_contains(&second_turn, &[ALPHA_SIGNAL_OUTPUT]);
+    Ok(())
 }

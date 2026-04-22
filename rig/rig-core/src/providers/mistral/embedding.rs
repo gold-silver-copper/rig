@@ -48,8 +48,12 @@ where
 
     const MAX_DOCUMENTS: usize = MAX_DOCUMENTS;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, dims.unwrap_or_default())
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, dims.unwrap_or_default()))
     }
 
     fn ndims(&self) -> usize {
@@ -88,9 +92,7 @@ where
                     );
 
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
-                        ));
+                        return Err(EmbeddingError::mismatched_embedding_count());
                     }
 
                     Ok(response
@@ -107,11 +109,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }

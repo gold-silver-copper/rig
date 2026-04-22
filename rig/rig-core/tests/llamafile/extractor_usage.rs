@@ -1,6 +1,6 @@
 //! Integration tests for Llamafile extractor usage tracking.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use rig::client::CompletionClient;
 use rig::extractor::ExtractionResponse;
 use rig::message::Message;
@@ -24,17 +24,16 @@ struct Address {
     zip_code: Option<String>,
 }
 
-fn assert_compatible_professions(left: Option<&str>, right: &str) {
-    let left = left
-        .expect("profession should be present")
-        .trim()
-        .to_ascii_lowercase();
+fn assert_compatible_professions(left: Option<&str>, right: &str) -> Result<()> {
+    let left = left.ok_or_else(|| anyhow!("profession should be present"))?;
+    let left = left.trim().to_ascii_lowercase();
     let right = right.trim().to_ascii_lowercase();
 
     assert!(
         left == right || left.contains(&right) || right.contains(&left),
         "expected compatible professions, got {left:?} and {right:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -45,7 +44,7 @@ async fn extract_backward_compatibility() -> Result<()> {
     }
 
     let model = support::model_name();
-    let client = support::client();
+    let client = support::client()?;
     let extractor = client.extractor::<Person>(model).build();
 
     let person = extractor
@@ -54,7 +53,7 @@ async fn extract_backward_compatibility() -> Result<()> {
 
     assert_eq!(person.name, Some("John Doe".to_string()));
     assert_eq!(person.age, Some(30));
-    assert_compatible_professions(person.profession.as_deref(), "software engineer");
+    assert_compatible_professions(person.profession.as_deref(), "software engineer")?;
 
     Ok(())
 }
@@ -67,7 +66,7 @@ async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
     }
 
     let model = support::model_name();
-    let client = support::client();
+    let client = support::client()?;
     let extractor = client.extractor::<Person>(model).build();
 
     let response: ExtractionResponse<Person> = extractor
@@ -76,7 +75,7 @@ async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
 
     assert_eq!(response.data.name, Some("Jane Smith".to_string()));
     assert_eq!(response.data.age, Some(45));
-    assert_compatible_professions(response.data.profession.as_deref(), "data scientist");
+    assert_compatible_professions(response.data.profession.as_deref(), "data scientist")?;
     assert!(response.usage.input_tokens > 0);
     assert!(response.usage.output_tokens > 0);
     assert!(response.usage.total_tokens > 0);
@@ -92,7 +91,7 @@ async fn extract_with_chat_history_with_usage_works() -> Result<()> {
     }
 
     let model = support::model_name();
-    let client = support::client();
+    let client = support::client()?;
     let extractor = client.extractor::<Address>(model).build();
 
     let chat_history = vec![Message::user(
@@ -124,7 +123,7 @@ async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
     }
 
     let model = support::model_name();
-    let client = support::client();
+    let client = support::client()?;
     let extractor = client.extractor::<Person>(model).build();
 
     let text = "Bob Johnson is a 55 year old retired teacher.";
@@ -135,8 +134,8 @@ async fn extract_and_extract_with_usage_return_same_data() -> Result<()> {
     assert_eq!(response.data.name, Some("Bob Johnson".to_string()));
     assert_eq!(person.age, Some(55));
     assert_eq!(response.data.age, Some(55));
-    assert_compatible_professions(person.profession.as_deref(), "retired teacher");
-    assert_compatible_professions(response.data.profession.as_deref(), "retired teacher");
+    assert_compatible_professions(person.profession.as_deref(), "retired teacher")?;
+    assert_compatible_professions(response.data.profession.as_deref(), "retired teacher")?;
     assert!(response.usage.total_tokens > 0, "usage should be populated");
 
     Ok(())
@@ -150,7 +149,7 @@ async fn usage_tracking_works_for_different_schemas() -> Result<()> {
     }
 
     let model = support::model_name();
-    let client = support::client();
+    let client = support::client()?;
 
     let person_extractor = client.extractor::<Person>(model.clone()).build();
     let person_response = person_extractor

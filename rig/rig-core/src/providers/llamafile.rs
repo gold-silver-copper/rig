@@ -100,26 +100,26 @@ pub type ClientBuilder<H = reqwest::Client> = client::ClientBuilder<LlamafileBui
 impl Client {
     /// Create a client pointing at the given llamafile base URL
     /// (e.g. `http://localhost:8080`).
-    pub fn from_url(base_url: &str) -> Self {
-        Self::builder()
-            .api_key(Nothing)
-            .base_url(base_url)
-            .build()
-            .expect("Failed to build llamafile client")
+    pub fn from_url(base_url: &str) -> http_client::Result<Self> {
+        Self::builder().api_key(Nothing).base_url(base_url).build()
     }
 }
 
 impl ProviderClient for Client {
     type Input = Nothing;
 
-    fn from_env() -> Self {
-        let api_base =
-            std::env::var("LLAMAFILE_API_BASE_URL").expect("LLAMAFILE_API_BASE_URL not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_base = std::env::var("LLAMAFILE_API_BASE_URL").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "LLAMAFILE_API_BASE_URL",
+                source,
+            }
+        })?;
         Self::from_url(&api_base)
     }
 
-    fn from_val(_: Self::Input) -> Self {
-        Self::builder().api_key(Nothing).build().unwrap()
+    fn from_val(_: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(Nothing).build()
     }
 }
 
@@ -439,10 +439,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -659,8 +659,12 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, ndims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, ndims.unwrap_or_default())
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        ndims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, ndims.unwrap_or_default()))
     }
 
     fn ndims(&self) -> usize {
@@ -700,9 +704,7 @@ where
                     );
 
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
-                        ));
+                        return Err(EmbeddingError::mismatched_embedding_count());
                     }
 
                     Ok(response
@@ -719,11 +721,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }

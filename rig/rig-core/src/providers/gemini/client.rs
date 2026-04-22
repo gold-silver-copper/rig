@@ -182,13 +182,18 @@ impl ProviderClient for Client {
 
     /// Create a new Google Gemini client from the `GEMINI_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not set");
-        Self::new(api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("GEMINI_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "GEMINI_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 
@@ -197,13 +202,18 @@ impl ProviderClient for InteractionsClient {
 
     /// Create a new Google Gemini interactions client from the `GEMINI_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not set");
-        Self::new(api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("GEMINI_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "GEMINI_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 

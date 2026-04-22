@@ -1,5 +1,6 @@
 //! Cohere streaming smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::cohere;
 use rig::streaming::StreamingPrompt;
@@ -10,17 +11,16 @@ use crate::support::{
 
 #[tokio::test]
 #[ignore = "requires COHERE_API_KEY"]
-async fn streaming_smoke() {
-    let client = cohere::Client::from_env();
+async fn streaming_smoke() -> Result<()> {
+    let client = cohere::Client::from_env()?;
     let agent = client
         .agent(cohere::COMMAND)
         .preamble(STREAMING_PREAMBLE)
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }

@@ -118,7 +118,9 @@ where
 
     while let Some(operator) = tokens.peek() {
         if operator == "+" || operator == "-" {
-            let operator = tokens.next().expect("peeked token should exist");
+            let Some(operator) = tokens.next() else {
+                return Err("Unexpected end of expression".to_string());
+            };
             let rhs = parse_term(tokens)?;
             if operator == "+" {
                 result += rhs;
@@ -141,7 +143,9 @@ where
 
     while let Some(operator) = tokens.peek() {
         if operator == "*" || operator == "/" {
-            let operator = tokens.next().expect("peeked token should exist");
+            let Some(operator) = tokens.next() else {
+                return Err("Unexpected end of expression".to_string());
+            };
             let rhs = parse_factor(tokens)?;
             if operator == "*" {
                 result *= rhs;
@@ -272,11 +276,8 @@ async fn think_tool_with_other_tools() -> Result<()> {
     let calculator_calls = Arc::new(AtomicUsize::new(0));
     let database_lookup_calls = Arc::new(AtomicUsize::new(0));
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
-    let client = anthropic::Client::builder()
-        .api_key(&api_key)
-        .build()
-        .expect("client should build");
+    let api_key = std::env::var("ANTHROPIC_API_KEY")?;
+    let client = anthropic::Client::builder().api_key(&api_key).build()?;
 
     let agent = client
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
@@ -311,8 +312,7 @@ async fn think_tool_with_other_tools() -> Result<()> {
         )
         .max_turns(10)
         .extended_details()
-        .await
-        .expect("prompt should succeed");
+        .await?;
 
     assert_mentions_expected_number(&response.output, 25);
     assert_contains_any_case_insensitive(
@@ -329,10 +329,15 @@ async fn think_tool_with_other_tools() -> Result<()> {
         "database lookup should be invoked for both shipping and inventory"
     );
 
-    let messages = response
-        .messages
-        .expect("extended details should include messages");
-    let tool_calls = collect_assistant_tool_calls(&messages);
+    let messages = response.messages.as_ref();
+    assert!(
+        messages.is_some(),
+        "extended details should include messages"
+    );
+    let Some(messages) = messages else {
+        return Ok(());
+    };
+    let tool_calls = collect_assistant_tool_calls(messages);
 
     for tool_name in ["think", "calculator", "database_lookup"] {
         assert!(

@@ -295,24 +295,36 @@ impl ProviderClient for Client {
     type Input = AzureOpenAIClientParams;
 
     /// Create a new Azure OpenAI client from the `AZURE_API_KEY` or `AZURE_TOKEN`, `AZURE_API_VERSION`, and `AZURE_ENDPOINT` environment variables.
-    fn from_env() -> Self {
+    fn from_env() -> http_client::Result<Self> {
         let auth = if let Ok(api_key) = std::env::var("AZURE_API_KEY") {
             AzureOpenAIAuth::ApiKey(api_key)
         } else if let Ok(token) = std::env::var("AZURE_TOKEN") {
             AzureOpenAIAuth::Token(token)
         } else {
-            panic!("Neither AZURE_API_KEY nor AZURE_TOKEN is set");
+            return Err(http_client::Error::MissingEnvironmentVariable {
+                name: "AZURE_API_KEY or AZURE_TOKEN",
+                source: std::env::VarError::NotPresent,
+            });
         };
 
-        let api_version = std::env::var("AZURE_API_VERSION").expect("AZURE_API_VERSION not set");
-        let azure_endpoint = std::env::var("AZURE_ENDPOINT").expect("AZURE_ENDPOINT not set");
+        let api_version = std::env::var("AZURE_API_VERSION").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "AZURE_API_VERSION",
+                source,
+            }
+        })?;
+        let azure_endpoint = std::env::var("AZURE_ENDPOINT").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "AZURE_ENDPOINT",
+                source,
+            }
+        })?;
 
         Self::builder()
             .api_key(auth)
             .azure_endpoint(azure_endpoint)
             .api_version(&api_version)
             .build()
-            .unwrap()
     }
 
     fn from_val(
@@ -321,7 +333,7 @@ impl ProviderClient for Client {
             version,
             header,
         }: Self::Input,
-    ) -> Self {
+    ) -> http_client::Result<Self> {
         let auth = AzureOpenAIAuth::ApiKey(api_key.to_string());
 
         Self::builder()
@@ -329,7 +341,6 @@ impl ProviderClient for Client {
             .azure_endpoint(header)
             .api_version(&version)
             .build()
-            .unwrap()
     }
 }
 
@@ -374,7 +385,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::ProviderError(err.message)
+        EmbeddingError::transport(err.message)
     }
 }
 
@@ -382,7 +393,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
         }
     }
 }
@@ -437,8 +448,12 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, dims)
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -456,7 +471,12 @@ where
         });
 
         if self.ndims > 0 && self.model.as_str() != TEXT_EMBEDDING_ADA_002 {
-            body["dimensions"] = json!(self.ndims);
+            let body_map = body.as_object_mut().ok_or_else(|| {
+                EmbeddingError::RequestError(Box::new(std::io::Error::other(
+                    "Azure embedding request payload must be a JSON object",
+                )))
+            })?;
+            body_map.insert("dimensions".to_owned(), json!(self.ndims));
         }
 
         let body = serde_json::to_vec(&body)?;
@@ -481,9 +501,7 @@ where
                     );
 
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
-                        ));
+                        return Err(EmbeddingError::mismatched_embedding_count());
                     }
 
                     Ok(response
@@ -496,11 +514,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }
@@ -748,10 +766,10 @@ where
                         }
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -868,10 +886,14 @@ where
         }
 
         if let Some(ref additional_params) = request.additional_params {
-            for (key, value) in additional_params
-                .as_object()
-                .expect("Additional Parameters to OpenAI Transcription should be a map")
-            {
+            let additional_params = additional_params.as_object().ok_or_else(|| {
+                transcription::TranscriptionError::RequestError(
+                    "Additional parameters for Azure transcription must be a JSON object"
+                        .to_string()
+                        .into(),
+                )
+            })?;
+            for (key, value) in additional_params {
                 body = body.text(key.to_owned(), value.to_string());
             }
         }
@@ -889,14 +911,13 @@ where
         if status.is_success() {
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(api_error_response) => Err(TranscriptionError::ProviderError(
-                    api_error_response.message,
-                )),
+                ApiResponse::Err(api_error_response) => {
+                    Err(TranscriptionError::transport(api_error_response.message))
+                }
             }
         } else {
-            Err(TranscriptionError::ProviderError(
-                String::from_utf8_lossy(&response_body).to_string(),
-            ))
+            let body = String::from_utf8_lossy(&response_body).into_owned();
+            Err(TranscriptionError::transport_status(status, body))
         }
     }
 }
@@ -964,15 +985,13 @@ mod image_generation {
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(ImageGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(ImageGenerationError::transport_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<ImageGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(ImageGenerationError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(ImageGenerationError::transport(err.message)),
             }
         }
     }
@@ -1046,10 +1065,8 @@ mod audio_generation {
             let response_body = response.into_body().into_future().await?;
 
             if !status.is_success() {
-                return Err(AudioGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(AudioGenerationError::transport_status(status, body));
             }
 
             Ok(AudioGenerationResponse {
@@ -1075,40 +1092,42 @@ mod azure_tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_azure_embedding() {
+    async fn test_azure_embedding() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let client = Client::from_env();
-        let model = client.embedding_model(TEXT_EMBEDDING_3_SMALL);
+        let client = Client::from_env()?;
+        let model = client.embedding_model(TEXT_EMBEDDING_3_SMALL)?;
         let embeddings = model
             .embed_texts(vec!["Hello, world!".to_string()])
             .await
             .unwrap();
 
         tracing::info!("Azure embedding: {:?}", embeddings);
+        Ok(())
     }
 
     #[tokio::test]
     #[ignore]
-    async fn test_azure_embedding_dimensions() {
+    async fn test_azure_embedding_dimensions() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tracing_subscriber::fmt::try_init();
 
         let ndims = 256;
-        let client = Client::from_env();
-        let model = client.embedding_model_with_ndims(TEXT_EMBEDDING_3_SMALL, ndims);
+        let client = Client::from_env()?;
+        let model = client.embedding_model_with_ndims(TEXT_EMBEDDING_3_SMALL, ndims)?;
         let embedding = model.embed_text("Hello, world!").await.unwrap();
 
         assert!(embedding.vec.len() == ndims);
 
         tracing::info!("Azure dimensions embedding: {:?}", embedding);
+        Ok(())
     }
 
     #[tokio::test]
     #[ignore]
-    async fn test_azure_completion() {
+    async fn test_azure_completion() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let client = Client::from_env();
+        let client = Client::from_env()?;
         let model = client.completion_model(GPT_4O_MINI);
         let completion = model
             .completion(CompletionRequest {
@@ -1127,11 +1146,12 @@ mod azure_tests {
             .unwrap();
 
         tracing::info!("Azure completion: {:?}", completion);
+        Ok(())
     }
 
     #[tokio::test]
     #[ignore]
-    async fn test_azure_structured_output() {
+    async fn test_azure_structured_output() -> Result<(), Box<dyn std::error::Error>> {
         let _ = tracing_subscriber::fmt::try_init();
 
         #[derive(Debug, Deserialize, JsonSchema)]
@@ -1140,7 +1160,7 @@ mod azure_tests {
             age: u32,
         }
 
-        let client = Client::from_env();
+        let client = Client::from_env()?;
         let agent = client
             .agent(GPT_5_MINI)
             .preamble("You are a helpful assistant that extracts personal details.")
@@ -1157,6 +1177,7 @@ mod azure_tests {
         assert!(result.age == 54);
 
         tracing::info!("Extracted person: {:?}", result);
+        Ok(())
     }
 
     #[tokio::test]

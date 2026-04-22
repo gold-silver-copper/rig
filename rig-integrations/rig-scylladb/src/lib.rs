@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 use rig::{
     Embed, OneOrMany,
     embeddings::{Embedding, EmbeddingModel},
@@ -353,12 +363,18 @@ where
             filter.hash(&mut hasher);
             let filter_hash = hasher.finish();
 
-            let statement = if let Some(cached) = self
+            let cached = self
                 .cache
                 .read()
-                .ok()
-                .and_then(|cache| cache.get(&filter_hash).cloned())
-            {
+                .map_err(|error| {
+                    VectorStoreError::DatastoreError(
+                        format!("Error reading statement cache: {error}").into(),
+                    )
+                })?
+                .get(&filter_hash)
+                .cloned();
+
+            let statement = if let Some(cached) = cached {
                 cached
             } else {
                 let query = format!(
@@ -485,7 +501,7 @@ where
         }
 
         // Sort by similarity score (descending) and take top n
-        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
         candidates.truncate(req.samples() as usize);
 
         Ok(candidates)
@@ -536,7 +552,7 @@ where
         }
 
         // Sort by similarity score (descending) and take top n
-        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
         candidates.truncate(req.samples() as usize);
 
         Ok(candidates)

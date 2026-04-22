@@ -1,5 +1,6 @@
 //! Groq context smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::groq;
@@ -10,8 +11,8 @@ use super::CONTEXT_MODEL;
 
 #[tokio::test]
 #[ignore = "requires GROQ_API_KEY"]
-async fn context_smoke() {
-    let client = groq::Client::from_env();
+async fn context_smoke() -> Result<()> {
+    let client = groq::Client::from_env()?;
     let agent = CONTEXT_DOCS
         .iter()
         .copied()
@@ -20,10 +21,7 @@ async fn context_smoke() {
         })
         .build();
 
-    let response = agent
-        .prompt(CONTEXT_PROMPT)
-        .await
-        .expect("context prompt should succeed");
+    let response = agent.prompt(CONTEXT_PROMPT).await?;
 
     assert_contains_any_case_insensitive(
         &response,
@@ -34,4 +32,5 @@ async fn context_smoke() {
             "used by the ancestors",
         ],
     );
+    Ok(())
 }

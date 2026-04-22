@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use rig::client::EmbeddingsClient;
 use rig::providers::openai;
 use rig::vector_store::request::VectorSearchRequest;
@@ -28,36 +29,43 @@ struct Word {
 
 #[tokio::test]
 async fn vector_search_test() {
-    let container = start_container().await;
+    let result: Result<()> = async {
+        let container = start_container().await?;
 
-    let host = container.get_host().await.unwrap().to_string();
-    let port = container
-        .get_host_port_ipv4(POSTGRES_PORT)
-        .await
-        .expect("Error getting docker port");
+        let host = container
+            .get_host()
+            .await
+            .context("failed to resolve postgres container host")?
+            .to_string();
+        let port = container
+            .get_host_port_ipv4(POSTGRES_PORT)
+            .await
+            .context("failed to resolve postgres container port")?;
 
     println!("Container started on host:port {host}:{port}");
 
     // connect to Postgres
-    let pg_pool = connect_to_postgres(host, port).await;
+        let pg_pool = connect_to_postgres(host, port).await?;
 
     // run migrations on Postgres
-    sqlx::migrate!("./tests/migrations")
-        .run(&pg_pool)
-        .await
-        .expect("Failed to run migrations");
+        sqlx::migrate!("./tests/migrations")
+            .run(&pg_pool)
+            .await
+            .context("failed to run postgres migrations")?;
 
     println!("Connected to postgres and ran migrations");
 
     // init fake openai service
-    let openai_mock = create_openai_mock_service().await;
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(openai_mock.base_url())
-        .build()
-        .unwrap();
+        let openai_mock = create_openai_mock_service().await;
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(openai_mock.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
 
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_3_SMALL)
+            .context("embedding model should build")?;
 
     // create test documents with mocked embeddings
     let words = vec![
@@ -78,25 +86,20 @@ async fn vector_search_test() {
         }
     ];
 
-    let documents = EmbeddingsBuilder::new(model.clone())
-        .documents(words)
-        .unwrap()
-        .build()
-        .await
-        .expect("Failed to create embeddings");
+        let documents = EmbeddingsBuilder::new(model.clone())
+            .documents(words)?
+            .build()
+            .await?;
 
     // insert documents into vector store
     let vector_store = PostgresVectorStore::with_defaults(model, pg_pool.clone());
 
-    vector_store
-        .insert_documents(documents)
-        .await
-        .expect("Failed to insert documents");
+        vector_store.insert_documents(documents).await?;
 
-    let documents_count: i64 = sqlx::query_scalar("SELECT count(*) FROM documents")
-        .fetch_one(&pg_pool)
-        .await
-        .expect("Failed to fetch documents count");
+        let documents_count: i64 = sqlx::query_scalar("SELECT count(*) FROM documents")
+            .fetch_one(&pg_pool)
+            .await
+            .context("failed to fetch documents count")?;
 
     assert_eq!(documents_count, 3);
 
@@ -107,10 +110,7 @@ async fn vector_search_test() {
         .build();
 
     // search for a document
-    let results = vector_store
-        .top_n::<Word>(req.clone())
-        .await
-        .expect("Failed to search for document");
+        let results = vector_store.top_n::<Word>(req.clone()).await?;
 
     assert_eq!(
         results.len(),
@@ -119,16 +119,16 @@ async fn vector_search_test() {
         results.len()
     );
 
-    let (distance, full_query_id, doc) = results[0].clone();
-    println!("Distance: {distance}, id: {full_query_id}, document: {doc:?}");
+        let (distance, full_query_id, doc) = results
+            .first()
+            .cloned()
+            .context("expected one vector search result")?;
+        println!("Distance: {distance}, id: {full_query_id}, document: {doc:?}");
 
-    assert_eq!(doc.name, "glarb-glarb");
+        assert_eq!(doc.name, "glarb-glarb");
 
     // search only ids
-    let results = vector_store
-        .top_n_ids(req)
-        .await
-        .expect("Failed to search for document ids");
+        let results = vector_store.top_n_ids(req).await?;
 
     assert_eq!(
         results.len(),
@@ -137,13 +137,22 @@ async fn vector_search_test() {
         results.len()
     );
 
-    let (distance, id) = results[0].clone();
-    println!("Distance: {distance}, id: {id}");
+        let (distance, id) = results
+            .first()
+            .cloned()
+            .context("expected one vector search id result")?;
+        println!("Distance: {distance}, id: {id}");
 
-    assert_eq!(id, full_query_id);
+        assert_eq!(id, full_query_id);
+
+        Ok(())
+    }
+    .await;
+
+    assert!(result.is_ok(), "{result:?}");
 }
 
-async fn start_container() -> ContainerAsync<GenericImage> {
+async fn start_container() -> Result<ContainerAsync<GenericImage>> {
     // Setup a local postgres container for testing. NOTE: docker service must be running.
     GenericImage::new("pgvector/pgvector", "pg17")
         .with_wait_for(WaitFor::message_on_stderr(
@@ -155,17 +164,17 @@ async fn start_container() -> ContainerAsync<GenericImage> {
         .with_env_var("POSTGRES_DB", "rig")
         .start()
         .await
-        .expect("Failed to start postgres with pgvector container")
+        .context("failed to start postgres with pgvector container")
 }
 
-async fn connect_to_postgres(host: String, port: u16) -> PgPool {
+async fn connect_to_postgres(host: String, port: u16) -> Result<PgPool> {
     // connect to Postgres
     PgPoolOptions::new()
         .max_connections(50)
         .idle_timeout(std::time::Duration::from_secs(5))
         .connect(&format!("postgres://postgres:postgres@{host}:{port}/rig"))
         .await
-        .expect("Failed to create postgres pool")
+        .context("failed to create postgres pool")
 }
 
 async fn create_openai_mock_service() -> httpmock::MockServer {

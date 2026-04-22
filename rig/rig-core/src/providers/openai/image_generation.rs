@@ -33,11 +33,14 @@ impl TryFrom<ImageGenerationResponse>
     type Error = ImageGenerationError;
 
     fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
-        let b64_json = value.data[0].b64_json.clone();
+        let Some(image_data) = value.data.first() else {
+            return Err(ImageGenerationError::missing_images("OpenAI"));
+        };
+        let b64_json = image_data.b64_json.clone();
 
         let bytes = BASE64_STANDARD
             .decode(&b64_json)
-            .expect("Failed to decode b64");
+            .map_err(|error| ImageGenerationError::decode_payload("OpenAI", error))?;
 
         Ok(image_generation::ImageGenerationResponse {
             image: bytes,
@@ -108,17 +111,40 @@ where
             let status = response.status();
             let text = http_client::text(response).await?;
 
-            return Err(ImageGenerationError::ProviderError(format!(
-                "{}: {}",
-                status, text,
-            )));
+            return Err(ImageGenerationError::transport_status(status, text));
         }
 
         let text = http_client::text(response).await?;
 
         match serde_json::from_str::<ApiResponse<ImageGenerationResponse>>(&text)? {
             ApiResponse::Ok(response) => response.try_into(),
-            ApiResponse::Err(err) => Err(ImageGenerationError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(ImageGenerationError::transport(err.message)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImageGenerationResponse;
+    use crate::image_generation::ImageGenerationError;
+
+    #[test]
+    fn empty_image_generation_response_returns_error() {
+        let response = ImageGenerationResponse {
+            created: 0,
+            data: Vec::new(),
+        };
+
+        let err = crate::image_generation::ImageGenerationResponse::try_from(response)
+            .expect_err("empty response should fail");
+
+        assert!(matches!(
+            err,
+            ImageGenerationError::ResponseError(
+                crate::image_generation::ImageGenerationResponseError::MissingImages {
+                    provider: "OpenAI"
+                }
+            )
+        ));
     }
 }

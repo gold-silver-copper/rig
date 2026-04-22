@@ -84,10 +84,14 @@ where
         }
 
         if let Some(ref additional_params) = request.additional_params {
-            for (key, value) in additional_params
-                .as_object()
-                .expect("Additional Parameters to OpenAI Transcription should be a map")
-            {
+            let additional_params = additional_params.as_object().ok_or_else(|| {
+                transcription::TranscriptionError::RequestError(
+                    "Additional parameters for OpenAI transcription must be a JSON object"
+                        .to_string()
+                        .into(),
+                )
+            })?;
+            for (key, value) in additional_params {
                 body = body.text(key.to_owned(), value.to_string());
             }
         }
@@ -96,22 +100,22 @@ where
             .client
             .post("/audio/transcriptions")?
             .body(body)
-            .unwrap();
+            .map_err(|error| transcription::TranscriptionError::HttpError(error.into()))?;
 
-        let response = self.client.send_multipart::<Bytes>(req).await.unwrap();
+        let response = self.client.send_multipart::<Bytes>(req).await?;
 
         let status = response.status();
         let response_body = response.into_body().into_future().await?.to_vec();
         if status.is_success() {
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(api_error_response) => Err(TranscriptionError::ProviderError(
-                    api_error_response.message,
-                )),
+                ApiResponse::Err(api_error_response) => {
+                    Err(TranscriptionError::transport(api_error_response.message))
+                }
             }
         } else {
-            let str = String::from_utf8_lossy(&response_body).to_string();
-            Err(TranscriptionError::ProviderError(str))
+            let body = String::from_utf8_lossy(&response_body).into_owned();
+            Err(TranscriptionError::transport_status(status, body))
         }
     }
 }

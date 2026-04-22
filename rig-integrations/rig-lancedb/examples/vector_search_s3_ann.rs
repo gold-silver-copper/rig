@@ -21,10 +21,10 @@ mod fixture;
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenAI client. Use this to generate embeddings (and generate test data for RAG demo).
-    let openai_client = Client::from_env();
+    let openai_client = Client::from_env()?;
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     // Initialize LanceDB on S3.
     // Note: see below docs for more options and IAM permission required to read/write to S3.

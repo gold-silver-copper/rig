@@ -62,10 +62,10 @@ impl image_generation::ImageGenerationModel for ImageGenerationModel {
             })?;
 
         let response_str = String::from_utf8(model_response.body.into_inner())
-            .map_err(|e| ImageGenerationError::ResponseError(e.to_string()))?;
+            .map_err(|e| ImageGenerationError::response_message(e.to_string()))?;
 
         let result: TextToImageResponse = serde_json::from_str(&response_str)
-            .map_err(|e| ImageGenerationError::ResponseError(e.to_string()))?;
+            .map_err(|e| ImageGenerationError::response_message(e.to_string()))?;
 
         result.try_into()
     }

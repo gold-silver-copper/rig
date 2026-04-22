@@ -20,7 +20,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::ProviderError(err.message)
+        EmbeddingError::transport(err.message)
     }
 }
 
@@ -28,7 +28,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+            ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
         }
     }
 }
@@ -64,11 +64,15 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, ndims: Option<usize>) -> Self {
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        ndims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
         let model = model.into();
         let dims = ndims.unwrap_or_default();
 
-        Self::new(client.clone(), model, dims)
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -86,16 +90,21 @@ where
             "input": documents,
         });
 
+        let body_map = body.as_object_mut().ok_or_else(|| {
+            EmbeddingError::RequestError(Box::new(std::io::Error::other(
+                "OpenRouter embedding request payload must be a JSON object",
+            )))
+        })?;
         if self.ndims > 0 {
-            body["dimensions"] = json!(self.ndims);
+            body_map.insert("dimensions".to_owned(), json!(self.ndims));
         }
 
         if let Some(encoding_format) = &self.encoding_format {
-            body["encoding_format"] = json!(encoding_format);
+            body_map.insert("encoding_format".to_owned(), json!(encoding_format));
         }
 
         if let Some(user) = &self.user {
-            body["user"] = json!(user);
+            body_map.insert("user".to_owned(), json!(user));
         }
 
         let body = serde_json::to_vec(&body)?;
@@ -120,9 +129,7 @@ where
                     );
 
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
-                        ));
+                        return Err(EmbeddingError::mismatched_embedding_count());
                     }
 
                     Ok(response
@@ -139,11 +146,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Err(err) => Err(EmbeddingError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(EmbeddingError::transport(err.message)),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }

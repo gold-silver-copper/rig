@@ -98,10 +98,17 @@ impl SpanCombinator for tracing::Span {
             return;
         }
 
-        let input_as_json_string =
-            serde_json::to_string(input).expect("Serializing a Rust type to JSON should not break");
-
-        self.record("gen_ai.input.messages", input_as_json_string);
+        match serde_json::to_string(input) {
+            Ok(input_as_json_string) => {
+                self.record("gen_ai.input.messages", input_as_json_string);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "Skipping telemetry input payload that failed to serialize"
+                );
+            }
+        }
     }
 
     fn record_model_output<T>(&self, output: &T)
@@ -112,9 +119,16 @@ impl SpanCombinator for tracing::Span {
             return;
         }
 
-        let output_as_json_string = serde_json::to_string(output)
-            .expect("Serializing a Rust type to JSON should not break");
-
-        self.record("gen_ai.output.messages", output_as_json_string);
+        match serde_json::to_string(output) {
+            Ok(output_as_json_string) => {
+                self.record("gen_ai.output.messages", output_as_json_string);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "Skipping telemetry output payload that failed to serialize"
+                );
+            }
+        }
     }
 }

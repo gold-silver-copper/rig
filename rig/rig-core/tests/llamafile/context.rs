@@ -1,5 +1,6 @@
 //! Llamafile context smoke test.
 
+use anyhow::Result;
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
 
@@ -9,12 +10,12 @@ use super::support;
 
 #[tokio::test]
 #[ignore = "requires a local llamafile server at http://localhost:8080"]
-async fn context_smoke() {
+async fn context_smoke() -> Result<()> {
     if support::skip_if_server_unavailable() {
-        return;
+        return Ok(());
     }
 
-    let client = support::client();
+    let client = support::client()?;
     let agent = CONTEXT_DOCS
         .iter()
         .copied()
@@ -23,10 +24,7 @@ async fn context_smoke() {
         })
         .build();
 
-    let response = agent
-        .prompt(CONTEXT_PROMPT)
-        .await
-        .expect("context prompt should succeed");
+    let response = agent.prompt(CONTEXT_PROMPT).await?;
 
     assert_contains_any_case_insensitive(
         &response,
@@ -37,4 +35,5 @@ async fn context_smoke() {
             "used by the ancestors",
         ],
     );
+    Ok(())
 }

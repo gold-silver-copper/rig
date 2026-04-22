@@ -3,6 +3,7 @@
 //! Run only these cases with:
 //! `cargo test -p rig-core --test openrouter openrouter::reasoning_roundtrip::streaming -- --ignored --nocapture`
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::openrouter;
 
@@ -10,8 +11,8 @@ use crate::reasoning::{self, ReasoningRoundtripAgent};
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn streaming() {
-    let client = openrouter::Client::from_env();
+async fn streaming() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     reasoning::run_reasoning_roundtrip_streaming(ReasoningRoundtripAgent::new(
         client.completion_model("openai/gpt-5.2"),
         Some(serde_json::json!({
@@ -20,12 +21,13 @@ async fn streaming() {
         })),
     ))
     .await;
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]
-async fn nonstreaming() {
-    let client = openrouter::Client::from_env();
+async fn nonstreaming() -> Result<()> {
+    let client = openrouter::Client::from_env()?;
     reasoning::run_reasoning_roundtrip_nonstreaming(ReasoningRoundtripAgent::new(
         client.completion_model("openai/gpt-5.2"),
         Some(serde_json::json!({
@@ -34,4 +36,5 @@ async fn nonstreaming() {
         })),
     ))
     .await;
+    Ok(())
 }

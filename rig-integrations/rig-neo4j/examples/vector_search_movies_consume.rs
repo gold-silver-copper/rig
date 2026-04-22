@@ -37,8 +37,8 @@ async fn main() -> Result<(), anyhow::Error> {
     const INDEX_NAME: &str = "moviePlotsEmbedding";
 
     // Initialize OpenAI client
-    let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-    let openai_client: Client = Client::new(&openai_api_key).unwrap();
+    let openai_api_key = env::var("OPENAI_API_KEY")?;
+    let openai_client: Client = Client::new(&openai_api_key)?;
 
     let neo4j_uri = "neo4j+s://demo.neo4jlabs.com:7687";
     let neo4j_username = "recommendations";
@@ -50,13 +50,12 @@ async fn main() -> Result<(), anyhow::Error> {
             .user(neo4j_username)
             .password(neo4j_password)
             .db("recommendations")
-            .build()
-            .unwrap(),
+            .build()?,
     )
     .await?;
 
     // // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     // Define the properties that will be retrieved from querying the graph nodes
     #[derive(Debug, Deserialize, Serialize)]

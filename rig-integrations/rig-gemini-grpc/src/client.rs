@@ -92,21 +92,25 @@ impl ProviderClient for Client {
     type Input = String;
 
     /// Create a new Google Gemini gRPC client from the `GEMINI_API_KEY` environment variable.
-    /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not set");
+    fn from_env() -> rig::http_client::Result<Self> {
+        let api_key = std::env::var("GEMINI_API_KEY").map_err(|source| {
+            rig::http_client::Error::MissingEnvironmentVariable {
+                name: "GEMINI_API_KEY",
+                source,
+            }
+        })?;
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(Self::new(api_key))
-                .expect("Failed to create Gemini gRPC client")
+                .map_err(rig::http_client::Error::Instance)
         })
     }
 
-    fn from_val(input: Self::Input) -> Self {
+    fn from_val(input: Self::Input) -> rig::http_client::Result<Self> {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(Self::new(input))
-                .expect("Failed to create Gemini gRPC client")
+                .map_err(rig::http_client::Error::Instance)
         })
     }
 }
@@ -122,15 +126,18 @@ impl CompletionClient for Client {
 impl EmbeddingsClient for Client {
     type EmbeddingModel = EmbeddingModel;
 
-    fn embedding_model(&self, model: impl Into<String>) -> Self::EmbeddingModel {
-        EmbeddingModel::new(self.clone(), model, None)
+    fn embedding_model(
+        &self,
+        model: impl Into<String>,
+    ) -> Result<Self::EmbeddingModel, rig::embeddings::EmbeddingError> {
+        Ok(EmbeddingModel::new(self.clone(), model, None))
     }
 
     fn embedding_model_with_ndims(
         &self,
         model: impl Into<String>,
         ndims: usize,
-    ) -> Self::EmbeddingModel {
-        EmbeddingModel::new(self.clone(), model, Some(ndims))
+    ) -> Result<Self::EmbeddingModel, rig::embeddings::EmbeddingError> {
+        Ok(EmbeddingModel::new(self.clone(), model, Some(ndims)))
     }
 }

@@ -1,5 +1,6 @@
 //! Migrated from `examples/multi_turn_streaming_gemini.rs`.
 
+use anyhow::Result;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,13 +37,13 @@ type StreamingResult = Pin<Box<dyn Stream<Item = Result<Text, StreamingError>> +
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn manual_multi_turn_streaming_loop() {
+async fn manual_multi_turn_streaming_loop() -> Result<()> {
     let add_calls = Arc::new(AtomicUsize::new(0));
     let subtract_calls = Arc::new(AtomicUsize::new(0));
     let multiply_calls = Arc::new(AtomicUsize::new(0));
     let divide_calls = Arc::new(AtomicUsize::new(0));
 
-    let client = gemini::Client::from_env();
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble("You must use tools to answer arithmetic prompts.")
@@ -53,9 +54,7 @@ async fn manual_multi_turn_streaming_loop() {
         .build();
 
     let mut stream = multi_turn_prompt(agent, MULTI_TURN_STREAMING_PROMPT, Vec::new()).await;
-    let response = collect_text(&mut stream)
-        .await
-        .expect("manual multi-turn streaming should succeed");
+    let response = collect_text(&mut stream).await?;
 
     assert_nonempty_response(&response);
     assert!(
@@ -80,6 +79,7 @@ async fn manual_multi_turn_streaming_loop() {
         divide_calls.load(Ordering::SeqCst) >= 1,
         "divide should be called"
     );
+    Ok(())
 }
 
 async fn multi_turn_prompt<M>(
@@ -148,10 +148,11 @@ where
             }
 
             if !tool_calls.is_empty() {
-                chat_history.push(Message::Assistant {
-                    id: None,
-                    content: OneOrMany::many(tool_calls).expect("tool calls should be non-empty"),
-                });
+                let Some(content) = OneOrMany::from_non_empty_iter(tool_calls) else {
+                    debug_assert!(false, "tool calls should be non-empty");
+                    break;
+                };
+                chat_history.push(Message::Assistant { id: None, content });
             }
 
             for (id, call_id, tool_result) in tool_results {
@@ -172,10 +173,14 @@ where
                 });
             }
 
-            current_prompt = match chat_history.pop() {
-                Some(prompt) => prompt,
-                None => unreachable!("chat history should not be empty"),
+            let Some(prompt) = chat_history.pop() else {
+                debug_assert!(
+                    false,
+                    "chat history should not be empty after pushing tool results"
+                );
+                break;
             };
+            current_prompt = prompt;
 
             if !did_call_tool {
                 break;
@@ -222,8 +227,7 @@ impl Tool for Add {
         ToolDefinition {
             name: "add".to_string(),
             description: "Add x and y together".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -253,8 +257,7 @@ impl Tool for Subtract {
         ToolDefinition {
             name: "subtract".to_string(),
             description: "Subtract y from x (i.e.: x - y)".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -284,8 +287,7 @@ impl Tool for Multiply {
         ToolDefinition {
             name: "multiply".to_string(),
             description: "Compute the product of x and y (i.e.: x * y)".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 
@@ -315,8 +317,7 @@ impl Tool for Divide {
         ToolDefinition {
             name: "divide".to_string(),
             description: "Compute the quotient of x and y.".to_string(),
-            parameters: serde_json::to_value(schema_for!(OperationArgs))
-                .expect("schema should serialize"),
+            parameters: serde_json::json!(schema_for!(OperationArgs)),
         }
     }
 

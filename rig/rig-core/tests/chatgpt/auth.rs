@@ -1,5 +1,6 @@
 //! ChatGPT OAuth device flow and refresh smoke tests.
 
+use anyhow::{Context, Result};
 use assert_fs::TempDir;
 use rig::client::CompletionClient;
 use rig::providers::chatgpt;
@@ -25,9 +26,9 @@ fn oauth_builder_with_auth_file(path: &Path) -> chatgpt::ClientBuilder {
     builder
 }
 
-fn seed_refresh_auth_file(path: &Path) {
+fn seed_refresh_auth_file(path: &Path) -> Result<()> {
     let refresh_token =
-        std::env::var("CHATGPT_REFRESH_TOKEN").expect("CHATGPT_REFRESH_TOKEN should be set");
+        std::env::var("CHATGPT_REFRESH_TOKEN").context("CHATGPT_REFRESH_TOKEN should be set")?;
     let account_id = std::env::var("CHATGPT_ACCOUNT_ID").ok();
     let id_token = std::env::var("CHATGPT_ID_TOKEN").ok();
 
@@ -39,27 +40,19 @@ fn seed_refresh_auth_file(path: &Path) {
         "account_id": account_id,
     });
 
-    fs::write(
-        path,
-        serde_json::to_vec_pretty(&record).expect("seed auth record"),
-    )
-    .expect("auth record should be written");
+    fs::write(path, serde_json::to_vec_pretty(&record)?)?;
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires interactive ChatGPT OAuth device flow"]
-async fn oauth_device_flow_authorize_and_cached_completion_smoke() {
-    let temp = TempDir::new().expect("temp dir");
+async fn oauth_device_flow_authorize_and_cached_completion_smoke() -> Result<()> {
+    let temp = TempDir::new()?;
     let auth_file = temp.path().join("auth.json");
 
-    let client = oauth_builder_with_auth_file(&auth_file)
-        .build()
-        .expect("ChatGPT OAuth client should build");
+    let client = oauth_builder_with_auth_file(&auth_file).build()?;
 
-    client
-        .authorize()
-        .await
-        .expect("device authorization should succeed");
+    client.authorize().await?;
 
     assert!(
         auth_file.is_file(),
@@ -68,46 +61,34 @@ async fn oauth_device_flow_authorize_and_cached_completion_smoke() {
 
     let agent = client.agent(LIVE_MODEL).preamble(BASIC_PREAMBLE).build();
     let mut stream = agent.stream_prompt(BASIC_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("authorized streaming completion should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_nonempty_response(&response);
 
-    let cached_client = oauth_builder_with_auth_file(&auth_file)
-        .build()
-        .expect("cached ChatGPT OAuth client should build");
+    let cached_client = oauth_builder_with_auth_file(&auth_file).build()?;
 
     let cached_agent = cached_client.agent(LIVE_MODEL).build();
     let mut cached_stream = cached_agent
         .stream_prompt("Reply with the single word cached.")
         .await;
-    let cached_response = collect_stream_final_response(&mut cached_stream)
-        .await
-        .expect("cached streaming completion should succeed");
+    let cached_response = collect_stream_final_response(&mut cached_stream).await?;
 
     assert_nonempty_response(&cached_response);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires CHATGPT_REFRESH_TOKEN"]
-async fn refresh_token_cache_authorize_and_completion_smoke() {
-    let temp = TempDir::new().expect("temp dir");
+async fn refresh_token_cache_authorize_and_completion_smoke() -> Result<()> {
+    let temp = TempDir::new()?;
     let auth_file = temp.path().join("auth.json");
-    seed_refresh_auth_file(&auth_file);
+    seed_refresh_auth_file(&auth_file)?;
 
-    let client = oauth_builder_with_auth_file(&auth_file)
-        .build()
-        .expect("ChatGPT refresh client should build");
+    let client = oauth_builder_with_auth_file(&auth_file).build()?;
 
-    client
-        .authorize()
-        .await
-        .expect("refresh authorization should succeed");
+    client.authorize().await?;
 
-    let record: serde_json::Value =
-        serde_json::from_slice(&fs::read(&auth_file).expect("auth file should exist"))
-            .expect("auth file should deserialize");
+    let record: serde_json::Value = serde_json::from_slice(&fs::read(&auth_file)?)?;
     assert!(
         record
             .get("access_token")
@@ -127,9 +108,8 @@ async fn refresh_token_cache_authorize_and_completion_smoke() {
     let mut stream = agent
         .stream_prompt("Reply with the single word refreshed.")
         .await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("refreshed streaming completion should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_nonempty_response(&response);
+    Ok(())
 }

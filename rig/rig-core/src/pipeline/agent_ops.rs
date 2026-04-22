@@ -160,7 +160,7 @@ where
 pub mod tests {
     use super::*;
     use crate::message;
-    use completion::{Prompt, PromptError};
+    use completion::{CompletionError, Prompt, PromptError};
     use vector_store::{VectorStoreError, VectorStoreIndex, request::Filter};
 
     pub struct MockModel;
@@ -169,12 +169,22 @@ pub mod tests {
         #[allow(refining_impl_trait)]
         async fn prompt(&self, prompt: impl Into<message::Message>) -> Result<String, PromptError> {
             let msg: message::Message = prompt.into();
-            let prompt = match msg {
-                message::Message::User { content } => match content.first() {
-                    message::UserContent::Text(message::Text { text }) => text,
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
+            let message::Message::User { content } = msg else {
+                return Err(CompletionError::response_with_context(
+                    "mock model",
+                    "expected user prompt",
+                )
+                .into());
+            };
+            let prompt = match content.first() {
+                message::UserContent::Text(message::Text { text }) => text,
+                _ => {
+                    return Err(CompletionError::response_with_context(
+                        "mock model",
+                        "expected text user prompt",
+                    )
+                    .into());
+                }
             };
             Ok(format!("Mock response: {prompt}"))
         }

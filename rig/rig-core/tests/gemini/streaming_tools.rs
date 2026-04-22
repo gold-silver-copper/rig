@@ -1,5 +1,6 @@
 //! Gemini streaming tools coverage, including the migrated example path.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
 use rig::message::ToolChoice;
@@ -20,14 +21,13 @@ use crate::support::{
 };
 
 fn streaming_tool_params() -> serde_json::Value {
-    serde_json::to_value(AdditionalParameters::default().with_config(GenerationConfig::default()))
-        .expect("Gemini additional params should serialize")
+    serde_json::json!(AdditionalParameters::default().with_config(GenerationConfig::default()))
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn streaming_tools_smoke() {
-    let client = gemini::Client::from_env();
+async fn streaming_tools_smoke() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble(STREAMING_TOOLS_PREAMBLE)
@@ -37,17 +37,16 @@ async fn streaming_tools_smoke() {
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming tool prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn raw_stream_emits_required_zero_arg_tool_call() {
-    let client = gemini::Client::from_env();
+async fn raw_stream_emits_required_zero_arg_tool_call() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let model = client.completion_model(gemini::completion::GEMINI_2_5_FLASH);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
@@ -55,15 +54,16 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
         .tool_choice(ToolChoice::Required)
         .additional_params(streaming_tool_params())
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model.stream(request).await?;
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() {
-    let client = gemini::Client::from_env();
+async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
@@ -83,12 +83,13 @@ async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() {
         &["lookup_harbor_label", "lookup_orchard_label"],
         &[ALPHA_SIGNAL_OUTPUT, BETA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn streaming_tools_emit_tool_call_before_later_text() {
-    let client = gemini::Client::from_env();
+async fn streaming_tools_emit_tool_call_before_later_text() -> Result<()> {
+    let client = gemini::Client::from_env()?;
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
@@ -107,12 +108,13 @@ async fn streaming_tools_emit_tool_call_before_later_text() {
         "lookup_harbor_label",
         &[ALPHA_SIGNAL_OUTPUT],
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
-async fn example_streaming_with_tools() {
-    let agent = gemini::Client::from_env()
+async fn example_streaming_with_tools() -> Result<()> {
+    let agent = gemini::Client::from_env()?
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble(
             "You are a calculator here to help the user perform arithmetic operations. \
@@ -125,9 +127,8 @@ async fn example_streaming_with_tools() {
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
-    let response = collect_stream_final_response(&mut stream)
-        .await
-        .expect("streaming prompt should succeed");
+    let response = collect_stream_final_response(&mut stream).await?;
 
     assert_mentions_expected_number(&response, -3);
+    Ok(())
 }

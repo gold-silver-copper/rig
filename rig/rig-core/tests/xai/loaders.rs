@@ -1,5 +1,6 @@
 //! xAI loaders smoke test.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::loaders::FileLoader;
@@ -9,10 +10,9 @@ use crate::support::{LOADERS_GLOB, LOADERS_PROMPT, assert_loader_answer_is_relev
 
 #[tokio::test]
 #[ignore = "requires XAI_API_KEY"]
-async fn loaders_smoke() {
-    let client = xai::Client::from_env();
-    let examples = FileLoader::with_glob(LOADERS_GLOB)
-        .expect("examples glob should parse")
+async fn loaders_smoke() -> Result<()> {
+    let client = xai::Client::from_env()?;
+    let examples = FileLoader::with_glob(LOADERS_GLOB)?
         .read_with_path()
         .ignore_errors()
         .into_iter();
@@ -34,8 +34,8 @@ async fn loaders_smoke() {
                 "{LOADERS_PROMPT} Choose only from these exact file names: agent_with_loaders.rs, streaming.rs, tools.rs. Reply with just the exact file name."
             ),
         )
-        .await
-        .expect("loader prompt should succeed");
+        .await?;
 
     assert_loader_answer_is_relevant(&response);
+    Ok(())
 }

@@ -7,6 +7,7 @@
 
 use std::env;
 
+use anyhow::Context;
 use rig::{
     providers::openai::{self, Client},
     vector_store::{
@@ -36,12 +37,13 @@ const INDEX_NAME: &str = "moviePlots";
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenAI client
-    let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-    let openai_client: Client = Client::new(&openai_api_key).unwrap();
+    let openai_api_key = env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
+    let openai_client: Client =
+        Client::new(&openai_api_key).context("failed to create OpenAI client")?;
 
-    let neo4j_uri = env::var("NEO4J_URI").expect("NEO4J_URI not set");
-    let neo4j_username = env::var("NEO4J_USERNAME").expect("NEO4J_USERNAME not set");
-    let neo4j_password = env::var("NEO4J_PASSWORD").expect("NEO4J_PASSWORD not set");
+    let neo4j_uri = env::var("NEO4J_URI").context("NEO4J_URI not set")?;
+    let neo4j_username = env::var("NEO4J_USERNAME").context("NEO4J_USERNAME not set")?;
+    let neo4j_password = env::var("NEO4J_PASSWORD").context("NEO4J_PASSWORD not set")?;
 
     let neo4j_client = Neo4jClient::connect(&neo4j_uri, &neo4j_username, &neo4j_password).await?;
 
@@ -101,7 +103,7 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     // Select the embedding model and generate our embeddings
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     // Since we are starting from scratch, we need to create the DB vector index
     neo4j_client
@@ -147,11 +149,15 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn import_batch(graph: &Graph, nodes: &[Movie], batch_n: i32) -> Result<(), anyhow::Error> {
-    let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+    let openai_api_key = env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
     let to_encode_list: Vec<String> = nodes
         .iter()
-        .map(|node| node.to_encode.clone().unwrap())
-        .collect();
+        .map(|node| {
+            node.to_encode
+                .clone()
+                .context("movie batch entry missing encoded text")
+        })
+        .collect::<Result<_, _>>()?;
 
     graph.run(
         Query::new(format!(

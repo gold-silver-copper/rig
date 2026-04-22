@@ -1,3 +1,4 @@
+use anyhow::Result;
 use rig::{
     Embed,
     embeddings::{self, TextEmbedder, embed::EmbedError},
@@ -5,7 +6,7 @@ use rig::{
 use serde::Serialize;
 
 #[test]
-fn test_custom_embed() {
+fn test_custom_embed() -> Result<()> {
     #[derive(Embed)]
     struct WordDefinition {
         #[allow(dead_code)]
@@ -43,13 +44,14 @@ fn test_custom_embed() {
     };
 
     assert_eq!(
-        embeddings::to_texts(definition).unwrap(),
+        embeddings::to_texts(definition)?,
             vec!["{\"word\":\"a building in which people live; residence for human beings.\",\"link\":\"https://www.dictionary.com/browse/house\",\"speech\":\"noun\"}".to_string()]
-        )
+        );
+    Ok(())
 }
 
 #[test]
-fn test_custom_and_basic_embed() {
+fn test_custom_and_basic_embed() -> Result<()> {
     #[derive(Embed)]
     struct WordDefinition {
         #[allow(dead_code)]
@@ -86,7 +88,7 @@ fn test_custom_and_basic_embed() {
         },
     };
 
-    let texts = embeddings::to_texts(definition).unwrap();
+    let texts = embeddings::to_texts(definition)?;
 
     assert_eq!(
         texts,
@@ -95,10 +97,11 @@ fn test_custom_and_basic_embed() {
             "{\"word\":\"a building in which people live; residence for human beings.\",\"link\":\"https://www.dictionary.com/browse/house\",\"speech\":\"noun\"}".to_string()
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn test_single_embed() {
+fn test_single_embed() -> Result<()> {
     #[derive(Embed)]
     struct WordDefinition {
         #[allow(dead_code)]
@@ -117,14 +120,12 @@ fn test_single_embed() {
         definition: definition.clone(),
     };
 
-    assert_eq!(
-        embeddings::to_texts(word_definition).unwrap(),
-        vec![definition]
-    )
+    assert_eq!(embeddings::to_texts(word_definition)?, vec![definition]);
+    Ok(())
 }
 
 #[test]
-fn test_embed_vec_non_string() {
+fn test_embed_vec_non_string() -> Result<()> {
     #[derive(Embed)]
     struct Company {
         #[allow(dead_code)]
@@ -142,7 +143,7 @@ fn test_embed_vec_non_string() {
     };
 
     assert_eq!(
-        embeddings::to_texts(company).unwrap(),
+        embeddings::to_texts(company)?,
         vec![
             "25".to_string(),
             "30".to_string(),
@@ -150,10 +151,11 @@ fn test_embed_vec_non_string() {
             "40".to_string()
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn test_embed_vec_string() {
+fn test_embed_vec_string() -> Result<()> {
     #[derive(Embed)]
     struct Company {
         #[allow(dead_code)]
@@ -176,7 +178,7 @@ fn test_embed_vec_string() {
     };
 
     assert_eq!(
-        embeddings::to_texts(company).unwrap(),
+        embeddings::to_texts(company)?,
         vec![
             "Alice".to_string(),
             "Bob".to_string(),
@@ -184,10 +186,11 @@ fn test_embed_vec_string() {
             "David".to_string()
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn test_multiple_embed_tags() {
+fn test_multiple_embed_tags() -> Result<()> {
     #[derive(Embed)]
     struct Company {
         #[allow(dead_code)]
@@ -205,7 +208,7 @@ fn test_multiple_embed_tags() {
     };
 
     assert_eq!(
-        embeddings::to_texts(company).unwrap(),
+        embeddings::to_texts(company)?,
         vec![
             "Google".to_string(),
             "25".to_string(),
@@ -214,4 +217,5 @@ fn test_multiple_embed_tags() {
             "40".to_string()
         ]
     );
+    Ok(())
 }

@@ -82,13 +82,18 @@ impl ProviderClient for Client {
 
     /// Create a new Hyperbolic client from the `HYPERBOLIC_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("HYPERBOLIC_API_KEY").expect("HYPERBOLIC_API_KEY not set");
-        Self::new(&api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("HYPERBOLIC_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "HYPERBOLIC_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(&api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 
@@ -171,7 +176,7 @@ pub struct CompletionResponse {
 
 impl From<ApiErrorResponse> for CompletionError {
     fn from(err: ApiErrorResponse) -> Self {
-        CompletionError::ProviderError(err.message)
+        CompletionError::transport(err.message)
     }
 }
 
@@ -179,9 +184,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
     type Error = CompletionError;
 
     fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(CompletionError::missing_choices)?;
 
         let content = match &choice.message {
             Message::Assistant {
@@ -213,13 +219,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 );
                 Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
+            _ => Err(CompletionError::response(
+                "Response did not contain a valid message or tool call",
             )),
         }?;
 
         let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+            CompletionError::response(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
         })?;
@@ -405,10 +411,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -537,9 +543,12 @@ mod image_generation {
         type Error = ImageGenerationError;
 
         fn try_from(value: ImageGenerationResponse) -> Result<Self, Self::Error> {
+            let Some(image) = value.images.first() else {
+                return Err(ImageGenerationError::missing_images("Hyperbolic"));
+            };
             let data = BASE64_STANDARD
-                .decode(&value.images[0].image)
-                .expect("Could not decode image.");
+                .decode(&image.image)
+                .map_err(|error| ImageGenerationError::decode_payload("Hyperbolic", error))?;
 
             Ok(Self {
                 image: data,
@@ -591,16 +600,36 @@ mod image_generation {
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(ImageGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(ImageGenerationError::transport_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<ImageGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(ImageGenerationError::ResponseError(err.message)),
+                ApiResponse::Err(err) => Err(ImageGenerationError::transport(err.message)),
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::ImageGenerationResponse;
+        use crate::image_generation::ImageGenerationError;
+
+        #[test]
+        fn empty_image_generation_response_returns_error() {
+            let response = ImageGenerationResponse { images: Vec::new() };
+
+            let result = crate::image_generation::ImageGenerationResponse::try_from(response);
+
+            assert!(matches!(
+                result,
+                Err(ImageGenerationError::ResponseError(
+                    crate::image_generation::ImageGenerationResponseError::MissingImages {
+                        provider: "Hyperbolic"
+                    }
+                ))
+            ));
         }
     }
 }
@@ -644,7 +673,7 @@ mod audio_generation {
         fn try_from(value: AudioGenerationResponse) -> Result<Self, Self::Error> {
             let data = BASE64_STANDARD
                 .decode(&value.audio)
-                .expect("Could not decode audio.");
+                .map_err(|error| AudioGenerationError::decode_payload("Hyperbolic", error))?;
 
             Ok(Self {
                 audio: data,
@@ -692,15 +721,13 @@ mod audio_generation {
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if !status.is_success() {
-                return Err(AudioGenerationError::ProviderError(format!(
-                    "{status}: {}",
-                    String::from_utf8_lossy(&response_body)
-                )));
+                let body = String::from_utf8_lossy(&response_body).into_owned();
+                return Err(AudioGenerationError::transport_status(status, body));
             }
 
             match serde_json::from_slice::<ApiResponse<AudioGenerationResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(err) => Err(AudioGenerationError::ProviderError(err.message)),
+                ApiResponse::Err(err) => Err(AudioGenerationError::transport(err.message)),
             }
         }
     }

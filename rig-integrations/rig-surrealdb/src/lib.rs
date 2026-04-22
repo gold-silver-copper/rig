@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::unwrap_used
+    )
+)]
 use std::fmt::Display;
 
 use rig::{
@@ -437,8 +447,12 @@ mod tests {
 
         type Client = Nothing;
 
-        fn make(_: &Self::Client, _: impl Into<String>, _: Option<usize>) -> Self {
-            Self
+        fn make(
+            _: &Self::Client,
+            _: impl Into<String>,
+            _: Option<usize>,
+        ) -> Result<Self, rig::embeddings::EmbeddingError> {
+            Ok(Self)
         }
 
         fn ndims(&self) -> usize {

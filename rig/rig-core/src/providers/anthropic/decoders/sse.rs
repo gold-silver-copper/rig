@@ -98,7 +98,7 @@ impl SSEDecoder {
         let (field_name, value) = match parts.as_slice() {
             [field] => (*field, ""),
             [field, value] => (*field, *value),
-            _ => unreachable!(),
+            _ => return None,
         };
 
         // Trim leading space from value as per SSE spec
@@ -183,8 +183,8 @@ fn extract_sse_chunk(buffer: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     }
 
     let pattern_index = pattern_index as usize;
-    let chunk = buffer[0..pattern_index].to_vec();
-    let remaining = buffer[pattern_index..].to_vec();
+    let chunk = buffer.get(..pattern_index)?.to_vec();
+    let remaining = buffer.get(pattern_index..)?.to_vec();
 
     Some((chunk, remaining))
 }

@@ -145,9 +145,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             .flat_map(<Vec<completion::AssistantContent>>::from)
             .collect();
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError("Response contained no output".to_owned())
-        })?;
+        let choice = OneOrMany::many(content).map_err(|_| CompletionError::missing_output())?;
 
         let usage = response
             .usage
@@ -264,12 +262,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Error(error) => {
-                        Err(CompletionError::ProviderError(error.message()))
-                    }
+                    ApiResponse::Error(error) => Err(CompletionError::transport(error.message())),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }

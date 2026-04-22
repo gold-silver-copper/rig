@@ -24,10 +24,10 @@ mod tools {
     }
 
     /// Verify that a private tool is accessible within its defining module.
-    pub async fn use_private_tool() -> i32 {
+    pub async fn use_private_tool() -> Result<i32, rig::tool::ToolError> {
         use rig::tool::Tool;
         let tool = PrivateAdder;
-        tool.call(PrivateAdderParameters { x: 99 }).await.unwrap()
+        tool.call(PrivateAdderParameters { x: 99 }).await
     }
 }
 
@@ -41,11 +41,8 @@ async fn test_pub_tool_accessible_from_outside_module() {
     assert_eq!(def.name, "public_adder");
     assert_eq!(def.description, "A public tool for testing visibility");
 
-    let result = tool
-        .call(tools::PublicAdderParameters { x: 41 })
-        .await
-        .unwrap();
-    assert_eq!(result, serde_json::json!(42));
+    let result = tool.call(tools::PublicAdderParameters { x: 41 }).await;
+    assert!(matches!(result, Ok(42)));
 }
 
 #[test]
@@ -57,5 +54,5 @@ fn test_pub_static_accessible_from_outside_module() {
 #[tokio::test]
 async fn test_private_tool_accessible_within_module() {
     // PrivateAdder is only accessible inside `tools`, but we can call through a pub wrapper.
-    assert_eq!(tools::use_private_tool().await, 100);
+    assert!(matches!(tools::use_private_tool().await, Ok(100)));
 }

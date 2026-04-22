@@ -1,5 +1,6 @@
 //! Migrated from `examples/anthropic_think_tool.rs`.
 
+use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Prompt;
 use rig::providers::anthropic;
@@ -9,8 +10,8 @@ use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_respo
 
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]
-async fn think_tool_menu_planning() {
-    let agent = anthropic::Client::from_env()
+async fn think_tool_menu_planning() -> Result<()> {
+    let agent = anthropic::Client::from_env()?
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
         .name("Anthropic Thinker")
         .preamble(
@@ -26,9 +27,9 @@ async fn think_tool_menu_planning() {
              1 person with a gluten allergy. Create appetizers, mains, and desserts.",
         )
         .max_turns(10)
-        .await
-        .expect("think tool prompt should succeed");
+        .await?;
 
     assert_nonempty_response(&response);
     assert_contains_any_case_insensitive(&response, &["appetizer", "main", "dessert"]);
+    Ok(())
 }

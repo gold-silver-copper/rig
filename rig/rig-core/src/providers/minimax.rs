@@ -172,27 +172,37 @@ impl super::anthropic::completion::AnthropicCompatibleProvider for MiniMaxAnthro
 impl ProviderClient for Client {
     type Input = MiniMaxApiKey;
 
-    fn from_env() -> Self {
-        let api_key = std::env::var("MINIMAX_API_KEY").expect("MINIMAX_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("MINIMAX_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "MINIMAX_API_KEY",
+                source,
+            }
+        })?;
         let mut builder = Self::builder().api_key(api_key);
 
         if let Ok(base_url) = std::env::var("MINIMAX_API_BASE") {
             builder = builder.base_url(base_url);
         }
 
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(input)
     }
 }
 
 impl ProviderClient for AnthropicClient {
     type Input = String;
 
-    fn from_env() -> Self {
-        let api_key = std::env::var("MINIMAX_API_KEY").expect("MINIMAX_API_KEY not set");
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("MINIMAX_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "MINIMAX_API_KEY",
+                source,
+            }
+        })?;
         let mut builder = Self::builder().api_key(api_key);
 
         if let Some(base_url) =
@@ -201,11 +211,11 @@ impl ProviderClient for AnthropicClient {
             builder = builder.base_url(base_url);
         }
 
-        builder.build().unwrap()
+        builder.build()
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::builder().api_key(input).build().unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::builder().api_key(input).build()
     }
 }
 

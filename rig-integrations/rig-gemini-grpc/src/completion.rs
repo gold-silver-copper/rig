@@ -56,12 +56,12 @@ impl completion::CompletionModel for CompletionModel {
         let mut grpc_client = self
             .client
             .grpc_client()
-            .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+            .map_err(|e| CompletionError::transport(e.to_string()))?;
 
         let response = grpc_client
             .generate_content(request)
             .await
-            .map_err(|e| CompletionError::ProviderError(e.to_string()))?
+            .map_err(|e| CompletionError::transport(e.to_string()))?
             .into_inner();
 
         response.try_into()
@@ -371,12 +371,13 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
     type Error = CompletionError;
 
     fn try_from(response: GenerateContentResponse) -> Result<Self, Self::Error> {
-        let candidate = response.candidates.first().ok_or_else(|| {
-            CompletionError::ResponseError("No response candidates in response".into())
-        })?;
+        let candidate = response
+            .candidates
+            .first()
+            .ok_or_else(CompletionError::missing_candidates)?;
 
         let content_ref = candidate.content.as_ref().ok_or_else(|| {
-            CompletionError::ResponseError(format!(
+            CompletionError::response(format!(
                 "Gemini candidate missing content (finish_reason={})",
                 candidate.finish_reason
             ))
@@ -409,7 +410,7 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                             )
                         }
                         _ => {
-                            return Err(CompletionError::ResponseError(format!(
+                            return Err(CompletionError::response(format!(
                                 "Unsupported media type {mime_type:?}"
                             )));
                         }
@@ -441,8 +442,8 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                     completion::AssistantContent::ToolCall(tool_call)
                 }
                 _ => {
-                    return Err(CompletionError::ResponseError(
-                        "Response did not contain a message or tool call".into(),
+                    return Err(CompletionError::response(
+                        "Response did not contain a message or tool call",
                     ));
                 }
             };
@@ -450,9 +451,10 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             assistant_contents.push(assistant_content);
         }
 
-        let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
+        let choice = OneOrMany::from_non_empty_iter(assistant_contents).ok_or_else(|| {
+            CompletionError::response_with_context(
+                "gemini grpc response",
+                "response contained no message, reasoning, image, or tool call content",
             )
         })?;
 

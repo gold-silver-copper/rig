@@ -94,13 +94,18 @@ impl ProviderClient for Client {
 
     /// Create a new Groq client from the `GROQ_API_KEY` environment variable.
     /// Panics if the environment variable is not set.
-    fn from_env() -> Self {
-        let api_key = std::env::var("GROQ_API_KEY").expect("GROQ_API_KEY not set");
-        Self::new(&api_key).unwrap()
+    fn from_env() -> http_client::Result<Self> {
+        let api_key = std::env::var("GROQ_API_KEY").map_err(|source| {
+            http_client::Error::MissingEnvironmentVariable {
+                name: "GROQ_API_KEY",
+                source,
+            }
+        })?;
+        Self::new(&api_key)
     }
 
-    fn from_val(input: Self::Input) -> Self {
-        Self::new(&input).unwrap()
+    fn from_val(input: Self::Input) -> http_client::Result<Self> {
+        Self::new(&input)
     }
 }
 
@@ -433,10 +438,10 @@ where
 
                         response.try_into()
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    ApiResponse::Err(err) => Err(CompletionError::transport(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::transport(
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -562,10 +567,14 @@ where
         }
 
         if let Some(ref additional_params) = request.additional_params {
-            for (key, value) in additional_params
-                .as_object()
-                .expect("Additional Parameters to OpenAI Transcription should be a map")
-            {
+            let additional_params = additional_params.as_object().ok_or_else(|| {
+                TranscriptionError::RequestError(
+                    "Additional parameters for Groq transcription must be a JSON object"
+                        .to_string()
+                        .into(),
+                )
+            })?;
+            for (key, value) in additional_params {
                 body = body.text(key.to_owned(), value.to_string());
             }
         }
@@ -574,9 +583,9 @@ where
             .client
             .post("/audio/transcriptions")?
             .body(body)
-            .unwrap();
+            .map_err(|error| TranscriptionError::HttpError(error.into()))?;
 
-        let response = self.client.send_multipart::<Bytes>(req).await.unwrap();
+        let response = self.client.send_multipart::<Bytes>(req).await?;
 
         let status = response.status();
         let response_body = response.into_body().into_future().await?.to_vec();
@@ -584,14 +593,13 @@ where
         if status.is_success() {
             match serde_json::from_slice::<ApiResponse<TranscriptionResponse>>(&response_body)? {
                 ApiResponse::Ok(response) => response.try_into(),
-                ApiResponse::Err(api_error_response) => Err(TranscriptionError::ProviderError(
-                    api_error_response.message,
-                )),
+                ApiResponse::Err(api_error_response) => {
+                    Err(TranscriptionError::transport(api_error_response.message))
+                }
             }
         } else {
-            Err(TranscriptionError::ProviderError(
-                String::from_utf8_lossy(&response_body).to_string(),
-            ))
+            let body = String::from_utf8_lossy(&response_body).into_owned();
+            Err(TranscriptionError::transport_status(status, body))
         }
     }
 }

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use serde_json::json;
 use testcontainers::{
     GenericImage,
@@ -31,39 +32,48 @@ struct Word {
 
 #[tokio::test]
 async fn vector_search_test() {
-    // Setup a local qdrant container for testing. NOTE: docker service must be running.
-    let container = GenericImage::new("qdrant/qdrant", "latest")
-        .with_wait_for(WaitFor::Duration {
-            length: std::time::Duration::from_secs(5),
-        })
-        .with_exposed_port(QDRANT_PORT.tcp())
-        .with_exposed_port(QDRANT_PORT_SECONDARY.tcp())
-        .start()
-        .await
-        .expect("Failed to start qdrant container");
+    let result: anyhow::Result<()> = async {
+        // Setup a local qdrant container for testing. NOTE: docker service must be running.
+        let container = GenericImage::new("qdrant/qdrant", "latest")
+            .with_wait_for(WaitFor::Duration {
+                length: std::time::Duration::from_secs(5),
+            })
+            .with_exposed_port(QDRANT_PORT.tcp())
+            .with_exposed_port(QDRANT_PORT_SECONDARY.tcp())
+            .start()
+            .await
+            .context("failed to start qdrant container")?;
 
-    let port = container
-        .get_host_port_ipv4(QDRANT_PORT_SECONDARY)
-        .await
-        .unwrap();
-    let host = container.get_host().await.unwrap().to_string();
+        let port = container
+            .get_host_port_ipv4(QDRANT_PORT_SECONDARY)
+            .await
+            .context("failed to resolve qdrant host port")?;
+        let host = container
+            .get_host()
+            .await
+            .context("failed to resolve qdrant host")?
+            .to_string();
 
-    let client = Qdrant::from_url(&format!("http://{host}:{port}"))
-        .build()
-        .unwrap();
+        let client = Qdrant::from_url(&format!("http://{host}:{port}"))
+            .build()
+            .context("failed to build qdrant client")?;
 
     // Create a collection with 1536 dimensions if it doesn't exist
     // Note: Make sure the dimensions match the size of the embeddings returned by the
     // model you are using
-    if !client.collection_exists(COLLECTION_NAME).await.unwrap() {
-        client
-            .create_collection(
-                CreateCollectionBuilder::new(COLLECTION_NAME)
-                    .vectors_config(VectorParamsBuilder::new(1536, Distance::Cosine)),
-            )
+        if !client
+            .collection_exists(COLLECTION_NAME)
             .await
-            .unwrap();
-    }
+            .context("failed to check whether qdrant collection exists")?
+        {
+            client
+                .create_collection(
+                    CreateCollectionBuilder::new(COLLECTION_NAME)
+                        .vectors_config(VectorParamsBuilder::new(1536, Distance::Cosine)),
+                )
+                .await
+                .context("failed to create qdrant collection")?;
+        }
 
     // Setup mock openai API
     let server = httpmock::MockServer::start();
@@ -140,44 +150,54 @@ async fn vector_search_test() {
     });
 
     // Initialize OpenAI client
-    let openai_client = openai::Client::builder()
-        .api_key("TEST")
-        .base_url(server.base_url())
-        .build()
-        .unwrap();
+        let openai_client = openai::Client::builder()
+            .api_key("TEST")
+            .base_url(server.base_url())
+            .build()
+            .context("failed to build mock openai client")?;
 
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+        let model = openai_client
+            .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+            .context("embedding model should build")?;
 
-    let points = create_points(model.clone()).await;
+        let points = create_points(model.clone()).await?;
 
-    client
-        .upsert_points(UpsertPointsBuilder::new(COLLECTION_NAME, points).wait(true))
-        .await
-        .unwrap();
+        client
+            .upsert_points(UpsertPointsBuilder::new(COLLECTION_NAME, points).wait(true))
+            .await
+            .context("failed to upsert qdrant points")?;
 
-    let query_params = QueryPointsBuilder::new(COLLECTION_NAME).with_payload(true);
-    let vector_store = QdrantVectorStore::new(client, model, query_params.build());
+        let query_params = QueryPointsBuilder::new(COLLECTION_NAME).with_payload(true);
+        let vector_store = QdrantVectorStore::new(client, model, query_params.build());
 
-    let query = "What is a linglingdong?";
-    let req = VectorSearchRequest::builder()
-        .query(query)
-        .samples(1)
-        .build();
+        let query = "What is a linglingdong?";
+        let req = VectorSearchRequest::builder()
+            .query(query)
+            .samples(1)
+            .build();
 
-    let results = vector_store.top_n::<serde_json::Value>(req).await.unwrap();
+        let results = vector_store.top_n::<serde_json::Value>(req).await?;
 
-    let (_, _, value) = &results.first().unwrap();
+        let (_, _, value) = results
+            .first()
+            .context("vector search returned no results")?;
 
-    assert_eq!(
-        value,
-        &serde_json::json!({
-            "definition": "Definition of a *linglingdong*: A term used by inhabitants of the far side of the moon to describe humans.",
-            "id": "f9e17d59-32e5-440c-be02-b2759a654824"
-        })
-    )
+        assert_eq!(
+            value,
+            &serde_json::json!({
+                "definition": "Definition of a *linglingdong*: A term used by inhabitants of the far side of the moon to describe humans.",
+                "id": "f9e17d59-32e5-440c-be02-b2759a654824"
+            })
+        );
+
+        Ok(())
+    }
+    .await;
+
+    assert!(result.is_ok(), "{result:?}");
 }
 
-async fn create_points(model: openai::EmbeddingModel) -> Vec<PointStruct> {
+async fn create_points(model: openai::EmbeddingModel) -> anyhow::Result<Vec<PointStruct>> {
     let words = vec![
         Word {
             id: "0981d983-a5f8-49eb-89ea-f7d3b2196d2e".to_string(),
@@ -194,21 +214,19 @@ async fn create_points(model: openai::EmbeddingModel) -> Vec<PointStruct> {
     ];
 
     let documents = EmbeddingsBuilder::new(model)
-        .documents(words)
-        .unwrap()
+        .documents(words)?
         .build()
-        .await
-        .unwrap();
+        .await?;
 
     documents
         .into_iter()
         .map(|(d, embeddings)| {
             let vec: Vec<f32> = embeddings.first().vec.iter().map(|&x| x as f32).collect();
-            PointStruct::new(
+            Ok(PointStruct::new(
                 d.id.clone(),
                 vec,
-                Payload::try_from(serde_json::to_value(&d).unwrap()).unwrap(),
-            )
+                Payload::try_from(serde_json::to_value(&d)?)?,
+            ))
         })
         .collect()
 }

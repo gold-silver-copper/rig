@@ -4,9 +4,62 @@
 use crate::markers::{Missing, Provided};
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use crate::{http_client, json_utils};
+use http::StatusCode;
 use std::io;
 use std::{fs, path::Path};
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TranscriptionResponseError {
+    #[error("ResponseError: no response candidates in response")]
+    MissingCandidates,
+
+    #[error("ResponseError: response content contains no text")]
+    MissingText,
+
+    #[error("ResponseError: response content was not text")]
+    NonTextResponse,
+
+    #[error("ResponseError: {message}")]
+    Message { message: String },
+}
+
+impl TranscriptionResponseError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TranscriptionTransportError {
+    #[error("TransportError: request failed with status {status}: {body}")]
+    Status { status: StatusCode, body: String },
+
+    #[error("TransportError: {message}")]
+    Message { message: String },
+}
+
+impl TranscriptionTransportError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TranscriptionConfigurationError {
+    #[error("ConfigurationError: transcription endpoint is not supported yet for {provider}")]
+    UnsupportedEndpoint { provider: String },
+
+    #[error("ConfigurationError: {message}")]
+    Message { message: String },
+}
 
 // Errors
 #[derive(Debug, Error)]
@@ -31,12 +84,61 @@ pub enum TranscriptionError {
     RequestError(#[from] Box<dyn std::error::Error + 'static>),
 
     /// Error parsing the transcription response
-    #[error("ResponseError: {0}")]
-    ResponseError(String),
+    #[error(transparent)]
+    ResponseError(TranscriptionResponseError),
 
-    /// Error returned by the transcription model provider
-    #[error("ProviderError: {0}")]
-    ProviderError(String),
+    /// Error returned while talking to the transcription model provider.
+    #[error(transparent)]
+    TransportError(TranscriptionTransportError),
+
+    /// Error caused by local transcription model configuration or initialization.
+    #[error(transparent)]
+    ConfigurationError(TranscriptionConfigurationError),
+}
+
+impl TranscriptionError {
+    pub fn request(message: impl Into<String>) -> Self {
+        Self::RequestError(Box::new(std::io::Error::other(message.into())))
+    }
+
+    pub fn response(message: impl Into<String>) -> Self {
+        Self::ResponseError(TranscriptionResponseError::message(message))
+    }
+
+    pub fn missing_candidates() -> Self {
+        Self::ResponseError(TranscriptionResponseError::MissingCandidates)
+    }
+
+    pub fn missing_text() -> Self {
+        Self::ResponseError(TranscriptionResponseError::MissingText)
+    }
+
+    pub fn non_text_response() -> Self {
+        Self::ResponseError(TranscriptionResponseError::NonTextResponse)
+    }
+
+    pub fn transport(message: impl Into<String>) -> Self {
+        Self::TransportError(TranscriptionTransportError::message(message))
+    }
+
+    pub fn transport_status(status: StatusCode, body: impl Into<String>) -> Self {
+        Self::TransportError(TranscriptionTransportError::Status {
+            status,
+            body: body.into(),
+        })
+    }
+
+    pub fn unsupported_endpoint(provider: impl Into<String>) -> Self {
+        Self::ConfigurationError(TranscriptionConfigurationError::UnsupportedEndpoint {
+            provider: provider.into(),
+        })
+    }
+
+    pub fn configuration(message: impl Into<String>) -> Self {
+        Self::ConfigurationError(TranscriptionConfigurationError::Message {
+            message: message.into(),
+        })
+    }
 }
 
 /// Trait defining a low-level LLM transcription interface
@@ -285,5 +387,63 @@ where
     pub async fn send(self) -> Result<TranscriptionResponse<M::Response>, TranscriptionError> {
         let model = self.model.clone();
         model.transcription(self.build()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        TranscriptionConfigurationError, TranscriptionError, TranscriptionResponseError,
+        TranscriptionTransportError,
+    };
+    use http::StatusCode;
+
+    #[test]
+    fn transcription_response_error_builders_preserve_structure() {
+        assert!(matches!(
+            TranscriptionError::request("unsupported audio input"),
+            TranscriptionError::RequestError(_)
+        ));
+        assert!(matches!(
+            TranscriptionError::response("malformed provider payload"),
+            TranscriptionError::ResponseError(TranscriptionResponseError::Message { message })
+                if message == "malformed provider payload"
+        ));
+        assert!(matches!(
+            TranscriptionError::missing_candidates(),
+            TranscriptionError::ResponseError(TranscriptionResponseError::MissingCandidates)
+        ));
+        assert!(matches!(
+            TranscriptionError::missing_text(),
+            TranscriptionError::ResponseError(TranscriptionResponseError::MissingText)
+        ));
+        assert!(matches!(
+            TranscriptionError::non_text_response(),
+            TranscriptionError::ResponseError(TranscriptionResponseError::NonTextResponse)
+        ));
+    }
+
+    #[test]
+    fn transcription_error_taxonomy_is_explicit() {
+        assert!(matches!(
+            TranscriptionError::transport_status(StatusCode::BAD_GATEWAY, "upstream failed"),
+            TranscriptionError::TransportError(TranscriptionTransportError::Status {
+                status,
+                body
+            })
+                if status == StatusCode::BAD_GATEWAY && body == "upstream failed"
+        ));
+        assert!(matches!(
+            TranscriptionError::unsupported_endpoint("custom-subprovider"),
+            TranscriptionError::ConfigurationError(
+                TranscriptionConfigurationError::UnsupportedEndpoint { provider }
+            ) if provider == "custom-subprovider"
+        ));
+        assert!(matches!(
+            TranscriptionError::configuration("missing local credentials"),
+            TranscriptionError::ConfigurationError(
+                TranscriptionConfigurationError::Message { message }
+            ) if message == "missing local credentials"
+        ));
     }
 }

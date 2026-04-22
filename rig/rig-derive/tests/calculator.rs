@@ -108,8 +108,8 @@ async fn test_calculator_tool() {
     ];
 
     for (input, expected) in test_cases {
-        let result = calculator.call(input).await.unwrap();
-        assert_eq!(result, serde_json::json!(expected));
+        let result = calculator.call(input).await;
+        assert!(matches!(result, Ok(value) if value == expected));
     }
 
     // Test division by zero
@@ -118,8 +118,8 @@ async fn test_calculator_tool() {
         y: 0,
         operation: "divide".to_string(),
     };
-    let err = calculator.call(div_zero).await.unwrap_err();
-    assert!(matches!(err, rig::tool::ToolError::ToolCallError(_)));
+    let err = calculator.call(div_zero).await;
+    assert!(matches!(err, Err(rig::tool::ToolError::ToolCallError(_))));
 
     // Test invalid operation
     let invalid_op = CalculatorParameters {
@@ -127,8 +127,8 @@ async fn test_calculator_tool() {
         y: 3,
         operation: "power".to_string(),
     };
-    let err = calculator.call(invalid_op).await.unwrap_err();
-    assert!(matches!(err, rig::tool::ToolError::ToolCallError(_)));
+    let err = calculator.call(invalid_op).await;
+    assert!(matches!(err, Err(rig::tool::ToolError::ToolCallError(_))));
 
     // Test sync calculator
     let sync_calculator = SyncCalculator;
@@ -138,8 +138,7 @@ async fn test_calculator_tool() {
             y: 3,
             operation: "add".to_string(),
         })
-        .await
-        .unwrap();
+        .await;
 
-    assert_eq!(result, serde_json::json!(8));
+    assert!(matches!(result, Ok(8)));
 }

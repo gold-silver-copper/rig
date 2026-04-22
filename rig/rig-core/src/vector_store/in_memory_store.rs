@@ -199,7 +199,10 @@ impl<D: Serialize + Eq> InMemoryVectorStore<D> {
             return self.vector_search_brute_force(prompt_embedding, n);
         }
 
-        let lsh_index = self.lsh_index.as_ref().unwrap();
+        let Some(lsh_index) = self.lsh_index.as_ref() else {
+            tracing::warn!("LSH index was dropped during search, falling back to brute force");
+            return self.vector_search_brute_force(prompt_embedding, n);
+        };
         let candidates = lsh_index.query(&prompt_embedding.vec);
 
         // Sort documents by best embedding distance, but only check candidates

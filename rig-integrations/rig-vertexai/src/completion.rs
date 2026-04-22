@@ -11,6 +11,16 @@ use rig::completion::{
 use rig::streaming::StreamingCompletionResponse;
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(target_family = "wasm"))]
+fn vertex_client_request_error(error: crate::client::VertexAiClientError) -> CompletionError {
+    CompletionError::RequestError(Box::new(error))
+}
+
+#[cfg(target_family = "wasm")]
+fn vertex_client_request_error(error: crate::client::VertexAiClientError) -> CompletionError {
+    CompletionError::RequestError(Box::new(error))
+}
+
 /// `gemini-1.5-pro`
 pub const GEMINI_1_5_PRO: &str = "gemini-1.5-pro";
 /// `gemini-1.5-flash`
@@ -100,6 +110,7 @@ impl CompletionModelTrait for CompletionModel {
             .client
             .get_inner()
             .await
+            .map_err(vertex_client_request_error)?
             .generate_content()
             .set_model(&model_path)
             .set_contents(contents);
@@ -123,7 +134,7 @@ impl CompletionModelTrait for CompletionModel {
         let response = request_builder
             .send()
             .await
-            .map_err(|e| CompletionError::ProviderError(format!("Vertex AI API error: {e}")))?;
+            .map_err(|e| CompletionError::transport(format!("Vertex AI API error: {e}")))?;
 
         tracing::debug!(
             target: "rig::vertexai",
@@ -140,8 +151,8 @@ impl CompletionModelTrait for CompletionModel {
         &self,
         _request: CompletionRequest,
     ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        Err(CompletionError::ProviderError(
-            "Streaming is not supported for Vertex AI in this integration".to_string(),
+        Err(CompletionError::transport(
+            "Streaming is not supported for Vertex AI in this integration",
         ))
     }
 }

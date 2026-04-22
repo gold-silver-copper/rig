@@ -322,9 +322,20 @@ where
                                             // cache_creation_input_tokens and cache_read_input_tokens
                                             // are cumulative totals on message_delta.usage per the
                                             // Anthropic streaming API spec — use them directly.
+                                            let input_tokens = match input_tokens.try_into() {
+                                                Ok(input_tokens) => Some(input_tokens),
+                                                Err(error) => {
+                                                    tracing::warn!(
+                                                        ?error,
+                                                        input_tokens,
+                                                        "Anthropic input token count overflowed usize"
+                                                    );
+                                                    None
+                                                }
+                                            };
                                             let usage = PartialUsage {
                                                  output_tokens: usage.output_tokens,
-                                                 input_tokens: Some(input_tokens.try_into().expect("Failed to convert input_tokens to usize")),
+                                                 input_tokens,
                                                  cache_creation_input_tokens: usage.cache_creation_input_tokens,
                                                  cache_read_input_tokens: usage.cache_read_input_tokens
                                             };
@@ -347,7 +358,7 @@ where
                             },
                             Err(e) => {
                                 if !sse.data.trim().is_empty() {
-                                    yield Err(CompletionError::ResponseError(
+                                    yield Err(CompletionError::response(
                                         format!("Failed to parse JSON: {} (Data: {})", e, sse.data)
                                     ));
                                 }
@@ -355,7 +366,7 @@ where
                         }
                     },
                     Err(e) => {
-                        yield Err(CompletionError::ProviderError(format!("SSE Error: {e}")));
+                        yield Err(CompletionError::transport(format!("SSE Error: {e}")));
                         break;
                     }
                 }

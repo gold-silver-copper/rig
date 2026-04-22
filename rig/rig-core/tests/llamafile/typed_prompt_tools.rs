@@ -74,7 +74,7 @@ async fn prompt_typed_with_tool_call_roundtrip() -> Result<()> {
     }
 
     let call_count = Arc::new(AtomicUsize::new(0));
-    let client = support::client();
+    let client = support::client()?;
     let agent = client
         .agent(support::model_name())
         .preamble(

@@ -34,11 +34,11 @@ impl TryFrom<ImageGenerationResponse>
         let first = value
             .data
             .first()
-            .ok_or_else(|| ImageGenerationError::ResponseError("No image data returned".into()))?;
+            .ok_or_else(|| ImageGenerationError::missing_images("xAI"))?;
 
-        let bytes = BASE64_STANDARD.decode(&first.b64_json).map_err(|e| {
-            ImageGenerationError::ResponseError(format!("Base64 decode error: {e}"))
-        })?;
+        let bytes = BASE64_STANDARD
+            .decode(&first.b64_json)
+            .map_err(|error| ImageGenerationError::decode_payload("xAI", error))?;
 
         Ok(image_generation::ImageGenerationResponse {
             image: bytes,
@@ -105,17 +105,14 @@ where
             let status = response.status();
             let text = http_client::text(response).await?;
 
-            return Err(ImageGenerationError::ProviderError(format!(
-                "{}: {}",
-                status, text,
-            )));
+            return Err(ImageGenerationError::transport_status(status, text));
         }
 
         let text = http_client::text(response).await?;
 
         match serde_json::from_str::<ApiResponse<ImageGenerationResponse>>(&text)? {
             ApiResponse::Ok(response) => response.try_into(),
-            ApiResponse::Error(err) => Err(ImageGenerationError::ProviderError(err.message())),
+            ApiResponse::Error(err) => Err(ImageGenerationError::transport(err.message())),
         }
     }
 }

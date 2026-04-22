@@ -79,8 +79,8 @@ impl fmt::Debug for Authenticator {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
-    #[error("{0}")]
-    Message(String),
+    #[error(transparent)]
+    Flow(AuthFlowError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -88,6 +88,78 @@ pub enum AuthError {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
 }
+
+/// Structured ChatGPT authentication flow failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthFlowError {
+    /// ChatGPT OAuth is unavailable on the current target.
+    UnsupportedOnWasm,
+    /// The device-code authorization window expired before the user finished it.
+    DeviceAuthorizationTimedOut,
+    /// The device-code endpoint returned an unexpected non-polling failure.
+    DeviceAuthorizationFailed {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+    /// Refresh-token exchange failed and did not qualify for reauthentication.
+    TokenRefreshFailed {
+        status: reqwest::StatusCode,
+        error_code: Option<String>,
+        error_description: Option<String>,
+        response_body: Option<String>,
+    },
+}
+
+impl std::fmt::Display for AuthFlowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedOnWasm => {
+                f.write_str("ChatGPT OAuth is not supported on wasm targets")
+            }
+            Self::DeviceAuthorizationTimedOut => {
+                f.write_str("Timed out waiting for ChatGPT device authorization")
+            }
+            Self::DeviceAuthorizationFailed { status, body } => {
+                if body.trim().is_empty() {
+                    write!(f, "ChatGPT device authorization failed: {status}")
+                } else {
+                    write!(f, "ChatGPT device authorization failed: {status} {body}")
+                }
+            }
+            Self::TokenRefreshFailed {
+                status,
+                error_code,
+                error_description,
+                response_body,
+            } => {
+                write!(f, "ChatGPT token refresh failed: {status}")?;
+
+                if let Some(error_code) = error_code.as_deref() {
+                    write!(f, " {error_code}")?;
+                }
+
+                if let Some(description) = error_description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|description| !description.is_empty())
+                {
+                    write!(f, " ({description})")?;
+                } else if error_code.is_none()
+                    && let Some(body) = response_body
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|body| !body.is_empty())
+                {
+                    write!(f, " {body}")?;
+                }
+
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for AuthFlowError {}
 
 #[derive(Debug, Clone)]
 pub struct AuthContext {

@@ -2,6 +2,7 @@ use crate::image::ImageGenerationModel;
 use crate::{completion::CompletionModel, embedding::EmbeddingModel};
 use aws_config::{BehaviorVersion, Region};
 use rig::client::Nothing;
+use rig::http_client;
 use rig::prelude::*;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -97,20 +98,23 @@ impl Client {
 impl ProviderClient for Client {
     type Input = Nothing;
 
-    fn from_env() -> Self
+    fn from_env() -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        Client::new()
+        Ok(Client::new())
     }
 
-    fn from_val(_: Nothing) -> Self
+    fn from_val(_: Nothing) -> http_client::Result<Self>
     where
         Self: Sized,
     {
-        panic!(
-            "Please use `Client::from_env` or `Client::with_profile_name(\"aws_profile\")` instead"
-        );
+        Err(http_client::Error::Instance(
+            std::io::Error::other(
+                "Use `Client::from_env()` or `Client::with_profile_name(\"aws_profile\")` for Bedrock clients",
+            )
+            .into(),
+        ))
     }
 }
 
@@ -125,16 +129,19 @@ impl CompletionClient for Client {
 impl EmbeddingsClient for Client {
     type EmbeddingModel = EmbeddingModel;
 
-    fn embedding_model(&self, model: impl Into<String>) -> Self::EmbeddingModel {
-        EmbeddingModel::new(self.clone(), model, None)
+    fn embedding_model(
+        &self,
+        model: impl Into<String>,
+    ) -> Result<Self::EmbeddingModel, rig::embeddings::EmbeddingError> {
+        Ok(EmbeddingModel::new(self.clone(), model, None))
     }
 
     fn embedding_model_with_ndims(
         &self,
         model: impl Into<String>,
         ndims: usize,
-    ) -> Self::EmbeddingModel {
-        EmbeddingModel::new(self.clone(), model, Some(ndims))
+    ) -> Result<Self::EmbeddingModel, rig::embeddings::EmbeddingError> {
+        Ok(EmbeddingModel::new(self.clone(), model, Some(ndims)))
     }
 }
 

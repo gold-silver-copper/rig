@@ -327,7 +327,7 @@ impl Image {
             DocumentSourceKind::Url(url) => Ok(url),
             DocumentSourceKind::Base64(data) => {
                 let Some(media_type) = self.media_type else {
-                    return Err(MessageError::ConversionError(
+                    return Err(MessageError::conversion(
                         "A media type is required to create a valid base64-encoded image URL"
                             .to_string(),
                     ));
@@ -338,7 +338,7 @@ impl Image {
                     ty = media_type.to_mime_type()
                 ))
             }
-            unknown => Err(MessageError::ConversionError(format!(
+            unknown => Err(MessageError::conversion(format!(
                 "Tried to convert unknown type to a URL: {unknown:?}"
             ))),
         }
@@ -1282,8 +1282,35 @@ pub enum ToolChoice {
 /// Error type to represent issues with converting messages to and from specific provider messages.
 #[derive(Debug, Error)]
 pub enum MessageError {
-    #[error("Message conversion error: {0}")]
-    ConversionError(String),
+    #[error(transparent)]
+    ConversionError(MessageConversionError),
+}
+
+#[derive(Debug, Error)]
+pub enum MessageConversionError {
+    #[error("Message conversion error: empty {role} message")]
+    EmptyMessage { role: &'static str },
+
+    #[error("Message conversion error: {details}")]
+    Details { details: String },
+}
+
+impl MessageConversionError {
+    pub fn from_details(details: impl Into<String>) -> Self {
+        let details = details.into();
+
+        match details.as_str() {
+            "Empty user message" => Self::EmptyMessage { role: "user" },
+            "Empty assistant message" => Self::EmptyMessage { role: "assistant" },
+            _ => Self::Details { details },
+        }
+    }
+}
+
+impl MessageError {
+    pub fn conversion(details: impl Into<String>) -> Self {
+        Self::ConversionError(MessageConversionError::from_details(details))
+    }
 }
 
 impl From<MessageError> for CompletionError {
@@ -1294,7 +1321,7 @@ impl From<MessageError> for CompletionError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Message, Reasoning, ReasoningContent};
+    use super::{Message, MessageConversionError, MessageError, Reasoning, ReasoningContent};
 
     #[test]
     fn reasoning_constructors_and_accessors_work() {
@@ -1356,5 +1383,28 @@ mod tests {
         let json = serde_json::to_string(&message).expect("serialize");
         let roundtrip: Message = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(roundtrip, message);
+    }
+
+    #[test]
+    fn message_conversion_error_maps_empty_message_roles() {
+        assert!(matches!(
+            MessageError::conversion("Empty user message"),
+            MessageError::ConversionError(MessageConversionError::EmptyMessage { role: "user" })
+        ));
+        assert!(matches!(
+            MessageError::conversion("Empty assistant message"),
+            MessageError::ConversionError(MessageConversionError::EmptyMessage {
+                role: "assistant"
+            })
+        ));
+    }
+
+    #[test]
+    fn message_conversion_error_preserves_provider_details() {
+        assert!(matches!(
+            MessageError::conversion("Tool result partition contained non-tool content"),
+            MessageError::ConversionError(MessageConversionError::Details { details })
+                if details == "Tool result partition contained non-tool content"
+        ));
     }
 }

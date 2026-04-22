@@ -38,7 +38,7 @@ pub struct EmbeddingResponse {
 
 impl From<ApiErrorResponse> for EmbeddingError {
     fn from(err: ApiErrorResponse) -> Self {
-        EmbeddingError::ProviderError(err.message())
+        EmbeddingError::transport(err.message())
     }
 }
 
@@ -46,7 +46,7 @@ impl From<ApiResponse<EmbeddingResponse>> for Result<EmbeddingResponse, Embeddin
     fn from(value: ApiResponse<EmbeddingResponse>) -> Self {
         match value {
             ApiResponse::Ok(response) => Ok(response),
-            ApiResponse::Error(err) => Err(EmbeddingError::ProviderError(err.message())),
+            ApiResponse::Error(err) => Err(EmbeddingError::transport(err.message())),
         }
     }
 }
@@ -79,8 +79,12 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, dims.unwrap_or_default())
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, dims.unwrap_or_default()))
     }
 
     fn ndims(&self) -> usize {
@@ -113,9 +117,7 @@ where
             match body {
                 ApiResponse::Ok(response) => {
                     if response.data.len() != documents.len() {
-                        return Err(EmbeddingError::ResponseError(
-                            "Response data length does not match input length".into(),
-                        ));
+                        return Err(EmbeddingError::mismatched_embedding_count());
                     }
 
                     Ok(response
@@ -132,11 +134,11 @@ where
                         })
                         .collect())
                 }
-                ApiResponse::Error(err) => Err(EmbeddingError::ProviderError(err.message())),
+                ApiResponse::Error(err) => Err(EmbeddingError::transport(err.message())),
             }
         } else {
             let text = http_client::text(response).await?;
-            Err(EmbeddingError::ProviderError(text))
+            Err(EmbeddingError::transport(text))
         }
     }
 }

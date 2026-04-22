@@ -29,7 +29,7 @@ struct Sentiment {
 #[tokio::test]
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
 async fn batch_multi_extract_chain() -> Result<()> {
-    let client = support::completions_client();
+    let client = support::completions_client()?;
     let model = support::model_name();
     let names_extractor = client
         .extractor::<Names>(model.clone())
