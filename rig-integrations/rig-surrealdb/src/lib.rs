@@ -449,8 +449,12 @@ mod tests {
 
         type Client = Nothing;
 
-        fn make(_: &Self::Client, _: impl Into<String>, _: Option<usize>) -> Self {
-            Self
+        fn make(
+            _: &Self::Client,
+            _: impl Into<String>,
+            _: Option<usize>,
+        ) -> Result<Self, rig::embeddings::EmbeddingError> {
+            Ok(Self)
         }
 
         fn ndims(&self) -> usize {

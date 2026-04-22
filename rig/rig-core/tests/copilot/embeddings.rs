@@ -8,7 +8,9 @@ use rig::embeddings::EmbeddingModel;
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
 async fn embeddings_smoke() {
-    let model = live_client().embedding_model(live_embedding_model());
+    let model = live_client()
+        .embedding_model(live_embedding_model())
+        .expect("embedding model should build");
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))

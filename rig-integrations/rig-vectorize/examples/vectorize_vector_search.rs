@@ -31,7 +31,7 @@ struct Word {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let openai_client = Client::from_env()?;
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL)?;
 
     let vector_store = VectorizeVectorStore::new(
         model.clone(),

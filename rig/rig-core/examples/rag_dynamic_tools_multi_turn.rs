@@ -142,7 +142,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
     let openai_client = Client::from_env()?;
 
-    let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     let toolset = ToolSet::builder()
         .dynamic_tool(Add)

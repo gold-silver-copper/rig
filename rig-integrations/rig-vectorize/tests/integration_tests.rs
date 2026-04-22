@@ -494,10 +494,14 @@ impl EmbeddingModel for MockEmbeddingModel {
 
     type Client = MockClient;
 
-    fn make(_client: &Self::Client, _model: impl Into<String>, dims: Option<usize>) -> Self {
-        Self {
+    fn make(
+        _client: &Self::Client,
+        _model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, rig::embeddings::EmbeddingError> {
+        Ok(Self {
             dimensions: dims.unwrap_or(1536),
-        }
+        })
     }
 
     fn ndims(&self) -> usize {

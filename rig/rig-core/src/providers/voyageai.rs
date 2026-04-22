@@ -193,13 +193,17 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
         let model = model.into();
         let dims = dims
             .or(model_dimensions_from_identifier(&model))
             .unwrap_or_default();
 
-        Self::new(client.clone(), model, dims)
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {

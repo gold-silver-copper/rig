@@ -114,7 +114,9 @@ async fn vector_search_test() {
         .unwrap();
 
     // Select an embedding model.
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client
+        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+        .expect("embedding model should build");
 
     // Initialize LanceDB locally.
     let db = lancedb::connect("data/lancedb-store")
@@ -329,7 +331,9 @@ async fn agent_with_dynamic_context_test() {
         .unwrap();
 
     // Select an embedding model.
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client
+        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+        .expect("embedding model should build");
 
     // Initialize LanceDB locally.
     let db = lancedb::connect("data/lancedb-store")

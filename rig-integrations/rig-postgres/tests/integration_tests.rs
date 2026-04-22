@@ -57,7 +57,9 @@ async fn vector_search_test() {
         .build()
         .unwrap();
 
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+    let model = openai_client
+        .embedding_model(openai::TEXT_EMBEDDING_3_SMALL)
+        .expect("embedding model should build");
 
     // create test documents with mocked embeddings
     let words = vec![

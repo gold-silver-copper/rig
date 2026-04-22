@@ -1135,14 +1135,18 @@ where
     const MAX_DOCUMENTS: usize = 1024;
     type Client = Client<H>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, ndims: Option<usize>) -> Self {
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        ndims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
         let model = model.into();
         let dims = ndims.unwrap_or(match model.as_str() {
             TEXT_EMBEDDING_3_LARGE => 3072,
             TEXT_EMBEDDING_3_SMALL | TEXT_EMBEDDING_ADA_002 => 1536,
             _ => 0,
         });
-        Self::new(client.clone(), model, dims)
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -1793,7 +1797,9 @@ mod tests {
             .http_client(http_client.clone())
             .build()
             .expect("build client");
-        let model = client.embedding_model(TEXT_EMBEDDING_3_SMALL);
+        let model = client
+            .embedding_model(TEXT_EMBEDDING_3_SMALL)
+            .expect("embedding model should build");
 
         let embeddings = model
             .embed_texts(["one".to_string(), "two".to_string()])

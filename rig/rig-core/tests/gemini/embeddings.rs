@@ -20,7 +20,7 @@ struct Greetings {
 #[ignore = "requires GEMINI_API_KEY"]
 async fn embeddings_smoke() -> Result<()> {
     let client = gemini::Client::from_env()?;
-    let model = client.embedding_model(gemini::embedding::EMBEDDING_001);
+    let model = client.embedding_model(gemini::embedding::EMBEDDING_001)?;
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))
@@ -37,7 +37,7 @@ async fn embeddings_smoke() -> Result<()> {
 async fn derive_document_embeddings() -> Result<()> {
     let client = gemini::Client::from_env()?;
     let embeddings = client
-        .embeddings(gemini::embedding::EMBEDDING_001)
+        .embeddings(gemini::embedding::EMBEDDING_001)?
         .document(Greetings {
             message: "Hello, world!".to_string(),
         })

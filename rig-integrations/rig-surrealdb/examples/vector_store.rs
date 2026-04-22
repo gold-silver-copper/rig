@@ -30,7 +30,7 @@ impl std::fmt::Display for TopicDefinition {
 async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
     let openai_client = openai::Client::from_env()?;
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
 
     let surreal = Surreal::new::<Mem>(()).await?;
 

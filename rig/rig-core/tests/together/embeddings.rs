@@ -11,7 +11,7 @@ use crate::support::{EMBEDDING_INPUTS, assert_embeddings_nonempty_and_consistent
 #[ignore = "requires TOGETHER_API_KEY"]
 async fn embeddings_smoke() -> Result<()> {
     let client = together::Client::from_env()?;
-    let model = client.embedding_model(together::embedding::M2_BERT_80M_8K_RETRIEVAL);
+    let model = client.embedding_model(together::embedding::M2_BERT_80M_8K_RETRIEVAL)?;
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))

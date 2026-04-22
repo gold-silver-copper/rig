@@ -126,15 +126,18 @@ impl CompletionClient for Client {
 impl EmbeddingsClient for Client {
     type EmbeddingModel = EmbeddingModel;
 
-    fn embedding_model(&self, model: impl Into<String>) -> Self::EmbeddingModel {
-        EmbeddingModel::new(self.clone(), model, None)
+    fn embedding_model(
+        &self,
+        model: impl Into<String>,
+    ) -> Result<Self::EmbeddingModel, rig::embeddings::EmbeddingError> {
+        Ok(EmbeddingModel::new(self.clone(), model, None))
     }
 
     fn embedding_model_with_ndims(
         &self,
         model: impl Into<String>,
         ndims: usize,
-    ) -> Self::EmbeddingModel {
-        EmbeddingModel::new(self.clone(), model, Some(ndims))
+    ) -> Result<Self::EmbeddingModel, rig::embeddings::EmbeddingError> {
+        Ok(EmbeddingModel::new(self.clone(), model, Some(ndims)))
     }
 }

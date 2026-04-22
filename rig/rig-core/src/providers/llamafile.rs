@@ -659,8 +659,12 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, ndims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, ndims.unwrap_or_default())
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        ndims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, ndims.unwrap_or_default()))
     }
 
     fn ndims(&self) -> usize {

@@ -76,7 +76,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .base_url("http://localhost:11434")
         .build()?;
 
-    let embedding_model = client.embedding_model("nomic-embed-text");
+    let embedding_model = client.embedding_model("nomic-embed-text")?;
 
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
         .documents(sample_documents())?

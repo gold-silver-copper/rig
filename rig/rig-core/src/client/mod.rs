@@ -637,7 +637,10 @@ where
 {
     type EmbeddingModel = M;
 
-    fn embedding_model(&self, model: impl Into<String>) -> Self::EmbeddingModel {
+    fn embedding_model(
+        &self,
+        model: impl Into<String>,
+    ) -> Result<Self::EmbeddingModel, crate::embeddings::EmbeddingError> {
         M::make(self, model, None)
     }
 
@@ -645,7 +648,7 @@ where
         &self,
         model: impl Into<String>,
         ndims: usize,
-    ) -> Self::EmbeddingModel {
+    ) -> Result<Self::EmbeddingModel, crate::embeddings::EmbeddingError> {
         M::make(self, model, Some(ndims))
     }
 }

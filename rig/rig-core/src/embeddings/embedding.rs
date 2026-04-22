@@ -178,7 +178,13 @@ pub trait EmbeddingModel: WasmCompatSend + WasmCompatSync {
 
     type Client;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self;
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError>
+    where
+        Self: Sized;
 
     /// The number of dimensions in the embedding vector.
     fn ndims(&self) -> usize;

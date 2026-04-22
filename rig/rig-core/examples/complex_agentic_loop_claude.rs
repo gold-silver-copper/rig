@@ -33,7 +33,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // We'll use OpenAI's embedding model for this example
     let openai_client = rig::providers::openai::Client::from_env()?;
     let embedding_model =
-        openai_client.embedding_model(rig::providers::openai::TEXT_EMBEDDING_ADA_002);
+        openai_client.embedding_model(rig::providers::openai::TEXT_EMBEDDING_ADA_002)?;
 
     // Create a knowledge base with sample entries
     let knowledge_entries = vec![

@@ -20,7 +20,7 @@ struct Greetings {
 #[ignore = "requires MISTRAL_API_KEY and --features derive"]
 async fn derive_embeddings_and_vector_search() -> Result<()> {
     let client = mistral::Client::from_env()?;
-    let embedding_model = client.embedding_model(mistral::embedding::MISTRAL_EMBED);
+    let embedding_model = client.embedding_model(mistral::embedding::MISTRAL_EMBED)?;
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
         .document(Greetings {
             message: "Hello, world!".to_string(),

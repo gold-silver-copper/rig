@@ -653,6 +653,8 @@ mod tests {
             crate::providers::openai::Client::new("dummy-key").expect("Client::new() failed");
 
         let _model: crate::providers::openai::EmbeddingModel<reqwest::Client> =
-            client.embedding_model(crate::providers::openai::TEXT_EMBEDDING_3_SMALL);
+            client
+                .embedding_model(crate::providers::openai::TEXT_EMBEDDING_3_SMALL)
+                .expect("embedding model should build");
     }
 }

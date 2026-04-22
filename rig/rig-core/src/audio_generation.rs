@@ -77,9 +77,15 @@ pub enum AudioGenerationError {
     #[error("JsonError: {0}")]
     JsonError(#[from] serde_json::Error),
 
+    #[cfg(not(target_family = "wasm"))]
     /// Error building the transcription request
     #[error("RequestError: {0}")]
     RequestError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+
+    #[cfg(target_family = "wasm")]
+    /// Error building the transcription request
+    #[error("RequestError: {0}")]
+    RequestError(#[from] Box<dyn std::error::Error + 'static>),
 
     /// Error parsing the transcription response
     #[error(transparent)]
@@ -142,7 +148,7 @@ pub struct AudioGenerationResponse<T> {
 }
 
 pub trait AudioGenerationModel: Sized + Clone + WasmCompatSend + WasmCompatSync {
-    type Response: Send + Sync;
+    type Response: WasmCompatSend + WasmCompatSync;
 
     type Client;
 

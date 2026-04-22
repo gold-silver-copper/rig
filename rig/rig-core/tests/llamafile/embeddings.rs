@@ -24,7 +24,9 @@ async fn embeddings_smoke() {
     }
 
     let client = support::client();
-    let model = client.embedding_model(support::model_name());
+    let model = client
+        .embedding_model(support::model_name())
+        .expect("embedding model should build");
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))
@@ -45,6 +47,7 @@ async fn derive_document_embeddings() {
     let client = support::client();
     let embeddings = client
         .embeddings(support::model_name())
+        .expect("embedding model should build")
         .document(Greetings {
             message: "Hello, world!".to_string(),
         })

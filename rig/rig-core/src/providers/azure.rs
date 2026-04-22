@@ -448,8 +448,12 @@ where
 
     type Client = Client<T>;
 
-    fn make(client: &Self::Client, model: impl Into<String>, dims: Option<usize>) -> Self {
-        Self::new(client.clone(), model, dims)
+    fn make(
+        client: &Self::Client,
+        model: impl Into<String>,
+        dims: Option<usize>,
+    ) -> Result<Self, EmbeddingError> {
+        Ok(Self::new(client.clone(), model, dims))
     }
 
     fn ndims(&self) -> usize {
@@ -1094,7 +1098,7 @@ mod azure_tests {
         let _ = tracing_subscriber::fmt::try_init();
 
         let client = Client::from_env()?;
-        let model = client.embedding_model(TEXT_EMBEDDING_3_SMALL);
+        let model = client.embedding_model(TEXT_EMBEDDING_3_SMALL)?;
         let embeddings = model
             .embed_texts(vec!["Hello, world!".to_string()])
             .await
@@ -1111,7 +1115,7 @@ mod azure_tests {
 
         let ndims = 256;
         let client = Client::from_env()?;
-        let model = client.embedding_model_with_ndims(TEXT_EMBEDDING_3_SMALL, ndims);
+        let model = client.embedding_model_with_ndims(TEXT_EMBEDDING_3_SMALL, ndims)?;
         let embedding = model.embed_text("Hello, world!").await.unwrap();
 
         assert!(embedding.vec.len() == ndims);

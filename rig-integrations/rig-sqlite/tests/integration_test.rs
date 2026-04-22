@@ -150,7 +150,9 @@ async fn vector_search_test() {
         .base_url(server.base_url())
         .build()
         .unwrap();
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client
+        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+        .expect("embedding model should build");
 
     let embeddings = create_embeddings(model.clone()).await;
 
@@ -234,7 +236,9 @@ async fn insert_documents_test() {
         .base_url(server.base_url())
         .build()
         .unwrap();
-    let model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let model = openai_client
+        .embedding_model(openai::TEXT_EMBEDDING_ADA_002)
+        .expect("embedding model should build");
     let embeddings = create_embeddings(model.clone()).await;
 
     let vector_store: SqliteVectorStore<_, Word> = SqliteVectorStore::new(conn.clone(), &model)

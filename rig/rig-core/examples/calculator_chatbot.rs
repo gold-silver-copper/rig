@@ -244,7 +244,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .dynamic_tool(Multiply)
         .dynamic_tool(Divide)
         .build();
-    let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002)?;
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
         .documents(toolset.schemas()?)?
         .build()

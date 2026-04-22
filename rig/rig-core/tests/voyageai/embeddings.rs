@@ -11,7 +11,7 @@ use crate::support::{EMBEDDING_INPUTS, assert_embeddings_nonempty_and_consistent
 #[ignore = "requires VOYAGE_API_KEY"]
 async fn embeddings_smoke() -> Result<()> {
     let client = voyageai::Client::from_env()?;
-    let model = client.embedding_model(voyageai::VOYAGE_3_LARGE);
+    let model = client.embedding_model(voyageai::VOYAGE_3_LARGE)?;
 
     let embeddings = model
         .embed_texts(EMBEDDING_INPUTS.iter().map(|input| (*input).to_string()))
