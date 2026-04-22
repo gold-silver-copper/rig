@@ -277,21 +277,15 @@ mod tests {
         let client = Client::new("test_key").unwrap();
 
         // EMBEDDING_001 defaults to 3072
-        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
-            &client,
-            EMBEDDING_001,
-            None,
-        )
-        .expect("embedding model should build");
+        let model =
+            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, None)
+                .expect("embedding model should build");
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 3072);
 
         // EMBEDDING_004 defaults to 768
-        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
-            &client,
-            EMBEDDING_004,
-            None,
-        )
-        .expect("embedding model should build");
+        let model =
+            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_004, None)
+                .expect("embedding model should build");
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 768);
 
         // Unknown model falls back to 768
@@ -308,12 +302,9 @@ mod tests {
     fn test_make_respects_explicit_dims() {
         let client = Client::new("test_key").unwrap();
 
-        let model = <EmbeddingModel as embeddings::EmbeddingModel>::make(
-            &client,
-            EMBEDDING_001,
-            Some(256),
-        )
-        .expect("embedding model should build");
+        let model =
+            <EmbeddingModel as embeddings::EmbeddingModel>::make(&client, EMBEDDING_001, Some(256))
+                .expect("embedding model should build");
         assert_eq!(embeddings::EmbeddingModel::ndims(&model), 256);
     }
 

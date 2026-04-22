@@ -346,7 +346,7 @@ where
                     return Poll::Ready(None);
                 }
 
-                if stream.assistant_items.is_empty() {
+                if stream.assistant_items.is_empty() && stream.response.is_none() {
                     stream.finished = true;
                     return Poll::Ready(Some(Err(CompletionError::response(
                         "stream completed without assistant content",
@@ -362,7 +362,11 @@ where
             }
             Poll::Ready(Some(Err(err))) => {
                 stream.finished = true;
-                Poll::Ready(Some(Err(err)))
+                if err.is_aborted() {
+                    Poll::Ready(None)
+                } else {
+                    Poll::Ready(Some(Err(err)))
+                }
             }
             Poll::Ready(Some(Ok(choice))) => match choice {
                 RawStreamingChoice::Message(text) => {
@@ -414,24 +418,18 @@ where
                     })))
                 }
                 RawStreamingChoice::FinalResponse(response) => {
-                    // A terminal response without any assistant content is invalid; defer
-                    // surfacing it until EOF so callers cannot observe success first.
-                    stream.response = Some(response.clone());
-                    if stream.assistant_items.is_empty() {
+                    if stream
+                        .final_response_yielded
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                    {
                         stream.poll_next_unpin(cx)
                     } else {
-                        if stream
+                        stream.response = Some(response.clone());
+                        stream
                             .final_response_yielded
-                            .load(std::sync::atomic::Ordering::SeqCst)
-                        {
-                            stream.poll_next_unpin(cx)
-                        } else {
-                            stream
-                                .final_response_yielded
-                                .store(true, std::sync::atomic::Ordering::SeqCst);
-                            let final_response = StreamedAssistantContent::final_response(response);
-                            Poll::Ready(Some(Ok(final_response)))
-                        }
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        let final_response = StreamedAssistantContent::final_response(response);
+                        Poll::Ready(Some(Ok(final_response)))
                     }
                 }
                 RawStreamingChoice::MessageId(id) => {
@@ -614,7 +612,7 @@ where
                 std::io::Write::flush(&mut std::io::stdout())?;
             }
             Err(e) => {
-                if e.to_string().contains("aborted") {
+                if e.is_aborted() {
                     println!("\nStream cancelled.");
                     break;
                 }
@@ -715,6 +713,21 @@ mod tests {
     fn create_final_only_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
             yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 1 }));
+        };
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
+    fn create_empty_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream =
+            futures::stream::empty::<Result<RawStreamingChoice<MockResponse>, CompletionError>>();
+
+        StreamingCompletionResponse::stream(to_stream_result(stream))
+    }
+
+    fn create_aborted_stream() -> StreamingCompletionResponse<MockResponse> {
+        let stream = stream! {
+            yield Err(CompletionError::aborted());
         };
 
         StreamingCompletionResponse::stream(to_stream_result(stream))
@@ -873,8 +886,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stream_errors_when_provider_finishes_without_assistant_content() {
+    async fn test_stream_allows_provider_to_finish_with_final_response_only() {
         let mut stream = create_final_only_stream();
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(StreamedAssistantContent::Final(MockResponse {
+                token_count: 1
+            })))
+        ));
+        assert!(stream.next().await.is_none());
+
+        let choice_items: Vec<AssistantContent> = stream.choice.clone().into_iter().collect();
+        assert_eq!(choice_items.len(), 1);
+        assert!(matches!(
+            choice_items.first(),
+            Some(AssistantContent::Text(Text { text })) if text.is_empty()
+        ));
+        assert!(matches!(
+            stream.response.as_ref(),
+            Some(MockResponse { token_count: 1 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_stream_errors_when_provider_finishes_without_assistant_content_or_final_response()
+    {
+        let mut stream = create_empty_stream();
 
         assert!(matches!(
             stream.next().await,
@@ -882,6 +920,14 @@ mod tests {
                 crate::completion::CompletionResponseError::StreamEndedWithoutAssistantContent
             )))
         ));
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stream_terminates_cleanly_when_provider_reports_abort() {
+        let mut stream = create_aborted_stream();
+
+        assert!(stream.next().await.is_none());
         assert!(stream.next().await.is_none());
     }
 

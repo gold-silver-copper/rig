@@ -90,7 +90,9 @@ impl TryFrom<AwsConverseOutput> for completion::CompletionResponse<AwsConverseOu
             .output
             .ok_or_else(|| CompletionError::provider("Model didn't return any output"))?
             .as_message()
-            .map_err(|_| CompletionError::provider("Failed to extract message from converse output"))?
+            .map_err(|_| {
+                CompletionError::provider("Failed to extract message from converse output")
+            })?
             .to_owned()
             .try_into()?;
 
@@ -220,9 +222,9 @@ impl TryFrom<RigAssistantContent> for aws_bedrock::ContentBlock {
                     reasoning_block = reasoning_block.signature(sig);
                 }
 
-                let reasoning_text_block = reasoning_block
-                    .build()
-                    .map_err(|e| CompletionError::provider(format!("Failed to build reasoning block: {e}")))?;
+                let reasoning_text_block = reasoning_block.build().map_err(|e| {
+                    CompletionError::provider(format!("Failed to build reasoning block: {e}"))
+                })?;
 
                 Ok(aws_bedrock::ContentBlock::ReasoningContent(
                     aws_bedrock::ReasoningContentBlock::ReasoningText(reasoning_text_block),

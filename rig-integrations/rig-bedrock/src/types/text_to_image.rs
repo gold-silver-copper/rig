@@ -117,13 +117,11 @@ impl TryFrom<TextToImageResponse>
                     "Malformed response from model: no images returned",
                 )
             })?;
-            let data = BASE64_STANDARD
-                .decode(encoded)
-                .map_err(|error| {
-                    ImageGenerationError::response_message(format!(
-                        "Malformed response from model: could not decode image: {error}"
-                    ))
-                })?;
+            let data = BASE64_STANDARD.decode(encoded).map_err(|error| {
+                ImageGenerationError::response_message(format!(
+                    "Malformed response from model: could not decode image: {error}"
+                ))
+            })?;
 
             return Ok(Self {
                 image: data,

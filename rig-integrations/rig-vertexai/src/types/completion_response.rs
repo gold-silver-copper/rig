@@ -13,9 +13,10 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
     fn try_from(value: VertexGenerateContentOutput) -> Result<Self, Self::Error> {
         let response = &value.0;
 
-        let candidate = response.candidates.first().ok_or_else(|| {
-            CompletionError::provider("No candidates in response")
-        })?;
+        let candidate = response
+            .candidates
+            .first()
+            .ok_or_else(|| CompletionError::provider("No candidates in response"))?;
 
         let content = candidate
             .content
@@ -49,9 +50,8 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
             ));
         }
 
-        let choice = OneOrMany::many(assistant_contents).map_err(|e| {
-            CompletionError::provider(format!("Failed to create OneOrMany: {e}"))
-        })?;
+        let choice = OneOrMany::many(assistant_contents)
+            .map_err(|e| CompletionError::provider(format!("Failed to create OneOrMany: {e}")))?;
 
         let usage = response
             .usage_metadata

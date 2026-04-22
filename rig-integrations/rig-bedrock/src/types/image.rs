@@ -60,9 +60,7 @@ impl TryFrom<aws_bedrock::ImageBlock> for RigImage {
             aws_bedrock::ImageFormat::Jpeg => Ok(ImageMediaType::JPEG),
             aws_bedrock::ImageFormat::Png => Ok(ImageMediaType::PNG),
             aws_bedrock::ImageFormat::Webp => Ok(ImageMediaType::WEBP),
-            e => Err(CompletionError::provider(format!(
-                "Unsupported format {e}"
-            ))),
+            e => Err(CompletionError::provider(format!("Unsupported format {e}"))),
         }?;
 
         let data = match image.source {

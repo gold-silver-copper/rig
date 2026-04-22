@@ -270,9 +270,9 @@ impl completion::CompletionModel for CompletionModel {
                 Into::<CompletionError>::into(AwsSdkConverseError(sdk_error))
             })?;
 
-            let response: InternalConverseOutput = response.try_into().map_err(|x| {
-                CompletionError::provider(format!("Type conversion error: {x}"))
-            })?;
+            let response: InternalConverseOutput = response
+                .try_into()
+                .map_err(|x| CompletionError::provider(format!("Type conversion error: {x}")))?;
 
             let aws_output = AwsConverseOutput(response);
 

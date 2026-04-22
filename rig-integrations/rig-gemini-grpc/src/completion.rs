@@ -371,9 +371,10 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
     type Error = CompletionError;
 
     fn try_from(response: GenerateContentResponse) -> Result<Self, Self::Error> {
-        let candidate = response.candidates.first().ok_or_else(|| {
-            CompletionError::response("No response candidates in response")
-        })?;
+        let candidate = response
+            .candidates
+            .first()
+            .ok_or_else(|| CompletionError::response("No response candidates in response"))?;
 
         let content_ref = candidate.content.as_ref().ok_or_else(|| {
             CompletionError::response(format!(

@@ -711,11 +711,11 @@ where
                     if !turn_text_response.is_empty() {
                         new_messages.push(Message::assistant(&turn_text_response));
                     } else {
-                        tracing::warn!(
-                            agent_name = agent_name.as_deref().unwrap_or(UNKNOWN_AGENT_NAME),
-                            message_id = ?stream.message_id,
-                            "Streaming turn completed without assistant text; final response will be empty"
-                        );
+                        yield Err(CompletionError::response(
+                            "stream completed without assistant content",
+                        )
+                        .into());
+                        break;
                     }
 
                     let current_span = tracing::Span::current();

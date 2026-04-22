@@ -153,7 +153,11 @@ impl embeddings::EmbeddingModel for EmbeddingModel {
             ))
         })?;
         let ndims = dims
-            .or_else(|| TextEmbedding::get_model_info(&model).ok().map(|info| info.dim))
+            .or_else(|| {
+                TextEmbedding::get_model_info(&model)
+                    .ok()
+                    .map(|info| info.dim)
+            })
             .unwrap_or_default();
 
         #[cfg(feature = "hf-hub")]

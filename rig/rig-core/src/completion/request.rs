@@ -232,6 +232,10 @@ impl CompletionError {
     pub fn aborted() -> Self {
         Self::ProviderError(CompletionProviderError::Aborted)
     }
+
+    pub fn is_aborted(&self) -> bool {
+        matches!(self, Self::ProviderError(provider_error) if provider_error.is_aborted())
+    }
 }
 
 /// Prompt errors
@@ -1281,10 +1285,12 @@ mod tests {
             CompletionError::aborted(),
             CompletionError::ProviderError(CompletionProviderError::Aborted)
         ));
+        assert!(CompletionError::aborted().is_aborted());
         assert!(matches!(
             CompletionError::provider("provider unavailable"),
             CompletionError::ProviderError(CompletionProviderError::Message { message })
                 if message == "provider unavailable"
         ));
+        assert!(!CompletionError::provider("provider unavailable").is_aborted());
     }
 }

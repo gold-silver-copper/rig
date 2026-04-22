@@ -560,7 +560,7 @@ impl DeserializeStructArray for StructArray {
     }
 
     fn num_rows(&self) -> usize {
-        self.column(0).into_data().len()
+        self.len()
     }
 }
 
@@ -649,7 +649,7 @@ impl RebuildObject for Vec<Vec<Value>> {
 
 #[cfg(test)]
 mod tests {
-    use super::RebuildObject;
+    use super::{DeserializeStructArray, RebuildObject};
     use std::sync::Arc;
 
     use arrow_array::{
@@ -1138,6 +1138,33 @@ mod tests {
                 })
             ]
         )
+    }
+
+    #[tokio::test]
+    async fn test_empty_struct_deserialization() {
+        let struct_array = StructArray::new_empty_fields(2, None);
+        let record_batch =
+            RecordBatch::try_from_iter(vec![("empty_struct", Arc::new(struct_array) as ArrayRef)])
+                .unwrap();
+
+        assert_eq!(
+            record_batch.deserialize().unwrap(),
+            vec![
+                json!({
+                    "empty_struct": {}
+                }),
+                json!({
+                    "empty_struct": {}
+                })
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_struct_num_rows_uses_array_length() {
+        let struct_array = StructArray::new_empty_fields(3, None);
+
+        assert_eq!(struct_array.num_rows(), 3);
     }
 
     #[test]

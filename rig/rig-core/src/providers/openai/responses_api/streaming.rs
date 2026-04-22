@@ -1383,32 +1383,15 @@ mod tests {
 
         let client = openai::Client::builder()
             .http_client(MockStreamingClient {
-                sse_bytes: bytes::Bytes::from(
-                    [
-                        format!(
-                            "data: {}\n\n",
-                            serde_json::to_string(&json!({
-                                "type": "response.output_text.delta",
-                                "output_index": 0,
-                                "content_index": 0,
-                                "sequence_number": 1,
-                                "delta": "hello",
-                            }))
-                            .expect("delta event should serialize")
-                        ),
-                        format!(
-                            "data: {}\n\n",
-                            serde_json::to_string(&json!({
-                                "type": "response.completed",
-                                "sequence_number": 2,
-                                "response": response,
-                            }))
-                            .expect("response event should serialize")
-                        ),
-                        "data: [DONE]\n\n".to_owned(),
-                    ]
-                    .concat(),
-                ),
+                sse_bytes: bytes::Bytes::from(format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    serde_json::to_string(&json!({
+                        "type": "response.completed",
+                        "sequence_number": 1,
+                        "response": response,
+                    }))
+                    .expect("response event should serialize")
+                )),
             })
             .api_key("test-key")
             .build()
