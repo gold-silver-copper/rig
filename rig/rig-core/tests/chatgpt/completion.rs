@@ -64,7 +64,11 @@ async fn system_messages_are_lifted_into_instructions() {
         }
     }
     if text.trim().is_empty() {
-        text = aggregated_text(&stream.choice);
+        text = aggregated_text(
+            stream
+                .choice()
+                .expect("completed stream should expose an aggregated choice"),
+        );
     }
     assert_nonempty_response(&text);
     assert_contains_any_case_insensitive(&text, &["maple"]);

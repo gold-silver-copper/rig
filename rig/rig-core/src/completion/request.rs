@@ -262,6 +262,13 @@ impl CompletionError {
     pub fn is_aborted(&self) -> bool {
         matches!(self, Self::ProviderError(provider_error) if provider_error.is_aborted())
     }
+
+    pub fn is_stream_ended_without_assistant_content(&self) -> bool {
+        matches!(
+            self,
+            Self::ResponseError(CompletionResponseError::StreamEndedWithoutAssistantContent)
+        )
+    }
 }
 
 /// Prompt errors
@@ -339,10 +346,6 @@ pub enum PromptInvariantError {
     /// Tool execution finished without producing any tool result items.
     #[error("InvariantError: tool execution completed without tool results")]
     MissingToolExecutionResults,
-
-    /// A streaming assistant turn passed a non-empty guard but still had no content to persist.
-    #[error("InvariantError: assistant turn produced no content after non-empty guard")]
-    MissingAssistantTurnContentAfterGuard,
 }
 
 /// Errors that can occur when using typed structured output via [`TypedPrompt::prompt_typed`].

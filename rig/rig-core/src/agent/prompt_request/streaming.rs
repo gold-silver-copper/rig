@@ -180,16 +180,34 @@ fn assistant_text_from_choice(choice: &OneOrMany<AssistantContent>) -> String {
         .collect()
 }
 
-fn turn_has_terminal_assistant_state(
+fn prompt_contains_tool_result(prompt: &Message) -> bool {
+    matches!(
+        prompt,
+        Message::User { content }
+            if content
+                .iter()
+                .any(|item| matches!(item, UserContent::ToolResult(_)))
+    )
+}
+
+fn build_assistant_turn_content(
     turn_text_response: &str,
     tool_calls: &[AssistantContent],
     accumulated_reasoning: &[crate::message::Reasoning],
-    has_final_response: bool,
-) -> bool {
-    !turn_text_response.is_empty()
-        || !tool_calls.is_empty()
-        || !accumulated_reasoning.is_empty()
-        || has_final_response
+) -> Option<OneOrMany<AssistantContent>> {
+    let mut content_items = vec![];
+
+    if !turn_text_response.is_empty() {
+        content_items.push(AssistantContent::text(turn_text_response));
+    }
+
+    for reasoning in accumulated_reasoning {
+        content_items.push(AssistantContent::Reasoning(reasoning.clone()));
+    }
+
+    content_items.extend(tool_calls.iter().cloned());
+
+    OneOrMany::from_non_empty_iter(content_items)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -406,8 +424,6 @@ where
         let mut current_max_turns = 0;
         let mut last_prompt_error = String::new();
 
-        let mut text_delta_response = String::new();
-        let mut saw_text_this_turn = false;
         let mut max_turns_reached = false;
         let output_schema = self.output_schema;
 
@@ -513,6 +529,11 @@ where
                 let mut pending_reasoning_delta_text = String::new();
                 let mut pending_reasoning_delta_id: Option<String> = None;
                 let mut saw_tool_call_this_turn = false;
+                let mut text_delta_response = String::new();
+                let mut saw_text_this_turn = false;
+                let mut pending_final_response = None;
+                let mut saw_empty_tool_result_end_turn = false;
+                let prompt_allows_empty_end_turn = prompt_contains_tool_result(&current_prompt);
 
                 while let Some(content) = stream.next().await {
                     match content {
@@ -650,23 +671,23 @@ where
                             yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::ReasoningDelta { reasoning, id }));
                         },
                         Ok(StreamedAssistantContent::Final(final_resp)) => {
-                            if let Some(usage) = final_resp.token_usage() { aggregated_usage += usage; };
-                            if saw_text_this_turn {
-                                if let Some(ref hook) = self.hook &&
-                                     let HookAction::Terminate { reason } = hook.on_stream_completion_response_finish(&current_prompt, &final_resp).await {
-                                        yield Err(cancelled_prompt_error(chat_history.as_deref(), new_messages.clone(), reason).await);
-                                        break 'outer;
-                                    }
-
-                                yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::Final(final_resp)));
-                                saw_text_this_turn = false;
-                            }
+                            pending_final_response = Some(final_resp);
                         }
                         Err(e) => {
+                            if e.is_stream_ended_without_assistant_content()
+                                && prompt_allows_empty_end_turn
+                            {
+                                saw_empty_tool_result_end_turn = true;
+                                break;
+                            }
                             yield Err(e.into());
                             break 'outer;
                         }
                     }
+                }
+
+                if pending_final_response.is_none() {
+                    pending_final_response = stream.response.clone();
                 }
 
                 // Providers like Gemini emit thinking as incremental deltas
@@ -680,44 +701,53 @@ where
                     accumulated_reasoning.push(assembled);
                 }
 
-                let turn_text_response = assistant_text_from_choice(&stream.choice);
-                let turn_has_terminal_assistant_state = turn_has_terminal_assistant_state(
+                if let Some(final_resp) = pending_final_response.as_ref()
+                    && let Some(usage) = final_resp.token_usage()
+                {
+                    aggregated_usage += usage;
+                }
+
+                let turn_text_response = stream
+                    .choice()
+                    .map(assistant_text_from_choice)
+                    .unwrap_or_default();
+                let assistant_turn_content = build_assistant_turn_content(
                     &turn_text_response,
                     &tool_calls,
                     &accumulated_reasoning,
-                    stream.response.is_some(),
                 );
+                let turn_has_assistant_content = assistant_turn_content.is_some();
                 tracing::Span::current().record("gen_ai.completion", &turn_text_response);
 
-                // Add text, reasoning, and tool calls to chat history.
-                // OpenAI Responses API requires reasoning items to precede function_call items.
-                if !tool_calls.is_empty() || !accumulated_reasoning.is_empty() {
-                    let mut content_items: Vec<rig::message::AssistantContent> = vec![];
-
-                    // Text before tool calls so the model sees its own prior output
-                    if !turn_text_response.is_empty() {
-                        content_items.push(rig::message::AssistantContent::text(&turn_text_response));
+                if let Some(final_resp) = pending_final_response.as_ref()
+                    && turn_has_assistant_content
+                {
+                    if let Some(ref hook) = self.hook
+                        && let HookAction::Terminate { reason } = hook
+                            .on_stream_completion_response_finish(&current_prompt, &final_resp)
+                            .await
+                    {
+                        yield Err(
+                            cancelled_prompt_error(
+                                chat_history.as_deref(),
+                                new_messages.clone(),
+                                reason,
+                            )
+                            .await,
+                        );
+                        break 'outer;
                     }
 
-                    // Reasoning must come before tool calls (OpenAI requirement)
-                    for reasoning in accumulated_reasoning.drain(..) {
-                        content_items.push(rig::message::AssistantContent::Reasoning(reasoning));
-                    }
+                    yield Ok(MultiTurnStreamItem::stream_item(
+                        StreamedAssistantContent::Final(final_resp.clone()),
+                    ));
+                }
 
-                    content_items.extend(tool_calls.clone());
-
-                    if !content_items.is_empty() {
-                        let Some(content) = OneOrMany::from_non_empty_iter(content_items) else {
-                            yield Err(StreamingError::InvariantError(
-                                PromptInvariantError::MissingAssistantTurnContentAfterGuard,
-                            ));
-                            break 'outer;
-                        };
-                        new_messages.push(Message::Assistant {
-                            id: stream.message_id.clone(),
-                            content,
-                        });
-                    }
+                if let Some(content) = assistant_turn_content {
+                    new_messages.push(Message::Assistant {
+                        id: stream.message_id.clone(),
+                        content,
+                    });
                 }
 
                 for (id, call_id, tool_result) in tool_results {
@@ -725,10 +755,10 @@ where
                 }
 
                 if !saw_tool_call_this_turn {
-                    // Add user message and assistant response to history before finishing
-                    if !turn_text_response.is_empty() {
-                        new_messages.push(Message::assistant(&turn_text_response));
-                    } else if !turn_has_terminal_assistant_state {
+                    let allow_empty_end_turn =
+                        saw_empty_tool_result_end_turn && pending_final_response.is_some();
+
+                    if !turn_has_assistant_content && !allow_empty_end_turn {
                         yield Err(
                             CompletionError::stream_ended_without_assistant_content().into(),
                         );
@@ -989,12 +1019,12 @@ mod tests {
         if !matches!(
             history.get(1),
             Some(Message::Assistant { content, .. })
-                if matches!(
-                    content.first(),
+                if content.iter().any(|item| matches!(
+                    item,
                     AssistantContent::ToolCall(tool_call)
                         if tool_call.id == "tool_call_1"
                             && tool_call.call_id.as_deref() == Some("call_1")
-                )
+                ))
         ) {
             return Err(format!(
                 "follow-up request is missing the assistant tool call in position 2: {history:?}"
@@ -1142,6 +1172,123 @@ mod tests {
         assert_eq!(turn_counter.load(Ordering::SeqCst), 2);
     }
 
+    #[derive(Clone, Default)]
+    struct EmptyEndTurnAfterToolResultMockModel {
+        turn_counter: Arc<AtomicUsize>,
+    }
+
+    #[allow(refining_impl_trait)]
+    impl CompletionModel for EmptyEndTurnAfterToolResultMockModel {
+        type Response = ();
+        type StreamingResponse = MockStreamingResponse;
+        type Client = ();
+
+        fn make(_: &Self::Client, _: impl Into<String>) -> Self {
+            Self::default()
+        }
+
+        async fn completion(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+            Err(CompletionError::provider(
+                "completion is unused in this streaming test".to_string(),
+            ))
+        }
+
+        async fn stream(
+            &self,
+            request: CompletionRequest,
+        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+            let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
+            let validation_error = if turn == 0 {
+                None
+            } else {
+                validate_follow_up_tool_history(&request).err()
+            };
+            let stream = async_stream::stream! {
+                if turn == 0 {
+                    yield Ok(RawStreamingChoice::Message("queued".to_string()));
+                    yield Ok(RawStreamingChoice::ToolCall(
+                        RawStreamingToolCall::new(
+                            "tool_call_1".to_string(),
+                            "missing_tool".to_string(),
+                            serde_json::json!({"input": "value"}),
+                        )
+                        .with_call_id("call_1".to_string()),
+                    ));
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(4)));
+                } else if let Some(error) = validation_error {
+                    yield Err(CompletionError::provider(error));
+                } else {
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(6)));
+                }
+            };
+
+            let pinned_stream: crate::streaming::StreamingResult<Self::StreamingResponse> =
+                Box::pin(stream);
+            Ok(StreamingCompletionResponse::stream(pinned_stream))
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_end_turn_after_tool_result_finishes_without_synthesizing_assistant_content() {
+        let model = EmptyEndTurnAfterToolResultMockModel::default();
+        let turn_counter = model.turn_counter.clone();
+        let agent = AgentBuilder::new(model).build();
+        let empty_history: &[Message] = &[];
+
+        let mut stream = agent
+            .stream_prompt("do tool work")
+            .with_history(empty_history)
+            .multi_turn(3)
+            .await;
+        let mut streamed_text = String::new();
+        let mut final_response_text = None;
+        let mut final_history = None;
+
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
+                    text,
+                ))) => streamed_text.push_str(&text.text),
+                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                    final_response_text = Some(res.response().to_owned());
+                    final_history = res.history().map(|history| history.to_vec());
+                    break;
+                }
+                Ok(_) => {}
+                Err(err) => panic!("unexpected streaming error: {err:?}"),
+            }
+        }
+
+        assert_eq!(streamed_text, "queued");
+        assert_eq!(final_response_text.as_deref(), Some(""));
+        let history = final_history.expect("expected final response history");
+        assert!(history.iter().any(|message| matches!(
+            message,
+            Message::Assistant { content, .. }
+                if content.iter().any(|item| matches!(
+                    item,
+                    AssistantContent::Text(text) if text.text == "queued"
+                )) && content.iter().any(|item| matches!(
+                    item,
+                    AssistantContent::ToolCall(tool_call)
+                        if tool_call.id == "tool_call_1"
+                            && tool_call.call_id.as_deref() == Some("call_1")
+                ))
+        )));
+        assert_eq!(
+            history
+                .iter()
+                .filter(|message| matches!(message, Message::Assistant { .. }))
+                .count(),
+            1,
+            "the empty terminal turn must not invent a second assistant message"
+        );
+        assert_eq!(turn_counter.load(Ordering::SeqCst), 2);
+    }
+
     #[derive(Clone, Copy)]
     enum FinalResponseScenario {
         TextThenFinal,
@@ -1238,42 +1385,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn textless_stream_turns_complete_when_provider_returns_final_response_only() {
+    async fn final_only_stream_turns_surface_missing_assistant_content() {
         let agent = AgentBuilder::new(FinalResponseMockModel {
             scenario: FinalResponseScenario::FinalOnly,
         })
         .build();
 
-        let empty_history: &[Message] = &[];
-        let mut stream = agent
-            .stream_prompt("say nothing")
-            .with_history(empty_history)
-            .await;
-        let mut final_response_text = None;
-        let mut final_history = None;
+        let mut stream = agent.stream_prompt("say nothing").await;
+        let mut saw_missing_content_error = false;
 
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
-                    final_response_text = Some(res.response().to_owned());
-                    final_history = res.history().map(|history| history.to_vec());
+                Err(StreamingError::Completion(err))
+                    if err.is_stream_ended_without_assistant_content() =>
+                {
+                    saw_missing_content_error = true;
                     break;
                 }
                 Ok(_) => {}
-                Err(err) => panic!("unexpected streaming error: {err:?}"),
+                Err(err) => panic!("unexpected streaming result: {err:?}"),
             }
         }
 
-        assert_eq!(final_response_text.as_deref(), Some(""));
-        let history = final_history.expect("expected final response history");
-        assert_eq!(history.len(), 1);
-        assert!(matches!(history.first(), Some(Message::User { .. })));
-        assert!(
-            !history
-                .iter()
-                .any(|message| matches!(message, Message::Assistant { .. })),
-            "final-only turns should not synthesize assistant history entries"
-        );
+        assert!(saw_missing_content_error);
     }
 
     #[tokio::test]
