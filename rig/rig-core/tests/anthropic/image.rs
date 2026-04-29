@@ -1,12 +1,12 @@
 //! Migrated from `examples/image.rs`.
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::completion::message::Image;
-use rig::message::DocumentSourceKind;
-use rig::message::ImageMediaType;
-use rig::providers::anthropic;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::completion::message::Image;
+use rig_core::message::DocumentSourceKind;
+use rig_core::message::ImageMediaType;
+use rig_core::providers::anthropic;
 use tokio::fs;
 
 use crate::support::{

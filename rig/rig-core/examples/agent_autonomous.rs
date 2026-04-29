@@ -3,9 +3,9 @@
 //! Run it to watch the extractor keep counting upward until the stop condition is met.
 
 use anyhow::Result;
-use rig::prelude::*;
-use rig::providers::openai;
-use rig::providers::openai::client::Client;
+use rig_core::prelude::*;
+use rig_core::providers::openai;
+use rig_core::providers::openai::client::Client;
 
 use schemars::JsonSchema;
 
@@ -20,7 +20,7 @@ const STEP_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
 fn build_counter_extractor(
     client: &Client,
-) -> rig::extractor::Extractor<openai::responses_api::ResponsesCompletionModel, Counter> {
+) -> rig_core::extractor::Extractor<openai::responses_api::ResponsesCompletionModel, Counter> {
     client
         .extractor::<Counter>(openai::GPT_4)
         .preamble(

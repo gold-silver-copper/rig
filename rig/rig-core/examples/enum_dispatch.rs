@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
-use rig::agent::Agent;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{Prompt, PromptError};
-use rig::providers::anthropic::completion::CLAUDE_SONNET_4_6;
-use rig::providers::openai::GPT_4O;
-use rig::providers::{anthropic, openai};
+use rig_core::agent::Agent;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{Prompt, PromptError};
+use rig_core::providers::anthropic::completion::CLAUDE_SONNET_4_6;
+use rig_core::providers::openai::GPT_4O;
+use rig_core::providers::{anthropic, openai};
 
 enum Agents {
     Anthropic(Agent<anthropic::completion::CompletionModel>),

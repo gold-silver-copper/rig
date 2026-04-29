@@ -1,7 +1,7 @@
 use anyhow::Result;
-use rig::prelude::*;
-use rig::providers::openai;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::providers::openai;
+use rig_core::{
     completion::{Prompt, ToolDefinition},
     embeddings::EmbeddingsBuilder,
     providers::openai::Client,

@@ -1,8 +1,8 @@
 //! OpenRouter streaming coverage, including the migrated example path.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::openrouter;
-use rig::streaming::StreamingPrompt;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::openrouter;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{
     STREAMING_PREAMBLE, STREAMING_PROMPT, assert_nonempty_response, collect_stream_final_response,

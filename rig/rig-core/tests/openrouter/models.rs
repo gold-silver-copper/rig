@@ -3,8 +3,8 @@
 //! Run with:
 //! `cargo test -p rig-core --test openrouter openrouter::models::list_models_smoke -- --ignored --nocapture`
 
-use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::openrouter;
+use rig_core::client::{ModelListingClient, ProviderClient};
+use rig_core::providers::openrouter;
 
 #[tokio::test]
 #[ignore = "requires OPENROUTER_API_KEY"]

@@ -1,7 +1,7 @@
 //! ChatGPT streaming smoke tests.
 
-use rig::client::CompletionClient;
-use rig::streaming::StreamingPrompt;
+use rig_core::client::CompletionClient;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::chatgpt::{LIVE_MODEL, live_client};
 use crate::support::{

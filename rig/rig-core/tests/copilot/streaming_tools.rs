@@ -1,11 +1,11 @@
 //! Copilot streaming tools coverage, including the migrated example path.
 
-use rig::OneOrMany;
-use rig::client::CompletionClient;
-use rig::completion::CompletionModel;
-use rig::message::{AssistantContent, Message, ToolChoice};
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::OneOrMany;
+use rig_core::client::CompletionClient;
+use rig_core::completion::CompletionModel;
+use rig_core::message::{AssistantContent, Message, ToolChoice};
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 
 use crate::copilot::{LIVE_MODEL, live_client};
 use crate::support::{

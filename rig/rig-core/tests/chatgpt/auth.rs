@@ -1,9 +1,9 @@
 //! ChatGPT OAuth device flow and refresh smoke tests.
 
 use assert_fs::TempDir;
-use rig::client::CompletionClient;
-use rig::providers::chatgpt;
-use rig::streaming::StreamingPrompt;
+use rig_core::client::CompletionClient;
+use rig_core::providers::chatgpt;
+use rig_core::streaming::StreamingPrompt;
 use serde_json::json;
 use std::fs;
 use std::path::Path;

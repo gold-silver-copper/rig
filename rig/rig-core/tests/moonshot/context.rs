@@ -1,8 +1,8 @@
 //! Moonshot context smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::moonshot;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::moonshot;
 
 use crate::support::{CONTEXT_DOCS, CONTEXT_PROMPT, assert_contains_any_case_insensitive};
 

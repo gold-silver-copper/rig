@@ -15,6 +15,7 @@ mod basic;
 mod client;
 mod custom;
 mod embed;
+mod paths;
 
 pub(crate) const EMBED: &str = "embed";
 
@@ -461,6 +462,8 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     };
 
+    let rig_core = paths::rig_core();
+
     let expanded = quote! {
         #[derive(serde::Deserialize)]
         #vis struct #params_struct_name {
@@ -472,7 +475,7 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
         #[derive(Default)]
         #vis struct #struct_name;
 
-        impl rig::tool::Tool for #struct_name {
+        impl #rig_core::tool::Tool for #struct_name {
             const NAME: &'static str = #tool_name;
 
             type Args = #params_struct_name;
@@ -483,7 +486,7 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
                 #tool_name.to_string()
             }
 
-            async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
+            async fn definition(&self, _prompt: String) -> #rig_core::completion::ToolDefinition {
                 let parameters = serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -497,7 +500,7 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
                     "required": [#(#required_args),*]
                 });
 
-                rig::completion::ToolDefinition {
+                #rig_core::completion::ToolDefinition {
                     name: #tool_name.to_string(),
                     description: #tool_description.to_string(),
                     parameters,

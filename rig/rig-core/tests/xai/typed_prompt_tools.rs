@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{ToolDefinition, TypedPrompt};
-use rig::providers::xai;
-use rig::tool::Tool;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{ToolDefinition, TypedPrompt};
+use rig_core::providers::xai;
+use rig_core::tool::Tool;
 
 use crate::support::assert_weather_tool_roundtrip_response;
 

@@ -1,10 +1,10 @@
 //! Migrated from `examples/ollama_streaming_pause_control.rs`.
 
 use futures::StreamExt;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::providers::ollama;
-use rig::streaming::StreamedAssistantContent;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::providers::ollama;
+use rig_core::streaming::StreamedAssistantContent;
 use tokio::time::{Duration, sleep};
 
 #[tokio::test]

@@ -3,9 +3,9 @@
 //! Run it to see the provider/client/agent/prompt flow end to end.
 
 use anyhow::Result;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::openai;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::openai;
 
 const PREAMBLE: &str = "You are a comedian here to entertain the user using humour and jokes.";
 const PROMPT: &str = "Entertain me!";

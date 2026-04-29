@@ -1,6 +1,6 @@
 //! Shared helpers for Llamafile live tests.
 
-use rig::providers::llamafile;
+use rig_core::providers::llamafile;
 use url::Url;
 
 const DEFAULT_API_BASE_URL: &str = "http://localhost:8080";

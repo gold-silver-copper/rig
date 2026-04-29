@@ -1,12 +1,12 @@
 //! OpenRouter streaming tools smoke test.
 
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::message::{AssistantContent, Message};
-use rig::providers::openrouter;
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::message::{AssistantContent, Message};
+use rig_core::providers::openrouter;
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 

@@ -1,7 +1,7 @@
 //! OpenAI extractor smoke test.
 
-use rig::client::ProviderClient;
-use rig::providers::openai;
+use rig_core::client::ProviderClient;
+use rig_core::providers::openai;
 
 use crate::support::{EXTRACTOR_TEXT, SmokePerson, assert_nonempty_response};
 

@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use rig::client::CompletionClient;
-use rig::completion::{Chat, Message};
-use rig::streaming::StreamingChat;
+use rig_core::client::CompletionClient;
+use rig_core::completion::{Chat, Message};
+use rig_core::streaming::StreamingChat;
 
 use crate::copilot::{live_client, live_responses_model};
 use crate::reasoning::{self, WeatherTool};

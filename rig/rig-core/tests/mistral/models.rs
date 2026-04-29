@@ -1,7 +1,7 @@
 //! Mistral model listing smoke test.
 
-use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::mistral;
+use rig_core::client::{ModelListingClient, ProviderClient};
+use rig_core::providers::mistral;
 
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]

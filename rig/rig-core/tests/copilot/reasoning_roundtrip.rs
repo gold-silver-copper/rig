@@ -1,6 +1,6 @@
 //! Copilot reasoning roundtrip tests.
 
-use rig::client::CompletionClient;
+use rig_core::client::CompletionClient;
 
 use crate::copilot::{live_client, live_responses_model};
 use crate::reasoning::{self, ReasoningRoundtripAgent};

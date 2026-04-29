@@ -3,10 +3,10 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{Chat, Message};
-use rig::providers::deepseek;
-use rig::streaming::StreamingChat;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{Chat, Message};
+use rig_core::providers::deepseek;
+use rig_core::streaming::StreamingChat;
 
 use crate::reasoning::{self, WeatherTool};
 

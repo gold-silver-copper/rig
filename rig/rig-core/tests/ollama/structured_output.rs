@@ -1,8 +1,8 @@
 //! Migrated from `examples/ollama_structured_output.rs`.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::ollama;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::ollama;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

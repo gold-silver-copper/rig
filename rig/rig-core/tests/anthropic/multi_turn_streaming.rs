@@ -3,11 +3,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::ToolDefinition;
-use rig::providers::anthropic;
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::ToolDefinition;
+use rig_core::providers::anthropic;
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 

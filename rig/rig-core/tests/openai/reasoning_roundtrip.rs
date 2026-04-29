@@ -3,8 +3,8 @@
 //! Run only these cases with:
 //! `cargo test -p rig-core --test openai openai::reasoning_roundtrip::streaming -- --ignored --nocapture`
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::openai;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::openai;
 
 use crate::reasoning::{self, ReasoningRoundtripAgent};
 

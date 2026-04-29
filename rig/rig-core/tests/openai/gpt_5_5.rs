@@ -1,20 +1,20 @@
 //! Dedicated GPT-5.5 live smoke tests.
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::message::Image;
-use rig::completion::{Chat, Message};
-use rig::completion::{Prompt, TypedPrompt};
-use rig::message::{DocumentSourceKind, ImageDetail, ImageMediaType};
-use rig::providers::openai;
-use rig::streaming::{StreamingChat, StreamingPrompt};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::message::Image;
+use rig_core::completion::{Chat, Message};
+use rig_core::completion::{Prompt, TypedPrompt};
+use rig_core::message::{DocumentSourceKind, ImageDetail, ImageMediaType};
+use rig_core::providers::openai;
+use rig_core::streaming::{StreamingChat, StreamingPrompt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "websocket")]
-use rig::completion::CompletionModel;
+use rig_core::completion::CompletionModel;
 #[cfg(feature = "websocket")]
-use rig::providers::openai::responses_api::websocket::ResponsesWebSocketEvent;
+use rig_core::providers::openai::responses_api::websocket::ResponsesWebSocketEvent;
 
 use crate::reasoning::{self, ReasoningRoundtripAgent, WeatherTool};
 use crate::support::{
@@ -434,7 +434,7 @@ async fn responses_websocket_smoke() -> anyhow::Result<()> {
     loop {
         match session.next_event().await? {
             ResponsesWebSocketEvent::Item(item) => {
-                if let rig::providers::openai::responses_api::streaming::ItemChunkKind::OutputTextDelta(delta) =
+                if let rig_core::providers::openai::responses_api::streaming::ItemChunkKind::OutputTextDelta(delta) =
                     item.data
                 {
                     streamed_text.push_str(&delta.delta);
@@ -443,9 +443,9 @@ async fn responses_websocket_smoke() -> anyhow::Result<()> {
             ResponsesWebSocketEvent::Response(chunk) => {
                 if matches!(
                     chunk.kind,
-                    rig::providers::openai::responses_api::streaming::ResponseChunkKind::ResponseCompleted
-                        | rig::providers::openai::responses_api::streaming::ResponseChunkKind::ResponseFailed
-                        | rig::providers::openai::responses_api::streaming::ResponseChunkKind::ResponseIncomplete
+                    rig_core::providers::openai::responses_api::streaming::ResponseChunkKind::ResponseCompleted
+                        | rig_core::providers::openai::responses_api::streaming::ResponseChunkKind::ResponseFailed
+                        | rig_core::providers::openai::responses_api::streaming::ResponseChunkKind::ResponseIncomplete
                 ) {
                     break;
                 }

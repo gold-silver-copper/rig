@@ -1,12 +1,12 @@
-use rig::integrations::discord_bot::DiscordExt;
-use rig::prelude::*;
-use rig::providers::openai;
+use rig_core::integrations::discord_bot::DiscordExt;
+use rig_core::prelude::*;
+use rig_core::providers::openai;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let discord_bot_token = std::env::var("DISCORD_BOT_TOKEN")?;
     // Create OpenAI client
-    let client = rig::providers::openai::Client::from_env()?;
+    let client = rig_core::providers::openai::Client::from_env()?;
 
     // Create agent with a single context prompt
     let mut discord_bot = client

@@ -14,7 +14,7 @@ mod streaming_tools;
 mod structured_output;
 mod typed_prompt_tools;
 
-use rig::providers::copilot;
+use rig_core::providers::copilot;
 use std::borrow::Cow;
 
 pub(crate) const LIVE_MODEL: &str = copilot::GPT_4O;

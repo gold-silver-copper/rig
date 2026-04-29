@@ -1,12 +1,12 @@
 //! Dedicated Claude Opus 4.7 live smoke tests.
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::message::Image;
-use rig::completion::{Chat, Message, Prompt};
-use rig::message::{DocumentSourceKind, ImageMediaType};
-use rig::providers::anthropic::{self, completion::CLAUDE_OPUS_4_7};
-use rig::streaming::{StreamingChat, StreamingPrompt};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::message::Image;
+use rig_core::completion::{Chat, Message, Prompt};
+use rig_core::message::{DocumentSourceKind, ImageMediaType};
+use rig_core::providers::anthropic::{self, completion::CLAUDE_OPUS_4_7};
+use rig_core::streaming::{StreamingChat, StreamingPrompt};
 
 use crate::reasoning::{self, ReasoningRoundtripAgent, WeatherTool};
 use crate::support::{

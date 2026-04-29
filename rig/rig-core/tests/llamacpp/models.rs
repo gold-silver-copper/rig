@@ -1,6 +1,6 @@
 //! llama.cpp model listing smoke test.
 
-use rig::client::ModelListingClient;
+use rig_core::client::ModelListingClient;
 
 use super::support;
 

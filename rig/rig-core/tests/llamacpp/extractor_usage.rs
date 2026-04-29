@@ -1,7 +1,7 @@
 //! Integration tests for llama.cpp extractor usage tracking.
 
 use anyhow::{Result, anyhow};
-use rig::extractor::ExtractionResponse;
+use rig_core::extractor::ExtractionResponse;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -102,7 +102,7 @@ async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires a local llama.cpp OpenAI-compatible server"]
 async fn extract_with_chat_history_with_usage_works() -> Result<()> {
-    use rig::message::Message;
+    use rig_core::message::Message;
 
     let model = support::model_name();
     let client = support::completions_client();

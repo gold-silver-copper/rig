@@ -1,9 +1,9 @@
 //! Hugging Face image generation smoke test.
 
-use rig::client::ProviderClient;
-use rig::client::image_generation::ImageGenerationClient;
-use rig::image_generation::ImageGenerationModel;
-use rig::providers::huggingface;
+use rig_core::client::ProviderClient;
+use rig_core::client::image_generation::ImageGenerationClient;
+use rig_core::image_generation::ImageGenerationModel;
+use rig_core::providers::huggingface;
 
 use crate::support::{IMAGE_PROMPT, assert_nonempty_bytes};
 

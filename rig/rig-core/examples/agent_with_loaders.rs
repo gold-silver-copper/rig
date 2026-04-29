@@ -3,11 +3,11 @@
 //! Run it to see the model identify the example that uses `FileLoader::with_glob`.
 
 use anyhow::Result;
-use rig::agent::AgentBuilder;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::loaders::FileLoader;
-use rig::providers::openai;
+use rig_core::agent::AgentBuilder;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::loaders::FileLoader;
+use rig_core::providers::openai;
 
 const LOADERS_GLOB: &str = "rig-core/examples/*.rs";
 const LOADERS_PROMPT: &str = "Which example builds an agent from files loaded via FileLoader::with_glob(\"rig-core/examples/*.rs\")? Answer with just the file name.";

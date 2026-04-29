@@ -1,9 +1,9 @@
 //! Migrated from `examples/openai_agent_completions_api.rs` against a local llama.cpp server.
 
-use rig::client::CompletionClient;
-use rig::completion::CompletionModel;
-use rig::completion::Prompt;
-use rig::telemetry::ProviderResponseExt;
+use rig_core::client::CompletionClient;
+use rig_core::completion::CompletionModel;
+use rig_core::completion::Prompt;
+use rig_core::telemetry::ProviderResponseExt;
 
 use crate::support::{
     RAW_TEXT_RESPONSE_PREAMBLE, RAW_TEXT_RESPONSE_PROMPT, assert_contains_all_case_insensitive,

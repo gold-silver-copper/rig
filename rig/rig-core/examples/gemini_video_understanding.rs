@@ -3,10 +3,10 @@
 //! Run it to see a single prompt combine text instructions with a video URL input.
 
 use anyhow::Result;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::message::{Message, UserContent, Video};
-use rig::providers::gemini::completion::gemini_api_types::AdditionalParameters;
-use rig::{
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::message::{Message, UserContent, Video};
+use rig_core::providers::gemini::completion::gemini_api_types::AdditionalParameters;
+use rig_core::{
     OneOrMany,
     completion::Prompt,
     providers::gemini::{self, completion::gemini_api_types::GenerationConfig},
@@ -21,7 +21,7 @@ fn build_video_prompt() -> Result<Message> {
         content: OneOrMany::many(vec![
             UserContent::text("Summarize the video."),
             UserContent::Video(Video {
-                data: rig::message::DocumentSourceKind::Url(VIDEO_URL.to_string()),
+                data: rig_core::message::DocumentSourceKind::Url(VIDEO_URL.to_string()),
                 media_type: None,
                 additional_params: Some(json!({
                     "video_metadata": {

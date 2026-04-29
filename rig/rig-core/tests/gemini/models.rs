@@ -1,7 +1,7 @@
 //! Gemini model listing smoke test.
 
-use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::gemini;
+use rig_core::client::{ModelListingClient, ProviderClient};
+use rig_core::providers::gemini;
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]

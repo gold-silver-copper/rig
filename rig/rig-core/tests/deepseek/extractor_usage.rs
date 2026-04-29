@@ -1,10 +1,10 @@
 //! Integration tests for DeepSeek extractor usage tracking.
 
 use anyhow::{Result, anyhow};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::extractor::ExtractionResponse;
-use rig::message::Message;
-use rig::providers::deepseek;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::extractor::ExtractionResponse;
+use rig_core::message::Message;
+use rig_core::providers::deepseek;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

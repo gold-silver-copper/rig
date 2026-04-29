@@ -1,9 +1,9 @@
 //! xAI audio generation smoke test covering provider-specific additional parameters.
 
-use rig::audio_generation::AudioGenerationModel;
-use rig::client::ProviderClient;
-use rig::client::audio_generation::AudioGenerationClient;
-use rig::providers::xai;
+use rig_core::audio_generation::AudioGenerationModel;
+use rig_core::client::ProviderClient;
+use rig_core::client::audio_generation::AudioGenerationClient;
+use rig_core::providers::xai;
 use serde_json::json;
 
 use crate::support::{AUDIO_TEXT, assert_nonempty_bytes};

@@ -1,11 +1,11 @@
-//! Demonstrates embedding documents and querying an in-memory vector index with OpenAI.
-//! Requires `OPENAI_API_KEY` and the `derive` feature.
-//! Run it to compare `top_n` results with `top_n_ids`.
+// Demonstrates embedding documents and querying an in-memory vector index with OpenAI.
+// Requires `OPENAI_API_KEY` and the `derive` feature.
+// Run it to compare `top_n` results with `top_n_ids`.
 
-use rig::prelude::*;
-use rig::providers::openai::client::Client;
-use rig::vector_store::request::VectorSearchRequest;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::providers::openai::client::Client;
+use rig_core::vector_store::request::VectorSearchRequest;
+use rig_core::{
     Embed,
     embeddings::EmbeddingsBuilder,
     providers::openai,

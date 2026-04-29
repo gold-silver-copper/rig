@@ -7,7 +7,7 @@ use redis::{
     aio::MultiplexedConnection,
     vector_sets::{VAddOptions, VSimOptions, VectorAddInput, VectorSimilaritySearchInput},
 };
-use rig::{
+use rig_core::{
     client::{EmbeddingsClient, ProviderClient},
     embeddings::EmbeddingModel,
     providers::openai,

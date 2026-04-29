@@ -1,11 +1,11 @@
 //! Llamafile permission-control regression coverage.
 
 use anyhow::Result;
-use rig::agent::{HookAction, PromptHook, ToolCallHookAction, stream_to_stdout};
-use rig::client::CompletionClient;
-use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::agent::{HookAction, PromptHook, ToolCallHookAction, stream_to_stdout};
+use rig_core::client::CompletionClient;
+use rig_core::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;

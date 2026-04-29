@@ -1,7 +1,7 @@
-use rig::OneOrMany;
-use rig::completion::{CompletionError, Message as CompletionMessage};
-use rig::message::{AssistantContent, Reasoning, ReasoningContent};
-use rig::providers::openai::responses_api::{
+use rig_core::OneOrMany;
+use rig_core::completion::{CompletionError, Message as CompletionMessage};
+use rig_core::message::{AssistantContent, Reasoning, ReasoningContent};
+use rig_core::providers::openai::responses_api::{
     CompletionRequest as OpenAIResponsesRequest, Include, InputItem, Message, Output, UserContent,
 };
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -122,7 +122,7 @@ fn assistant_reasoning_mixed_content_serializes_only_text_like_summaries() {
 
 #[test]
 fn openai_responses_request_auto_adds_reasoning_encrypted_include() {
-    let core_request = rig::completion::CompletionRequest {
+    let core_request = rig_core::completion::CompletionRequest {
         preamble: None,
         chat_history: OneOrMany::one(CompletionMessage::user("hello")),
         documents: vec![],
@@ -270,7 +270,7 @@ fn assistant_reasoning_redacted_only_serializes_as_encrypted_content() {
 #[test]
 fn openai_responses_request_reasoning_without_id_returns_error_without_panicking() {
     let panic_result = catch_unwind(AssertUnwindSafe(|| {
-        let request = rig::completion::CompletionRequest {
+        let request = rig_core::completion::CompletionRequest {
             preamble: None,
             chat_history: OneOrMany::one(CompletionMessage::Assistant {
                 id: Some("assistant_message_id".to_string()),
@@ -334,7 +334,7 @@ fn user_tool_result_without_call_id_returns_request_error() {
 #[test]
 fn openai_responses_invalid_additional_params_returns_error_without_panicking() {
     let panic_result = catch_unwind(AssertUnwindSafe(|| {
-        let request = rig::completion::CompletionRequest {
+        let request = rig_core::completion::CompletionRequest {
             preamble: None,
             chat_history: OneOrMany::one(CompletionMessage::user("hello")),
             documents: vec![],

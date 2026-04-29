@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rig::client::CompletionClient;
-use rig::completion::{ToolDefinition, TypedPrompt};
-use rig::tool::Tool;
+use rig_core::client::CompletionClient;
+use rig_core::completion::{ToolDefinition, TypedPrompt};
+use rig_core::tool::Tool;
 
 use crate::copilot::{live_client, live_responses_model};
 use crate::support::assert_weather_tool_roundtrip_response;

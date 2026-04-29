@@ -10,12 +10,12 @@
 //! 5. repeats until the model returns a final text answer.
 
 use anyhow::{Result, bail};
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{Completion, ToolDefinition};
-use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
-use rig::providers::openai;
-use rig::tool::{Tool, ToolSet};
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{Completion, ToolDefinition};
+use rig_core::message::{AssistantContent, Message, ToolCall, ToolChoice};
+use rig_core::providers::openai;
+use rig_core::tool::{Tool, ToolSet};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

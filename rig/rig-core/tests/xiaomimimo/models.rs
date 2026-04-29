@@ -1,7 +1,7 @@
 //! Xiaomi MiMo model listing smoke test.
 
-use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::xiaomimimo::{
+use rig_core::client::{ModelListingClient, ProviderClient};
+use rig_core::providers::xiaomimimo::{
     self, MIMO_V2_5, MIMO_V2_5_PRO, MIMO_V2_FLASH, MIMO_V2_OMNI, MIMO_V2_PRO,
 };
 

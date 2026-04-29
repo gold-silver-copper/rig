@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
-use rig::client::CompletionClient;
-use rig::completion::{CompletionModel, CompletionResponse, Message, ToolDefinition, TypedPrompt};
-use rig::tool::Tool;
+use rig_core::agent::{HookAction, PromptHook, ToolCallHookAction};
+use rig_core::client::CompletionClient;
+use rig_core::completion::{
+    CompletionModel, CompletionResponse, Message, ToolDefinition, TypedPrompt,
+};
+use rig_core::tool::Tool;
 
 use super::support;
 

@@ -3,8 +3,8 @@
 //! Run only these cases with:
 //! `cargo test -p rig-core --test anthropic anthropic::reasoning_roundtrip::streaming -- --ignored --nocapture`
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::anthropic::{self, completion::CLAUDE_SONNET_4_6};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::anthropic::{self, completion::CLAUDE_SONNET_4_6};
 
 use crate::reasoning::{self, ReasoningRoundtripAgent};
 

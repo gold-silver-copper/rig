@@ -1,16 +1,16 @@
 //! Migrated from `examples/openai_websocket_mode.rs`.
 
 use anyhow::Result;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::message::AssistantContent;
-use rig::providers::openai;
-use rig::providers::openai::responses_api::streaming::{ItemChunkKind, ResponseChunkKind};
-use rig::providers::openai::responses_api::websocket::ResponsesWebSocketEvent;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::message::AssistantContent;
+use rig_core::providers::openai;
+use rig_core::providers::openai::responses_api::streaming::{ItemChunkKind, ResponseChunkKind};
+use rig_core::providers::openai::responses_api::websocket::ResponsesWebSocketEvent;
 
 use crate::support::assert_nonempty_response;
 
-fn extract_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
+fn extract_text(choice: &rig_core::OneOrMany<AssistantContent>) -> String {
     choice
         .iter()
         .filter_map(|content| match content {

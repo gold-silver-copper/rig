@@ -1,4 +1,4 @@
-use rig::{
+use rig_core::{
     Embed,
     embeddings::{self, TextEmbedder, embed::EmbedError},
 };

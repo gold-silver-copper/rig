@@ -1,9 +1,9 @@
 //! Migrated from `examples/agent_with_ollama.rs`.
 
-use rig::client::CompletionClient;
-use rig::client::Nothing;
-use rig::completion::Prompt;
-use rig::providers::ollama;
+use rig_core::client::CompletionClient;
+use rig_core::client::Nothing;
+use rig_core::completion::Prompt;
+use rig_core::providers::ollama;
 
 use crate::support::assert_nonempty_response;
 

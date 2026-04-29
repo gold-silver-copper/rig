@@ -1,8 +1,8 @@
-//! Demonstrates vector search with separate Cohere document and query embeddings.
-//! Requires `COHERE_API_KEY` and the `derive` feature.
-//! Run it to see a semantic query retrieve the closest matching document.
+// Demonstrates vector search with separate Cohere document and query embeddings.
+// Requires `COHERE_API_KEY` and the `derive` feature.
+// Run it to see a semantic query retrieve the closest matching document.
 
-use rig::{
+use rig_core::{
     Embed,
     client::ProviderClient,
     embeddings::EmbeddingsBuilder,

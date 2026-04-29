@@ -4,10 +4,10 @@ use anyhow::{Result, anyhow};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rig::agent::{HookAction, PromptHook};
-use rig::client::CompletionClient;
-use rig::completion::{CompletionModel, CompletionResponse, Message, Prompt};
-use rig::message::UserContent;
+use rig_core::agent::{HookAction, PromptHook};
+use rig_core::client::CompletionClient;
+use rig_core::completion::{CompletionModel, CompletionResponse, Message, Prompt};
+use rig_core::message::UserContent;
 
 use crate::copilot::{LIVE_MODEL, live_client};
 use crate::support::assert_nonempty_response;

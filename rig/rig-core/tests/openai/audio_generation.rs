@@ -1,9 +1,9 @@
 //! OpenAI audio generation smoke test.
 
-use rig::audio_generation::AudioGenerationModel;
-use rig::client::ProviderClient;
-use rig::client::audio_generation::AudioGenerationClient;
-use rig::providers::openai;
+use rig_core::audio_generation::AudioGenerationModel;
+use rig_core::client::ProviderClient;
+use rig_core::client::audio_generation::AudioGenerationClient;
+use rig_core::providers::openai;
 
 use crate::support::{AUDIO_TEXT, assert_nonempty_bytes};
 

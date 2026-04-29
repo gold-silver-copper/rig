@@ -3,8 +3,8 @@
 //! Run it to map a short sentence into a structured sentiment enum.
 
 use anyhow::Result;
-use rig::prelude::*;
-use rig::providers::openai;
+use rig_core::prelude::*;
+use rig_core::providers::openai;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

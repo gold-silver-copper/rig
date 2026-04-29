@@ -1,8 +1,8 @@
 //! Migrated from `examples/groq_streaming_reasoning.rs`.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::groq;
-use rig::streaming::StreamingPrompt;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::groq;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{assert_nonempty_response, collect_stream_final_response};
 

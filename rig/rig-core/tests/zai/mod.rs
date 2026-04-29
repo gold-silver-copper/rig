@@ -2,7 +2,7 @@ mod anthropic;
 mod coding;
 mod general;
 
-use rig::providers::zai;
+use rig_core::providers::zai;
 
 pub(crate) fn api_key() -> String {
     std::env::var("ZAI_API_KEY").expect("ZAI_API_KEY should be set")

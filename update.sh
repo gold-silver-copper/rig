@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT="rig-integrations"
+ROOT="rig"
 
 find "$ROOT" \
   -type f \

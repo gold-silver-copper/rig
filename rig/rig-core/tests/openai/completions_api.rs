@@ -1,14 +1,14 @@
 //! Migrated from `examples/openai_agent_completions_api.rs`.
 
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::completion::Prompt;
-use rig::message::{AssistantContent, Message, ToolChoice};
-use rig::providers::openai;
-use rig::streaming::StreamingPrompt;
-use rig::telemetry::ProviderResponseExt;
-use rig::tool::Tool;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::completion::Prompt;
+use rig_core::message::{AssistantContent, Message, ToolChoice};
+use rig_core::providers::openai;
+use rig_core::streaming::StreamingPrompt;
+use rig_core::telemetry::ProviderResponseExt;
+use rig_core::tool::Tool;
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, AlphaSignal, BETA_SIGNAL_OUTPUT, BetaSignal, ORDERED_TOOL_STREAM_PREAMBLE,

@@ -5,6 +5,7 @@ use syn::DataStruct;
 use crate::{
     basic::{add_struct_bounds, basic_embed_fields},
     custom::custom_embed_fields,
+    paths,
 };
 
 pub(crate) fn expand_derive_embedding(input: &mut syn::DeriveInput) -> syn::Result<TokenStream> {
@@ -40,12 +41,13 @@ pub(crate) fn expand_derive_embedding(input: &mut syn::DeriveInput) -> syn::Resu
     };
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let rig_core = paths::rig_core();
 
     let r#gen = quote! {
         // Note: `Embed` trait is imported with the macro.
 
         impl #impl_generics Embed for #name #ty_generics #where_clause {
-            fn embed(&self, embedder: &mut rig::embeddings::embed::TextEmbedder) -> Result<(), rig::embeddings::embed::EmbedError> {
+            fn embed(&self, embedder: &mut #rig_core::embeddings::embed::TextEmbedder) -> Result<(), #rig_core::embeddings::embed::EmbedError> {
                 #target_stream;
 
                 Ok(())

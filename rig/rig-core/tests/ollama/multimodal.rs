@@ -1,12 +1,12 @@
 //! Migrated from `examples/image_ollama.rs`.
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::completion::message::Image;
-use rig::message::DocumentSourceKind;
-use rig::message::ImageMediaType;
-use rig::providers::ollama;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::completion::message::Image;
+use rig_core::message::DocumentSourceKind;
+use rig_core::message::ImageMediaType;
+use rig_core::providers::ollama;
 
 use crate::support::{
     IMAGE_FIXTURE_PATH, assert_contains_any_case_insensitive, assert_nonempty_response,

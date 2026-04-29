@@ -11,8 +11,8 @@ use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
-use rig::prelude::*;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::{
     completion::{Prompt, ToolDefinition},
     providers,
     tool::Tool,

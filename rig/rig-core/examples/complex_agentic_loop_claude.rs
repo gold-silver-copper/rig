@@ -1,7 +1,7 @@
 use anyhow::Result;
-use rig::prelude::*;
-use rig::providers::anthropic::{self, Client};
-use rig::{
+use rig_core::prelude::*;
+use rig_core::providers::anthropic::{self, Client};
+use rig_core::{
     Embed, completion::Prompt, embeddings::EmbeddingsBuilder, message::Message, tools::ThinkTool,
     vector_store::in_memory_store::InMemoryVectorStore,
 };
@@ -31,9 +31,9 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Create the embedding model for our vector store
     // We'll use OpenAI's embedding model for this example
-    let openai_client = rig::providers::openai::Client::from_env()?;
+    let openai_client = rig_core::providers::openai::Client::from_env()?;
     let embedding_model =
-        openai_client.embedding_model(rig::providers::openai::TEXT_EMBEDDING_ADA_002);
+        openai_client.embedding_model(rig_core::providers::openai::TEXT_EMBEDDING_ADA_002);
 
     // Create a knowledge base with sample entries
     let knowledge_entries = vec![

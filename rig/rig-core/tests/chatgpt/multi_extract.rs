@@ -1,9 +1,9 @@
 //! Preserves the live multi-extract example as ChatGPT regression coverage.
 
 use anyhow::Result;
-use rig::client::CompletionClient;
-use rig::pipeline::{self, TryOp, agent_ops};
-use rig::try_parallel;
+use rig_core::client::CompletionClient;
+use rig_core::pipeline::{self, TryOp, agent_ops};
+use rig_core::try_parallel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

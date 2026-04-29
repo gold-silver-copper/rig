@@ -1,13 +1,13 @@
 //! Migrated from `examples/gemini_interactions_api.rs`.
 
 use futures::StreamExt;
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{CompletionModel, GetTokenUsage};
-use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
-use rig::providers::gemini;
-use rig::providers::gemini::interactions_api::{AdditionalParameters, Tool};
-use rig::streaming::StreamedAssistantContent;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{CompletionModel, GetTokenUsage};
+use rig_core::message::{AssistantContent, Message, ToolCall, ToolChoice};
+use rig_core::providers::gemini;
+use rig_core::providers::gemini::interactions_api::{AdditionalParameters, Tool};
+use rig_core::streaming::StreamedAssistantContent;
 
 use crate::support::assert_nonempty_response;
 
@@ -134,7 +134,7 @@ async fn tool_result_roundtrip() {
     let model = gemini::InteractionsClient::from_env()
         .expect("client should build")
         .completion_model("gemini-3-flash-preview");
-    let tool = rig::completion::ToolDefinition {
+    let tool = rig_core::completion::ToolDefinition {
         name: "add".to_string(),
         description: "Add two numbers together".to_string(),
         parameters: serde_json::json!({

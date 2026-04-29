@@ -1,8 +1,8 @@
 use anyhow::Result;
-use rig::agent::stream_to_stdout;
-use rig::prelude::*;
+use rig_core::agent::stream_to_stdout;
+use rig_core::prelude::*;
 
-use rig::{completion::ToolDefinition, providers, streaming::StreamingPrompt, tool::Tool};
+use rig_core::{completion::ToolDefinition, providers, streaming::StreamingPrompt, tool::Tool};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

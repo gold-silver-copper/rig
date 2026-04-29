@@ -1,10 +1,10 @@
 //! Integration tests for OpenRouter extractor usage tracking.
 
 use anyhow::Result;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::extractor::ExtractionResponse;
-use rig::message::Message;
-use rig::providers::openrouter;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::extractor::ExtractionResponse;
+use rig_core::message::Message;
+use rig_core::providers::openrouter;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -1,7 +1,7 @@
-use rig::prelude::*;
-use rig::providers::gemini;
-use rig::providers::gemini::client::Client;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::providers::gemini;
+use rig_core::providers::gemini::client::Client;
+use rig_core::{
     Embed, embeddings::EmbeddingsBuilder, vector_store::in_memory_store::InMemoryVectorStore,
 };
 use schemars::JsonSchema;
@@ -42,11 +42,11 @@ Hi Procurement Team,
 
 Thanks for reaching out. Here are a few details about me so you can route my application to the right person.
 
-My full name is John Doe. I’ve been working in and around manufacturing for about 6 years now (mostly in operations + automation support). Over the last couple of roles I’ve done a bit of everything: supporting production lines, troubleshooting recurring quality issues, and helping roll out small process improvements that reduce downtime.
+My full name is John Doe. I've been working in and around manufacturing for about 6 years now (mostly in operations + automation support). Over the last couple of roles I've done a bit of everything: supporting production lines, troubleshooting recurring quality issues, and helping roll out small process improvements that reduce downtime.
 
-On the technical side, I’m comfortable with Python for data cleanup/automation, SQL for reporting, and I’ve done some light work with PLC/HMI troubleshooting (Siemens/Allen-Bradley basics). I also use Excel heavily (Power Query, pivot tables) and I’m familiar with Git and basic CI setups from internal tooling projects.
+On the technical side, I'm comfortable with Python for data cleanup/automation, SQL for reporting, and I've done some light work with PLC/HMI troubleshooting (Siemens/Allen-Bradley basics). I also use Excel heavily (Power Query, pivot tables) and I'm familiar with Git and basic CI setups from internal tooling projects.
 
-Unrelated but possibly helpful: I’m based in Montreal, can travel a couple times per quarter, and I’m generally available for calls after 2pm ET. I’m also finishing a part-time course in project management this spring.
+Unrelated but possibly helpful: I'm based in Montreal, can travel a couple times per quarter, and I'm generally available for calls after 2pm ET. I'm also finishing a part-time course in project management this spring.
 
 Also, if you need references, I can share them once you confirm which role this is being matched to.
 
@@ -100,7 +100,7 @@ async fn main() -> Result<(), anyhow::Error> {
             You are provided with the questions and based on the information available, you must answer the questions with the right format.
             Use the answer ID field to map the answer to the right question ID. Answer as much as possible without inventing information.
             ")
-        .dynamic_context(3, index) // Samples should match the number of questions
+        .dynamic_context(3, index)
         .build();
 
     // Prompt the agent and print the response

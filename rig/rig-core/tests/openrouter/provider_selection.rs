@@ -1,8 +1,8 @@
 //! Migrated from `examples/openrouter_provider_selection.rs`.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::openrouter::{self, MaxPrice, ProviderPreferences, ProviderSortStrategy};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::openrouter::{self, MaxPrice, ProviderPreferences, ProviderSortStrategy};
 
 use crate::support::assert_nonempty_response;
 

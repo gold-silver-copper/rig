@@ -1,7 +1,7 @@
 //! OpenRouter extractor smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::openrouter;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::openrouter;
 
 use crate::support::{EXTRACTOR_TEXT, SmokePerson, assert_nonempty_response};
 

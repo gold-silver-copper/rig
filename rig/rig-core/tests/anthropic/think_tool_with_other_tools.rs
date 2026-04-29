@@ -5,12 +5,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
-use rig::client::CompletionClient;
-use rig::completion::{Prompt, ToolDefinition};
-use rig::message::{AssistantContent, Message};
-use rig::providers::anthropic;
-use rig::tool::Tool;
-use rig::tools::ThinkTool;
+use rig_core::client::CompletionClient;
+use rig_core::completion::{Prompt, ToolDefinition};
+use rig_core::message::{AssistantContent, Message};
+use rig_core::providers::anthropic;
+use rig_core::tool::Tool;
+use rig_core::tools::ThinkTool;
 use serde::Deserialize;
 use serde_json::json;
 

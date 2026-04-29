@@ -1,12 +1,12 @@
 //! DeepSeek streaming tools smoke test.
 
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::message::{AssistantContent, Message, ToolChoice};
-use rig::providers::deepseek::{self, DEEPSEEK_V4_FLASH};
-use rig::streaming::StreamingChat;
-use rig::tool::Tool;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::message::{AssistantContent, Message, ToolChoice};
+use rig_core::providers::deepseek::{self, DEEPSEEK_V4_FLASH};
+use rig_core::streaming::StreamingChat;
+use rig_core::tool::Tool;
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, Adder, AlphaSignal, BETA_SIGNAL_OUTPUT, BetaSignal,

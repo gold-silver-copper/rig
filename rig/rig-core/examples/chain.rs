@@ -2,9 +2,9 @@
 //! Requires `OPENAI_API_KEY`.
 //! Run it to see the pipeline retrieve context and fold it into the final prompt.
 
-use rig::prelude::*;
-use rig::providers::openai;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::providers::openai;
+use rig_core::{
     embeddings::EmbeddingsBuilder,
     parallel,
     pipeline::{self, Op, agent_ops::lookup, passthrough},
@@ -24,7 +24,7 @@ fn sample_definitions() -> [&'static str; 3] {
 
 fn build_dictionary_agent(
     client: &Client,
-) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
+) -> rig_core::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
     client
         .agent(openai::GPT_4)
         .preamble(

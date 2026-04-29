@@ -4,11 +4,11 @@
 
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
-use rig::agent::{MultiTurnStreamItem, StreamingResult};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::message::Message;
-use rig::providers::openai;
-use rig::streaming::StreamingChat;
+use rig_core::agent::{MultiTurnStreamItem, StreamingResult};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::message::Message;
+use rig_core::providers::openai;
+use rig_core::streaming::StreamingChat;
 
 const PREAMBLE: &str = "You are a comedian here to entertain the user using humour and jokes.";
 const PROMPT: &str = "Entertain me!";

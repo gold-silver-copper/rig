@@ -1,13 +1,13 @@
 //! Migrated from `examples/openrouter_multimodal.rs`.
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::message::{
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::message::{
     Document, DocumentMediaType, DocumentSourceKind, Image, ImageMediaType, Message, UserContent,
 };
-use rig::providers::openrouter;
+use rig_core::providers::openrouter;
 
 use crate::support::{IMAGE_FIXTURE_PATH, PDF_FIXTURE_PATH, assert_nonempty_response};
 

@@ -1,8 +1,8 @@
 //! VoyageAI embeddings smoke test.
 
-use rig::client::{EmbeddingsClient, ProviderClient};
-use rig::embeddings::EmbeddingModel;
-use rig::providers::voyageai;
+use rig_core::client::{EmbeddingsClient, ProviderClient};
+use rig_core::embeddings::EmbeddingModel;
+use rig_core::providers::voyageai;
 
 use crate::support::{EMBEDDING_INPUTS, assert_embeddings_nonempty_and_consistent};
 

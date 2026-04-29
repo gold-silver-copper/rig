@@ -1,5 +1,5 @@
-use rig::prelude::*;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::{
     agent::Agent,
     completion::{CompletionError, CompletionModel, Prompt, PromptError, ToolDefinition},
     extractor::Extractor,

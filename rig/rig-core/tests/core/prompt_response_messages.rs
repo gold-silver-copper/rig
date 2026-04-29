@@ -1,13 +1,13 @@
 //! Integration tests for `PromptResponse.messages` using mock models.
 //! Exercises the real agent loop code path with mocked LLM responses.
 
-use rig::OneOrMany;
-use rig::agent::AgentBuilder;
-use rig::completion::{
+use rig_core::OneOrMany;
+use rig_core::agent::AgentBuilder;
+use rig_core::completion::{
     CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Message, Prompt, Usage,
 };
-use rig::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
-use rig::streaming::{StreamingCompletionResponse, StreamingResult};
+use rig_core::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
+use rig_core::streaming::{StreamingCompletionResponse, StreamingResult};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -352,7 +352,7 @@ async fn multi_turn_messages_include_tool_calls() {
 /// should still work, and `messages` should be `None`.
 #[tokio::test]
 async fn prompt_response_new_backward_compat() {
-    use rig::agent::PromptResponse;
+    use rig_core::agent::PromptResponse;
 
     let resp = PromptResponse::new("output text", Usage::new());
 
@@ -363,7 +363,7 @@ async fn prompt_response_new_backward_compat() {
 /// Test 6b: `PromptResponse` implements `Display`, delegating to `output`.
 #[tokio::test]
 async fn prompt_response_display_shows_output() {
-    use rig::agent::PromptResponse;
+    use rig_core::agent::PromptResponse;
 
     let resp = PromptResponse::new("the answer is 42", Usage::new());
 
@@ -375,7 +375,7 @@ async fn prompt_response_display_shows_output() {
 /// Test 7: `PromptResponse::with_messages()` builder works correctly.
 #[tokio::test]
 async fn prompt_response_with_messages_builder() {
-    use rig::agent::PromptResponse;
+    use rig_core::agent::PromptResponse;
 
     let messages = vec![Message::user("hello"), Message::assistant("world")];
 
@@ -389,7 +389,7 @@ async fn prompt_response_with_messages_builder() {
 /// This verifies the error path isn't broken by our changes.
 #[tokio::test]
 async fn max_turns_error_still_contains_history() {
-    use rig::completion::PromptError;
+    use rig_core::completion::PromptError;
 
     let agent = AgentBuilder::new(AlwaysToolCallModel).build();
 

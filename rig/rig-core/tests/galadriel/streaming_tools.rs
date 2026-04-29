@@ -1,9 +1,9 @@
 //! Galadriel streaming tools smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::message::ToolChoice;
-use rig::providers::galadriel;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::message::ToolChoice;
+use rig_core::providers::galadriel;
 
 use crate::support::{
     REQUIRED_ZERO_ARG_TOOL_PROMPT, assert_stream_contains_zero_arg_tool_call_named,

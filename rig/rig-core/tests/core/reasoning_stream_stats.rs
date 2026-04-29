@@ -1,9 +1,9 @@
 use futures::stream;
-use rig::OneOrMany;
-use rig::agent::MultiTurnStreamItem;
-use rig::completion::Usage;
-use rig::message::{ToolCall, ToolFunction, ToolResult, ToolResultContent};
-use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+use rig_core::OneOrMany;
+use rig_core::agent::MultiTurnStreamItem;
+use rig_core::completion::Usage;
+use rig_core::message::{ToolCall, ToolFunction, ToolResult, ToolResultContent};
+use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent};
 
 use crate::reasoning::collect_stream_stats;
 

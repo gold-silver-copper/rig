@@ -1,9 +1,9 @@
-use rig::prelude::*;
+use rig_core::prelude::*;
 
-use rig::completion::Prompt;
+use rig_core::completion::Prompt;
 
-use rig::providers::openai;
-use rig::providers::openai::client::Client;
+use rig_core::providers::openai;
+use rig_core::providers::openai::client::Client;
 
 use schemars::JsonSchema;
 

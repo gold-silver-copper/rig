@@ -7,7 +7,7 @@
 //!   `notifications/tools/list_changed`.
 use std::sync::Arc;
 
-use rig::{
+use rig_core::{
     client::{CompletionClient, ProviderClient},
     completion::Prompt,
     providers::openai,

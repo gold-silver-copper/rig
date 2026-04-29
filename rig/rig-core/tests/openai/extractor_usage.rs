@@ -7,9 +7,9 @@
 //! - Both `extract` and `extract_with_chat_history` variants work
 
 use anyhow::Result;
-use rig::client::ProviderClient;
-use rig::extractor::ExtractionResponse;
-use rig::providers;
+use rig_core::client::ProviderClient;
+use rig_core::extractor::ExtractionResponse;
+use rig_core::providers;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -96,7 +96,7 @@ async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
 #[tokio::test]
 #[ignore = "This requires an API key"]
 async fn extract_with_chat_history_with_usage_works() -> Result<()> {
-    use rig::message::Message;
+    use rig_core::message::Message;
 
     let client = providers::openai::Client::from_env().expect("client should build");
     let extractor = client

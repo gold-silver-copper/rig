@@ -3,10 +3,10 @@
 //! Run it to see a classifier agent choose which second prompt should run.
 
 use anyhow::{Result, bail};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::openai;
-use rig::providers::openai::client::Client;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::openai;
+use rig_core::providers::openai::client::Client;
 
 const INPUT_PROMPT: &str = "Sheep can self-medicate";
 const ROUTER_PREAMBLE: &str = "
@@ -16,7 +16,7 @@ const ROUTER_PREAMBLE: &str = "
 
 fn build_router_agent(
     client: &Client,
-) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
+) -> rig_core::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
     client
         .agent(openai::GPT_4)
         .preamble(ROUTER_PREAMBLE)
@@ -25,7 +25,7 @@ fn build_router_agent(
 
 fn build_response_agent(
     client: &Client,
-) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
+) -> rig_core::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
     client.agent(openai::GPT_4).build()
 }
 

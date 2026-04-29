@@ -1,6 +1,6 @@
 //! ChatGPT reasoning roundtrip tests.
 
-use rig::client::CompletionClient;
+use rig_core::client::CompletionClient;
 
 use crate::chatgpt::{LIVE_MODEL, live_client};
 use crate::reasoning::{self, ReasoningRoundtripAgent};

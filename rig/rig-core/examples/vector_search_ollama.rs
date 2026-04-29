@@ -1,12 +1,12 @@
-//! Demonstrates vector search against a local Ollama embedding model.
-//! Requires a local Ollama server and the `derive` feature.
-//! Run it to compare semantic search results and matching document ids.
+// Demonstrates vector search against a local Ollama embedding model.
+// Requires a local Ollama server and the `derive` feature.
+// Run it to compare semantic search results and matching document ids.
 
-use rig::client::Nothing;
-use rig::prelude::*;
-use rig::providers::ollama;
-use rig::vector_store::request::VectorSearchRequest;
-use rig::{
+use rig_core::client::Nothing;
+use rig_core::prelude::*;
+use rig_core::providers::ollama;
+use rig_core::vector_store::request::VectorSearchRequest;
+use rig_core::{
     Embed,
     embeddings::EmbeddingsBuilder,
     vector_store::{VectorStoreIndex, in_memory_store::InMemoryVectorStore},

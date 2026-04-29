@@ -1,18 +1,18 @@
 //! Gemini streaming regression for multimodal tool results in chat history.
 
 use futures::StreamExt;
-use rig::agent::MultiTurnStreamItem;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::ToolDefinition;
-use rig::message::{
+use rig_core::agent::MultiTurnStreamItem;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::ToolDefinition;
+use rig_core::message::{
     AssistantContent, DocumentSourceKind, ImageMediaType, Message, ToolResultContent, UserContent,
 };
-use rig::providers::gemini;
-use rig::providers::gemini::completion::gemini_api_types::{
+use rig_core::providers::gemini;
+use rig_core::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 use serde_json::json;
 
 use crate::support::assert_nonempty_response;

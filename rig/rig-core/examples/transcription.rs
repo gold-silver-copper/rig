@@ -1,6 +1,6 @@
-use rig::prelude::*;
-use rig::providers::{huggingface, mistral};
-use rig::{
+use rig_core::prelude::*;
+use rig_core::providers::{huggingface, mistral};
+use rig_core::{
     providers::{azure, gemini, groq, openai},
     transcription::TranscriptionModel,
 };

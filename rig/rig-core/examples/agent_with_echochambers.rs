@@ -1,7 +1,7 @@
 use anyhow::Result;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
-use rig::prelude::*;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::{
     completion::ToolDefinition,
     integrations::cli_chatbot::ChatBotBuilder,
     providers::openai::{self, Client},

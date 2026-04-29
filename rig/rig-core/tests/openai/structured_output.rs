@@ -1,8 +1,8 @@
 //! OpenAI structured output coverage, including the migrated example path.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{Prompt, TypedPrompt};
-use rig::providers::openai;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{Prompt, TypedPrompt};
+use rig_core::providers::openai;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

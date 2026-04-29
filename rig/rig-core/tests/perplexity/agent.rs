@@ -1,8 +1,8 @@
 //! Migrated from `examples/perplexity_agent.rs`.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::perplexity::{self, SONAR};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::perplexity::{self, SONAR};
 
 use crate::support::assert_nonempty_response;
 

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rig::{
+use rig_core::{
     completion::{Prompt, ToolDefinition},
     embeddings::EmbeddingsBuilder,
     prelude::*,

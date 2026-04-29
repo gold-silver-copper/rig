@@ -1,9 +1,9 @@
-//! Llamafile embeddings smoke tests.
+// Llamafile embeddings smoke tests.
 
 #[cfg(feature = "derive")]
-use rig::Embed;
-use rig::client::EmbeddingsClient;
-use rig::embeddings::EmbeddingModel;
+use rig_core::Embed;
+use rig_core::client::EmbeddingsClient;
+use rig_core::embeddings::EmbeddingModel;
 
 use crate::support::{EMBEDDING_INPUTS, assert_embeddings_nonempty_and_consistent};
 

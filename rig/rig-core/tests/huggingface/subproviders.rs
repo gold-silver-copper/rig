@@ -1,8 +1,8 @@
 //! Migrated from `examples/huggingface_subproviders.rs`.
 
-use rig::client::CompletionClient;
-use rig::completion::Prompt;
-use rig::providers::huggingface::{self, SubProvider};
+use rig_core::client::CompletionClient;
+use rig_core::completion::Prompt;
+use rig_core::providers::huggingface::{self, SubProvider};
 
 use crate::support::{Adder, Subtract, assert_mentions_expected_number};
 

@@ -3,8 +3,8 @@
 //! Run with:
 //! `cargo test -p rig-core --test deepseek deepseek::models::list_models_smoke -- --ignored --nocapture`
 
-use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::deepseek;
+use rig_core::client::{ModelListingClient, ProviderClient};
+use rig_core::providers::deepseek;
 
 #[tokio::test]
 #[ignore = "requires DEEPSEEK_API_KEY"]

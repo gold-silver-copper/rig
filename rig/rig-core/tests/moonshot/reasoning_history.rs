@@ -1,14 +1,14 @@
 //! Moonshot reasoning-history roundtrip smoke test.
 
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::message::{AssistantContent, Message, Reasoning};
-use rig::providers::moonshot;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::message::{AssistantContent, Message, Reasoning};
+use rig_core::providers::moonshot;
 
 use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_response};
 
-fn response_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
+fn response_text(choice: &rig_core::OneOrMany<AssistantContent>) -> String {
     choice
         .iter()
         .filter_map(|content| match content {

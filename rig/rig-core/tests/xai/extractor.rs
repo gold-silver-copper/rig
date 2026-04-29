@@ -1,7 +1,7 @@
 //! xAI extractor smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::xai;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::xai;
 
 use crate::support::{EXTRACTOR_TEXT, SmokePerson, assert_nonempty_response};
 

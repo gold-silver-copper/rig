@@ -1,8 +1,8 @@
 use anyhow::Result;
 use futures::StreamExt;
-use rig::completion::CompletionModel;
-use rig::prelude::*;
-use rig::providers::gemini::{
+use rig_core::completion::CompletionModel;
+use rig_core::prelude::*;
+use rig_core::providers::gemini::{
     self,
     interactions_api::{
         AdditionalParameters, AgentConfig, Content, ContentDelta, InteractionSseEvent,

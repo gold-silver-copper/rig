@@ -1,8 +1,8 @@
 //! DeepSeek streaming smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::deepseek::{self, DEEPSEEK_V4_FLASH};
-use rig::streaming::StreamingPrompt;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::deepseek::{self, DEEPSEEK_V4_FLASH};
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{assert_nonempty_response, collect_stream_final_response};
 

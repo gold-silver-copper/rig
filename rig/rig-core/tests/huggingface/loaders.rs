@@ -1,9 +1,9 @@
 //! Hugging Face loaders smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::loaders::FileLoader;
-use rig::providers::huggingface;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::loaders::FileLoader;
+use rig_core::providers::huggingface;
 
 use crate::support::{LOADERS_GLOB, LOADERS_PROMPT, assert_loader_answer_is_relevant};
 

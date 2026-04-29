@@ -3,10 +3,10 @@
 //! Run it to see the model answer from the supplied in-memory facts.
 
 use anyhow::Result;
-use rig::agent::AgentBuilder;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::cohere::{self, COMMAND_R};
+use rig_core::agent::AgentBuilder;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::cohere::{self, COMMAND_R};
 
 const CONTEXT_DOCS: [&str; 3] = [
     "Definition of a *flurbo*: A flurbo is a green alien that lives on cold planets.",

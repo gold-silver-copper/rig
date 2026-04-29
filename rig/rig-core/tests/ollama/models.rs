@@ -1,7 +1,7 @@
 //! Ollama model listing smoke test.
 
-use rig::client::{ModelListingClient, Nothing};
-use rig::providers::ollama;
+use rig_core::client::{ModelListingClient, Nothing};
+use rig_core::providers::ollama;
 
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]

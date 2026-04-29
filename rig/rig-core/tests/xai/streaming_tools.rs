@@ -1,13 +1,13 @@
 //! xAI streaming tools smoke test.
 
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{CompletionModel, ToolDefinition};
-use rig::message::ToolChoice;
-use rig::message::{AssistantContent, Message};
-use rig::providers::xai;
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{CompletionModel, ToolDefinition};
+use rig_core::message::ToolChoice;
+use rig_core::message::{AssistantContent, Message};
+use rig_core::providers::xai;
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

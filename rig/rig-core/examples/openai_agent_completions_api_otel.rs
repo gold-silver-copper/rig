@@ -3,12 +3,12 @@
 
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
-use rig::completion::Prompt;
-use rig::prelude::*;
+use rig_core::completion::Prompt;
+use rig_core::prelude::*;
 
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::SdkTracerProvider;
-use rig::providers::{self, openai};
+use rig_core::providers::{self, openai};
 use tracing::Level;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;

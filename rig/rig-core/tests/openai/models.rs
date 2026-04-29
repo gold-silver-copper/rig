@@ -1,7 +1,7 @@
 //! OpenAI model listing smoke test.
 
-use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::openai;
+use rig_core::client::{ModelListingClient, ProviderClient};
+use rig_core::providers::openai;
 
 #[tokio::test]
 #[ignore = "requires OPENAI_API_KEY"]

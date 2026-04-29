@@ -1,6 +1,6 @@
-use rig::prelude::*;
-use rig::providers::openai::client::Client;
-use rig::{
+use rig_core::prelude::*;
+use rig_core::providers::openai::client::Client;
+use rig_core::{
     Embed, completion::Prompt, embeddings::EmbeddingsBuilder, providers::openai,
     vector_store::in_memory_store::InMemoryVectorStore,
 };

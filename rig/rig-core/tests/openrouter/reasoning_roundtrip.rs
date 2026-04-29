@@ -3,8 +3,8 @@
 //! Run only these cases with:
 //! `cargo test -p rig-core --test openrouter openrouter::reasoning_roundtrip::streaming -- --ignored --nocapture`
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::openrouter;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::openrouter;
 
 use crate::reasoning::{self, ReasoningRoundtripAgent};
 

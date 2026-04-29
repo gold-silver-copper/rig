@@ -1,9 +1,9 @@
 //! Moonshot required-tool-choice smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::message::ToolChoice;
-use rig::providers::moonshot;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::message::ToolChoice;
+use rig_core::providers::moonshot;
 
 use crate::support::{
     Adder, Subtract, TOOLS_PREAMBLE, TOOLS_PROMPT, assert_mentions_expected_number,

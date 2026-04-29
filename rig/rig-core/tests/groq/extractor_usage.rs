@@ -1,10 +1,10 @@
 //! Integration tests for Groq extractor usage tracking.
 
 use anyhow::{Result, anyhow};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::extractor::ExtractionResponse;
-use rig::message::Message;
-use rig::providers::groq;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::extractor::ExtractionResponse;
+use rig_core::message::Message;
+use rig_core::providers::groq;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

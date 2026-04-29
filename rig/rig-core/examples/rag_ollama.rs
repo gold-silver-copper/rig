@@ -1,6 +1,6 @@
-use rig::client::Nothing;
-use rig::prelude::*;
-use rig::{
+use rig_core::client::Nothing;
+use rig_core::prelude::*;
+use rig_core::{
     Embed, completion::Prompt, embeddings::EmbeddingsBuilder, providers::ollama::Client,
     vector_store::in_memory_store::InMemoryVectorStore,
 };

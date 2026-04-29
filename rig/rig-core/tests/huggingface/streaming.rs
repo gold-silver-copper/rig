@@ -1,8 +1,8 @@
 //! Hugging Face streaming coverage for the default and Together-backed inference paths.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::huggingface::{self, SubProvider};
-use rig::streaming::StreamingPrompt;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::huggingface::{self, SubProvider};
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{
     STREAMING_PREAMBLE, STREAMING_PROMPT, assert_nonempty_response, collect_stream_final_response,

@@ -1,7 +1,7 @@
 //! DeepSeek reasoning roundtrip tests.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::deepseek;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::deepseek;
 
 use crate::reasoning::{self, ReasoningRoundtripAgent};
 

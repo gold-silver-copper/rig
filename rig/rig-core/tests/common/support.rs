@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use futures::StreamExt;
-use rig::{
+use rig_core::{
     agent::{MultiTurnStreamItem, StreamingError, StreamingResult},
     completion::{AssistantContent, GetTokenUsage, ToolDefinition},
     embeddings::Embedding,
@@ -263,7 +263,9 @@ pub(crate) fn assert_nonempty_response(response: &str) {
     );
 }
 
-pub(crate) fn assistant_text_response(choice: &rig::OneOrMany<AssistantContent>) -> Option<String> {
+pub(crate) fn assistant_text_response(
+    choice: &rig_core::OneOrMany<AssistantContent>,
+) -> Option<String> {
     let response = choice
         .iter()
         .filter_map(|content| match content {
@@ -478,7 +480,7 @@ pub(crate) struct ToolCallRecord {
 
 pub(crate) struct RawStreamObservation {
     pub(crate) text: String,
-    pub(crate) tool_calls: Vec<rig::message::ToolCall>,
+    pub(crate) tool_calls: Vec<rig_core::message::ToolCall>,
     pub(crate) tool_call_records: Vec<ToolCallRecord>,
     pub(crate) errors: Vec<String>,
     pub(crate) got_final: bool,

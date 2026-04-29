@@ -1,12 +1,12 @@
 //! Groq permission-control regression coverage.
 
 use anyhow::Result;
-use rig::agent::{HookAction, PromptHook, ToolCallHookAction, stream_to_stdout};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{CompletionModel, Prompt, ToolDefinition};
-use rig::providers::groq;
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::agent::{HookAction, PromptHook, ToolCallHookAction, stream_to_stdout};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{CompletionModel, Prompt, ToolDefinition};
+use rig_core::providers::groq;
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;

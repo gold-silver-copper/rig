@@ -1,8 +1,8 @@
 //! Migrated from `examples/ollama_streaming_with_tools.rs`.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::ollama;
-use rig::streaming::StreamingPrompt;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::ollama;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{
     Adder, Subtract, assert_mentions_expected_number, collect_stream_final_response,

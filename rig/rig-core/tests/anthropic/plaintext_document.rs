@@ -1,10 +1,10 @@
 //! Migrated from `examples/anthropic_plaintext_document.rs`.
 
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::message::{Document, DocumentMediaType, DocumentSourceKind, Message, UserContent};
-use rig::providers::anthropic;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::message::{Document, DocumentMediaType, DocumentSourceKind, Message, UserContent};
+use rig_core::providers::anthropic;
 
 use crate::support::{assert_contains_any_case_insensitive, assert_nonempty_response};
 

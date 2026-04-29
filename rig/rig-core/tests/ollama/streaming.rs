@@ -1,8 +1,8 @@
 //! Migrated from `examples/ollama_streaming.rs`.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::ollama;
-use rig::streaming::StreamingPrompt;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::ollama;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{assert_nonempty_response, collect_stream_final_response};
 

@@ -1,8 +1,8 @@
 //! Copilot integration tests for extractor usage tracking.
 
 use anyhow::Result;
-use rig::client::CompletionClient;
-use rig::extractor::ExtractionResponse;
+use rig_core::client::CompletionClient;
+use rig_core::extractor::ExtractionResponse;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -78,7 +78,7 @@ async fn extract_with_usage_returns_data_and_usage() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]
 async fn extract_with_chat_history_with_usage_works() -> Result<()> {
-    use rig::message::Message;
+    use rig_core::message::Message;
 
     let extractor = live_client().extractor::<Address>(LIVE_LIGHT_MODEL).build();
 

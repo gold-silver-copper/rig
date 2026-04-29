@@ -1,8 +1,8 @@
 //! Together streaming tools smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::together;
-use rig::streaming::StreamingPrompt;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::together;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{
     Adder, STREAMING_TOOLS_PREAMBLE, STREAMING_TOOLS_PROMPT, Subtract,

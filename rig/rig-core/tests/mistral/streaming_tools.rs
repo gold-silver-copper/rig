@@ -1,9 +1,9 @@
 //! Mistral streaming tools coverage, including the migrated example path.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Message;
-use rig::providers::mistral;
-use rig::streaming::{StreamingChat, StreamingPrompt};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Message;
+use rig_core::providers::mistral;
+use rig_core::streaming::{StreamingChat, StreamingPrompt};
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, Adder, AlphaSignal, ORDERED_TOOL_STREAM_PREAMBLE,

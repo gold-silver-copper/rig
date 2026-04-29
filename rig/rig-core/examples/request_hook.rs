@@ -3,11 +3,11 @@
 //! Run it to see the hook log the outgoing prompt and the incoming model response.
 
 use anyhow::Result;
-use rig::agent::{HookAction, PromptHook};
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::{CompletionModel, CompletionResponse, Message, Prompt};
-use rig::message::UserContent;
-use rig::providers::openai;
+use rig_core::agent::{HookAction, PromptHook};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::{CompletionModel, CompletionResponse, Message, Prompt};
+use rig_core::message::UserContent;
+use rig_core::providers::openai;
 
 #[derive(Clone)]
 struct LoggingHook<'a> {

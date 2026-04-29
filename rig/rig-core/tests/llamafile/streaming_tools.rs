@@ -1,11 +1,11 @@
 //! Llamafile streaming tools smoke test.
 
-use rig::OneOrMany;
-use rig::client::CompletionClient;
-use rig::completion::CompletionModel;
-use rig::message::{AssistantContent, Message, ToolChoice};
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::OneOrMany;
+use rig_core::client::CompletionClient;
+use rig_core::completion::CompletionModel;
+use rig_core::message::{AssistantContent, Message, ToolChoice};
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, Adder, AlphaSignal, BETA_SIGNAL_OUTPUT, BetaSignal,

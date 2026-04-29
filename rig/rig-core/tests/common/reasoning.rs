@@ -9,14 +9,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::StreamExt;
-use rig::OneOrMany;
-use rig::agent::{MultiTurnStreamItem, StreamingError};
-use rig::completion::request::ToolDefinition;
-use rig::completion::{self, CompletionModel};
-use rig::message::{AssistantContent, Message, Reasoning, ReasoningContent, UserContent};
-use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
-use rig::tool::Tool;
-use rig::wasm_compat::WasmCompatSend;
+use rig_core::OneOrMany;
+use rig_core::agent::{MultiTurnStreamItem, StreamingError};
+use rig_core::completion::request::ToolDefinition;
+use rig_core::completion::{self, CompletionModel};
+use rig_core::message::{AssistantContent, Message, Reasoning, ReasoningContent, UserContent};
+use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent};
+use rig_core::tool::Tool;
+use rig_core::wasm_compat::WasmCompatSend;
 use serde::Deserialize;
 use serde_json::json;
 

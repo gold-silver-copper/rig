@@ -1,11 +1,11 @@
 //! Gemini streaming coverage, including the migrated example path.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::providers::gemini;
-use rig::providers::gemini::completion::gemini_api_types::{
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::providers::gemini;
+use rig_core::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig, ThinkingConfig, ThinkingLevel,
 };
-use rig::streaming::StreamingPrompt;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{
     STREAMING_PREAMBLE, STREAMING_PROMPT, assert_nonempty_response, collect_stream_final_response,

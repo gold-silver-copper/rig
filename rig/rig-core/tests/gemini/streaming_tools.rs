@@ -1,13 +1,13 @@
 //! Gemini streaming tools coverage, including the migrated example path.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::message::ToolChoice;
-use rig::providers::gemini;
-use rig::providers::gemini::completion::gemini_api_types::{
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::message::ToolChoice;
+use rig_core::providers::gemini;
+use rig_core::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
-use rig::streaming::StreamingPrompt;
+use rig_core::streaming::StreamingPrompt;
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, Adder, AlphaSignal, BETA_SIGNAL_OUTPUT, BetaSignal,

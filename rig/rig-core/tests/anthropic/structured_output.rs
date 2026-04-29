@@ -1,8 +1,8 @@
 //! Anthropic structured output smoke test.
 
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::anthropic::{self, completion::CLAUDE_SONNET_4_6};
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::anthropic::{self, completion::CLAUDE_SONNET_4_6};
 
 use crate::support::{
     STRUCTURED_OUTPUT_PROMPT, SmokeStructuredOutput, assert_smoke_structured_output,

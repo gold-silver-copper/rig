@@ -1,12 +1,12 @@
-//! Migrated from `examples/mistral_embeddings.rs`.
+// Migrated from `examples/mistral_embeddings.rs`.
 
-use rig::Embed;
-use rig::client::{EmbeddingsClient, ProviderClient};
-use rig::embeddings::EmbeddingsBuilder;
-use rig::providers::mistral;
-use rig::vector_store::VectorStoreIndex;
-use rig::vector_store::in_memory_store::InMemoryVectorStore;
-use rig::vector_store::request::VectorSearchRequest;
+use rig_core::Embed;
+use rig_core::client::{EmbeddingsClient, ProviderClient};
+use rig_core::embeddings::EmbeddingsBuilder;
+use rig_core::providers::mistral;
+use rig_core::vector_store::VectorStoreIndex;
+use rig_core::vector_store::in_memory_store::InMemoryVectorStore;
+use rig_core::vector_store::request::VectorSearchRequest;
 use serde::{Deserialize, Serialize};
 
 #[derive(Embed, Debug, Deserialize, Eq, PartialEq, Serialize)]

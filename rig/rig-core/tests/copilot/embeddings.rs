@@ -2,8 +2,8 @@
 
 use crate::copilot::{live_client, live_embedding_model};
 use crate::support::{EMBEDDING_INPUTS, assert_embeddings_nonempty_and_consistent};
-use rig::client::EmbeddingsClient;
-use rig::embeddings::EmbeddingModel;
+use rig_core::client::EmbeddingsClient;
+use rig_core::embeddings::EmbeddingModel;
 
 #[tokio::test]
 #[ignore = "requires Copilot credentials or existing OAuth cache"]

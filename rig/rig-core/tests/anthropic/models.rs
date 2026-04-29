@@ -1,7 +1,7 @@
 //! Anthropic model listing smoke test.
 
-use rig::client::{ModelListingClient, ProviderClient};
-use rig::providers::anthropic;
+use rig_core::client::{ModelListingClient, ProviderClient};
+use rig_core::providers::anthropic;
 
 #[tokio::test]
 #[ignore = "requires ANTHROPIC_API_KEY"]

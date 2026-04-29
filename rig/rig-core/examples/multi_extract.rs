@@ -3,10 +3,10 @@
 //! Run it to see one batch of text split into names, topics, and sentiment in parallel.
 
 use anyhow::Result;
-use rig::client::ProviderClient;
-use rig::pipeline::{self, TryOp, agent_ops};
-use rig::providers::openai;
-use rig::try_parallel;
+use rig_core::client::ProviderClient;
+use rig_core::pipeline::{self, TryOp, agent_ops};
+use rig_core::providers::openai;
+use rig_core::try_parallel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

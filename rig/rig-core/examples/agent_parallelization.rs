@@ -1,11 +1,11 @@
-use rig::prelude::*;
+use rig_core::prelude::*;
 
-use rig::pipeline::agent_ops::extract;
+use rig_core::pipeline::agent_ops::extract;
 
-use rig::providers::openai;
-use rig::providers::openai::client::Client;
+use rig_core::providers::openai;
+use rig_core::providers::openai::client::Client;
 
-use rig::{
+use rig_core::{
     parallel,
     pipeline::{self, Op, passthrough},
 };

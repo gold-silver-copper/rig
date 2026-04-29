@@ -1,12 +1,12 @@
 //! OpenAI streaming tools coverage, including the migrated example path.
 
-use rig::OneOrMany;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::CompletionModel;
-use rig::message::{AssistantContent, Message};
-use rig::providers::openai;
-use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig_core::OneOrMany;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::CompletionModel;
+use rig_core::message::{AssistantContent, Message};
+use rig_core::providers::openai;
+use rig_core::streaming::StreamingPrompt;
+use rig_core::tool::Tool;
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, Adder, AlphaSignal, ORDERED_TOOL_STREAM_PREAMBLE,

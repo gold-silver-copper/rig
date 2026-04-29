@@ -3,10 +3,10 @@
 //! Run it to see one agent produce a value that the next agent transforms.
 
 use anyhow::Result;
-use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Prompt;
-use rig::providers::openai;
-use rig::providers::openai::client::Client;
+use rig_core::client::{CompletionClient, ProviderClient};
+use rig_core::completion::Prompt;
+use rig_core::providers::openai;
+use rig_core::providers::openai::client::Client;
 
 const INPUT_PROMPT: &str = "Please generate a single whole integer that is 0 or 1";
 const RNG_PREAMBLE: &str =
@@ -16,13 +16,13 @@ const ADDER_PREAMBLE: &str =
 
 fn build_rng_agent(
     client: &Client,
-) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
+) -> rig_core::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
     client.agent(openai::GPT_4).preamble(RNG_PREAMBLE).build()
 }
 
 fn build_adder_agent(
     client: &Client,
-) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
+) -> rig_core::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
     client.agent(openai::GPT_4).preamble(ADDER_PREAMBLE).build()
 }
 

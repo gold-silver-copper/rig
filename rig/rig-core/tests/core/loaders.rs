@@ -1,6 +1,6 @@
 //! Migrated from `examples/loaders.rs`.
 
-use rig::loaders::FileLoader;
+use rig_core::loaders::FileLoader;
 
 #[test]
 fn file_loader_reads_manifest() {

@@ -1,4 +1,4 @@
-use rig::providers::openai;
+use rig_core::providers::openai;
 
 const DEFAULT_API_BASE_URL: &str = "http://localhost:8080/v1";
 const DEFAULT_API_KEY: &str = "none";

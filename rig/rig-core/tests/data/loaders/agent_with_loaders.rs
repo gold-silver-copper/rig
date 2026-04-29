@@ -1,7 +1,7 @@
 //! Loader fixture that intentionally mirrors the agent-with-loaders flow.
 
-use rig::agent::AgentBuilder;
-use rig::loaders::FileLoader;
+use rig_core::agent::AgentBuilder;
+use rig_core::loaders::FileLoader;
 
 const LOADERS_GLOB: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/loaders/*.rs");
 

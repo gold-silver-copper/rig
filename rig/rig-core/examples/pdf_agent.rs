@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use rig::client::Nothing;
-use rig::integrations::cli_chatbot::ChatBotBuilder;
-use rig::prelude::*;
-use rig::providers::ollama;
-use rig::{
+use rig_core::client::Nothing;
+use rig_core::integrations::cli_chatbot::ChatBotBuilder;
+use rig_core::prelude::*;
+use rig_core::providers::ollama;
+use rig_core::{
     Embed, embeddings::EmbeddingsBuilder, loaders::PdfFileLoader,
     vector_store::in_memory_store::InMemoryVectorStore,
 };

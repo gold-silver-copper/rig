@@ -1,7 +1,7 @@
 //! Migrated from `examples/agent_with_mira.rs`.
 
-use rig::client::ProviderClient;
-use rig::providers::mira;
+use rig_core::client::ProviderClient;
+use rig_core::providers::mira;
 
 #[tokio::test]
 #[ignore = "requires MIRA_API_KEY"]
