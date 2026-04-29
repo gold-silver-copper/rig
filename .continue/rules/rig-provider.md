@@ -10,7 +10,7 @@ Use this checklist for provider and vector-store implementations.
 
 ## rig-provider-implementation
 
-Reference implementation: `rig-core/src/providers/openai/` (Chat Completions API)
+Reference implementation: `crates/rig-core/src/providers/openai/` (Chat Completions API)
 
 When implementing a new provider, study the OpenAI Chat Completions implementation thoroughly. It demonstrates the complete pattern including both completion and embedding models.
 
@@ -92,7 +92,7 @@ When implementing a new provider, study the OpenAI Chat Completions implementati
 
 ## rig-vector-store-implementation
 
-Vector stores live in separate companion crates (e.g., `rig-mongodb`, `rig-lancedb`).
+Vector stores live in separate companion crates under `crates/vector-stores/` (e.g., `rig-mongodb`, `rig-lancedb`).
 
 ### Core Trait
 

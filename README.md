@@ -1,8 +1,8 @@
 <p align="center">
 <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="img/rig-rebranded-logo-white.svg">
-    <source media="(prefers-color-scheme: light)" srcset="img/rig-rebranded-logo-black.svg">
-    <img src="img/rig-rebranded-logo-white.svg" style="width: 40%; height: 40%;" alt="Rig logo">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/rig-rebranded-logo-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/rig-rebranded-logo-black.svg">
+    <img src="assets/rig-rebranded-logo-white.svg" style="width: 40%; height: 40%;" alt="Rig logo">
 </picture>
 <br>
 <br>
@@ -120,26 +120,26 @@ async fn main() -> Result<(), anyhow::Error> {
 Note using `#[tokio::main]` requires you enable tokio's `macros` and `rt-multi-thread` features
 or just `full` to enable all features (`cargo add tokio --features macros,rt-multi-thread`).
 
-You can find more examples in each crate's `examples` directory (for example, [`rig/rig-core/examples`](./rig/rig-core/examples)). Many provider-specific examples now also live as ignored live integration tests under [`rig/rig-core/tests`](./rig/rig-core/tests), organized by provider. When running those provider-backed tests, prefer `cargo test -p rig-core --test <provider> -- --ignored --test-threads=1` to avoid rate-limiting. More detailed use case walkthroughs are regularly published on our [Dev.to Blog](https://dev.to/0thtachi) and added to Rig's official documentation at [docs.rig.rs](https://docs.rig.rs).
+You can find more examples in each crate's `examples` directory (for example, [`crates/rig-core/examples`](./crates/rig-core/examples)). Many provider-specific examples now also live as ignored live integration tests under [`crates/rig-core/tests`](./crates/rig-core/tests), organized by provider. When running those provider-backed tests, prefer `cargo test -p rig-core --test <provider> -- --ignored --test-threads=1` to avoid rate-limiting. More detailed use case walkthroughs are regularly published on our [Dev.to Blog](https://dev.to/0thtachi) and added to Rig's official documentation at [docs.rig.rs](https://docs.rig.rs).
 
 ## Supported Integrations
 
 Vector stores are available as separate companion-crates:
-- MongoDB: [`rig-mongodb`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-mongodb)
-- LanceDB: [`rig-lancedb`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-lancedb)
-- Neo4j: [`rig-neo4j`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-neo4j)
-- Qdrant: [`rig-qdrant`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-qdrant)
-- SQLite: [`rig-sqlite`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-sqlite)
-- SurrealDB: [`rig-surrealdb`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-surrealdb)
-- Milvus: [`rig-milvus`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-milvus)
-- ScyllaDB: [`rig-scylladb`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-scylladb)
-- AWS S3Vectors: [`rig-s3vectors`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-s3vectors)
-- HelixDB: [`rig-helixdb`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-helixdb)
+- MongoDB: [`rig-mongodb`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-mongodb)
+- LanceDB: [`rig-lancedb`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-lancedb)
+- Neo4j: [`rig-neo4j`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-neo4j)
+- Qdrant: [`rig-qdrant`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-qdrant)
+- SQLite: [`rig-sqlite`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-sqlite)
+- SurrealDB: [`rig-surrealdb`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-surrealdb)
+- Milvus: [`rig-milvus`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-milvus)
+- ScyllaDB: [`rig-scylladb`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-scylladb)
+- AWS S3Vectors: [`rig-s3vectors`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-s3vectors)
+- HelixDB: [`rig-helixdb`](https://github.com/0xPlaygrounds/rig/tree/main/crates/vector-stores/rig-helixdb)
 
 The following providers are available as separate companion-crates:
-- AWS Bedrock: [`rig-bedrock`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-bedrock)
-- Fastembed: [`rig-fastembed`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-fastembed)
-- Google Vertex: [`rig-vertexai`](https://github.com/0xPlaygrounds/rig/tree/main/rig/rig-vertexai)
+- AWS Bedrock: [`rig-bedrock`](https://github.com/0xPlaygrounds/rig/tree/main/crates/providers/rig-bedrock)
+- Fastembed: [`rig-fastembed`](https://github.com/0xPlaygrounds/rig/tree/main/crates/embeddings/rig-fastembed)
+- Google Vertex: [`rig-vertexai`](https://github.com/0xPlaygrounds/rig/tree/main/crates/providers/rig-vertexai)
 
 We also have some other associated crates that have additional functionality you may find helpful when using Rig:
 - `rig-onchain-kit` - the [Rig Onchain Kit.](https://github.com/0xPlaygrounds/rig-onchain-kit) Intended to make interactions between Solana/EVM and Rig much easier to implement.
@@ -148,5 +148,5 @@ We also have some other associated crates that have additional functionality you
 <p align="center">
 <br>
 <br>
-<img src="img/built-by-playgrounds.svg" alt="Build by Playgrounds" width="30%">
+<img src="assets/built-by-playgrounds.svg" alt="Build by Playgrounds" width="30%">
 </p>

@@ -1,7 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
-    "rig/*"
+    "crates/rig",
+    "crates/rig-core",
+    "crates/rig-derive",
+    "crates/embeddings/*",
+    "crates/providers/*",
+    "crates/vector-stores/*",
 ]
 exclude = [
     "archived"
@@ -103,4 +108,4 @@ zerocopy = "0.8.26"
 
 [workspace.metadata.cargo-autoinherit]
 # Skip cargo-autoinherit for these packages
-exclude-members = ["rig/rig-core", "rig/rig-derive"]
+exclude-members = ["crates/rig-core", "crates/rig-derive"]
