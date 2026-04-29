@@ -9055,6 +9055,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
+name = "rig"
+version = "0.36.0"
+dependencies = [
+ "rig-bedrock",
+ "rig-core",
+ "rig-fastembed",
+ "rig-gemini-grpc",
+ "rig-helixdb",
+ "rig-lancedb",
+ "rig-milvus",
+ "rig-mongodb",
+ "rig-neo4j",
+ "rig-postgres",
+ "rig-qdrant",
+ "rig-s3vectors",
+ "rig-scylladb",
+ "rig-sqlite",
+ "rig-surrealdb",
+ "rig-vectorize",
+ "rig-vertexai",
+]
+
+[[package]]
 name = "rig-bedrock"
 version = "0.4.5"
 dependencies = [
@@ -9139,9 +9162,10 @@ dependencies = [
  "convert_case",
  "deluxe",
  "indoc",
+ "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
- "rig-core",
+ "rig",
  "serde",
  "serde_json",
  "syn 2.0.117",

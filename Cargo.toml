@@ -1,8 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
-    "rig/*",
-    "rig-integrations/*"
+    "crates/rig",
+    "crates/rig-core",
+    "crates/rig-derive",
+    "crates/embeddings/*",
+    "crates/providers/*",
+    "crates/vector-stores/*",
 ]
 exclude = [
     "archived"
@@ -67,6 +71,7 @@ neo4rs = "0.8.0"
 ordered-float = "5.0.0"
 pgvector = "0.4"
 proc-macro2 = "1.0.95"
+proc-macro-crate = "3.5.0"
 qdrant-client = { version = "1.14.0", default-features = false, features = [
     "serde",
 ] }
@@ -103,4 +108,4 @@ zerocopy = "0.8.26"
 
 [workspace.metadata.cargo-autoinherit]
 # Skip cargo-autoinherit for these packages
-exclude-members = ["rig/rig-core", "rig/rig-derive"]
+exclude-members = ["crates/rig-core", "crates/rig-derive"]

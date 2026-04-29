@@ -29,7 +29,7 @@ Requirements:
 
 ## rig-vector-store-implementation
 
-Vector stores live in separate companion crates (e.g., `rig-mongodb`, `rig-lancedb`).
+Vector stores live in separate companion crates under `crates/vector-stores/` (e.g., `rig-mongodb`, `rig-lancedb`).
 
 ### Core Trait
 
