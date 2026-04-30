@@ -77,10 +77,125 @@ use crate::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::ops::{Add, AddAssign};
 use thiserror::Error;
 
 // Errors
+/// Structured error details returned by a model provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderErrorDetails {
+    /// HTTP status returned by the provider, when available.
+    pub status: Option<http::StatusCode>,
+    /// Provider-specific error code, type, or status identifier.
+    pub code: Option<String>,
+    /// Human-readable provider error message.
+    pub message: String,
+    /// Provider request identifier from response headers, when available.
+    pub request_id: Option<String>,
+    /// Raw provider response body, preserved for debugging.
+    pub raw_body: Option<String>,
+}
+
+impl ProviderErrorDetails {
+    /// Creates provider error details from a message without HTTP response metadata.
+    pub fn from_message(message: impl Into<String>) -> Self {
+        Self {
+            status: None,
+            code: None,
+            message: message.into(),
+            request_id: None,
+            raw_body: None,
+        }
+    }
+
+    /// Creates provider error details from an HTTP response status, headers, and body.
+    pub fn from_response(
+        status: http::StatusCode,
+        headers: &http::HeaderMap,
+        body: impl Into<String>,
+    ) -> Self {
+        let raw_body = body.into();
+        let (message, code) =
+            parse_provider_error_body(&raw_body).unwrap_or_else(|| (raw_body.clone(), None));
+
+        Self {
+            status: Some(status),
+            code,
+            message,
+            request_id: provider_request_id(headers),
+            raw_body: Some(raw_body),
+        }
+    }
+}
+
+impl fmt::Display for ProviderErrorDetails {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = Vec::new();
+
+        if let Some(status) = self.status {
+            parts.push(format!("status={}", status.as_u16()));
+        }
+
+        if let Some(code) = &self.code {
+            parts.push(format!("code={code}"));
+        }
+
+        if let Some(request_id) = &self.request_id {
+            parts.push(format!("request_id={request_id}"));
+        }
+
+        if parts.is_empty() {
+            write!(f, "{}", self.message)
+        } else {
+            write!(f, "{} ({})", self.message, parts.join(", "))
+        }
+    }
+}
+
+fn provider_request_id(headers: &http::HeaderMap) -> Option<String> {
+    const REQUEST_ID_HEADERS: &[&str] = &[
+        "x-request-id",
+        "request-id",
+        "x-openai-request-id",
+        "anthropic-request-id",
+        "x-cloud-trace-context",
+        "cf-ray",
+    ];
+
+    REQUEST_ID_HEADERS.iter().find_map(|name| {
+        headers
+            .get(*name)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn parse_provider_error_body(body: &str) -> Option<(String, Option<String>)> {
+    let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    let error = value.get("error").unwrap_or(&value);
+
+    let message = error
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.get("message").and_then(serde_json::Value::as_str))?
+        .to_owned();
+
+    let code = error
+        .get("code")
+        .or_else(|| error.get("type"))
+        .or_else(|| error.get("status"))
+        .or_else(|| value.get("type"))
+        .or_else(|| value.get("status"))
+        .and_then(|code| match code {
+            serde_json::Value::String(code) => Some(code.clone()),
+            serde_json::Value::Number(code) => Some(code.to_string()),
+            _ => None,
+        });
+
+    Some((message, code))
+}
+
 #[derive(Debug, Error)]
 pub enum CompletionError {
     /// Http error (e.g.: connection error, timeout, etc.)
@@ -112,6 +227,20 @@ pub enum CompletionError {
     /// Error returned by the completion model provider
     #[error("ProviderError: {0}")]
     ProviderError(String),
+
+    /// Error response returned by the completion model provider.
+    #[error("ProviderError: {0}")]
+    ProviderErrorResponse(ProviderErrorDetails),
+}
+
+impl CompletionError {
+    pub(crate) fn provider_error_response(
+        status: http::StatusCode,
+        headers: &http::HeaderMap,
+        body: impl Into<String>,
+    ) -> Self {
+        Self::ProviderErrorResponse(ProviderErrorDetails::from_response(status, headers, body))
+    }
 }
 
 /// Prompt errors
@@ -1079,5 +1208,49 @@ mod tests {
         let history = request.chat_history.into_iter().collect::<Vec<_>>();
         assert_eq!(history.len(), 1);
         assert!(matches!(&history[0], Message::User { .. }));
+    }
+
+    #[test]
+    fn provider_error_details_parse_openai_shape() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-request-id", "req_123".parse().expect("valid header"));
+
+        let details = ProviderErrorDetails::from_response(
+            http::StatusCode::BAD_REQUEST,
+            &headers,
+            r#"{"error":{"message":"context length exceeded","type":"invalid_request_error","code":"context_length_exceeded"}}"#,
+        );
+
+        assert_eq!(details.status, Some(http::StatusCode::BAD_REQUEST));
+        assert_eq!(details.code.as_deref(), Some("context_length_exceeded"));
+        assert_eq!(details.message, "context length exceeded");
+        assert_eq!(details.request_id.as_deref(), Some("req_123"));
+        assert!(details.raw_body.is_some());
+    }
+
+    #[test]
+    fn provider_error_details_parse_gemini_shape() {
+        let details = ProviderErrorDetails::from_response(
+            http::StatusCode::BAD_REQUEST,
+            &http::HeaderMap::new(),
+            r#"{"error":{"code":400,"message":"API key not valid","status":"INVALID_ARGUMENT"}}"#,
+        );
+
+        assert_eq!(details.code.as_deref(), Some("400"));
+        assert_eq!(details.message, "API key not valid");
+    }
+
+    #[test]
+    fn provider_error_details_preserve_plain_text_body() {
+        let details = ProviderErrorDetails::from_response(
+            http::StatusCode::BAD_GATEWAY,
+            &http::HeaderMap::new(),
+            "upstream unavailable",
+        );
+
+        assert_eq!(details.status, Some(http::StatusCode::BAD_GATEWAY));
+        assert_eq!(details.code, None);
+        assert_eq!(details.message, "upstream unavailable");
+        assert_eq!(details.raw_body.as_deref(), Some("upstream unavailable"));
     }
 }

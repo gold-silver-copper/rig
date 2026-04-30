@@ -1380,8 +1380,12 @@ where
                     ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                 }
             } else {
+                let status = response.status();
+                let headers = response.headers().clone();
                 let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider_error_response(
+                    status, &headers, text,
+                ))
             }
         }
         .instrument(span)
@@ -1472,6 +1476,40 @@ mod tests {
             serde_json::to_value(openai_request).expect("serialization should succeed");
 
         assert_eq!(serialized["model"], "gpt-4o-mini");
+    }
+
+    #[test]
+    fn conformance_request_serializes_core_fields() {
+        let request = crate::providers::conformance::completion_request_fixture();
+
+        let openai_request = CompletionRequest::try_from(OpenAIRequestParams {
+            model: crate::providers::conformance::DEFAULT_MODEL.to_string(),
+            request,
+            strict_tools: false,
+            tool_result_array_content: false,
+        })
+        .expect("request conversion should succeed");
+        let serialized =
+            serde_json::to_value(openai_request).expect("serialization should succeed");
+
+        assert_eq!(
+            serialized["model"],
+            crate::providers::conformance::REQUEST_MODEL
+        );
+        assert_eq!(serialized["temperature"], 0.2);
+        assert_eq!(serialized["max_tokens"], 128);
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::SYSTEM_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::USER_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::TOOL_NAME,
+        );
     }
 
     #[test]

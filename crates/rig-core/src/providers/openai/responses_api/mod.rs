@@ -1422,8 +1422,12 @@ where
                 }
                 response.try_into()
             } else {
+                let status = response.status();
+                let headers = response.headers().clone();
                 let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider_error_response(
+                    status, &headers, text,
+                ))
             }
         }
         .instrument(span)

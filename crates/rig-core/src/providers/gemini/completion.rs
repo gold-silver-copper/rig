@@ -163,15 +163,19 @@ where
 
                 response.try_into()
             } else {
+                let status = response.status();
+                let headers = response.headers().clone();
                 let text = String::from_utf8_lossy(
                     &response
                         .into_body()
                         .await
                         .map_err(CompletionError::HttpError)?,
                 )
-                .into();
+                .to_string();
 
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider_error_response(
+                    status, &headers, text,
+                ))
             }
         }
         .instrument(span)
@@ -225,14 +229,9 @@ pub(crate) fn create_request_body(
         additional_params,
     } = serde_json::from_value::<AdditionalParameters>(additional_params_payload)?;
 
-    // Apply output_schema to generation_config, creating one if needed
-    if let Some(schema) = output_schema {
+    if output_schema.is_some() || temperature.is_some() || max_tokens.is_some() {
         let cfg = generation_config.get_or_insert_with(GenerationConfig::default);
-        cfg.response_mime_type = Some("application/json".to_string());
-        cfg.response_json_schema = Some(schema.to_value());
-    }
 
-    generation_config = generation_config.map(|mut cfg| {
         if let Some(temp) = temperature {
             cfg.temperature = Some(temp);
         };
@@ -241,8 +240,11 @@ pub(crate) fn create_request_body(
             cfg.max_output_tokens = Some(max_tokens);
         };
 
-        cfg
-    });
+        if let Some(schema) = output_schema {
+            cfg.response_mime_type = Some("application/json".to_string());
+            cfg.response_json_schema = Some(schema.to_value());
+        }
+    }
 
     let mut system_parts: Vec<Part> = Vec::new();
     if let Some(preamble) = preamble.filter(|preamble| !preamble.is_empty()) {
@@ -2079,6 +2081,34 @@ mod tests {
         assert_eq!(
             resolve_request_model("gemini-2.0-flash", &request),
             "gemini-2.0-flash"
+        );
+    }
+
+    #[test]
+    fn conformance_request_serializes_core_fields() {
+        let request = crate::providers::conformance::completion_request_fixture();
+        let request_model =
+            resolve_request_model(crate::providers::conformance::DEFAULT_MODEL, &request);
+
+        let gemini_request =
+            create_request_body(request).expect("request conversion should succeed");
+        let serialized =
+            serde_json::to_value(gemini_request).expect("serialization should succeed");
+
+        assert_eq!(request_model, crate::providers::conformance::REQUEST_MODEL);
+        assert_eq!(serialized["generationConfig"]["temperature"], 0.2);
+        assert_eq!(serialized["generationConfig"]["maxOutputTokens"], 128);
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::SYSTEM_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::USER_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::TOOL_NAME,
         );
     }
 

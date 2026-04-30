@@ -49,6 +49,8 @@ pub mod anthropic;
 pub mod azure;
 pub mod chatgpt;
 pub mod cohere;
+#[cfg(test)]
+pub(crate) mod conformance;
 pub mod copilot;
 pub mod deepseek;
 pub mod galadriel;

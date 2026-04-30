@@ -1752,6 +1752,7 @@ where
         async move {
             let response = self.client.send::<_, Bytes>(req).await?;
             let status = response.status();
+            let headers = response.headers().clone();
             let response_body = response.into_body().into_future().await?.to_vec();
 
             if status.is_success() {
@@ -1777,7 +1778,9 @@ where
                     ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                 }
             } else {
-                Err(CompletionError::ProviderError(
+                Err(CompletionError::provider_error_response(
+                    status,
+                    &headers,
                     String::from_utf8_lossy(&response_body).to_string(),
                 ))
             }
@@ -1848,6 +1851,38 @@ mod tests {
             serde_json::to_value(openrouter_request).expect("serialization should succeed");
 
         assert_eq!(serialized["model"], "openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn conformance_request_serializes_core_fields() {
+        let request = crate::providers::conformance::completion_request_fixture();
+
+        let openrouter_request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
+            model: crate::providers::conformance::DEFAULT_MODEL,
+            request,
+            strict_tools: false,
+        })
+        .expect("request conversion should succeed");
+        let serialized =
+            serde_json::to_value(openrouter_request).expect("serialization should succeed");
+
+        assert_eq!(
+            serialized["model"],
+            crate::providers::conformance::REQUEST_MODEL
+        );
+        assert_eq!(serialized["temperature"], 0.2);
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::SYSTEM_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::USER_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::TOOL_NAME,
+        );
     }
 
     #[test]

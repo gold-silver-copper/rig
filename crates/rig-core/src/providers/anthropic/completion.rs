@@ -1255,6 +1255,7 @@ impl TryFrom<AnthropicRequestParams<'_>> for AnthropicCompletionRequest {
                 "`max_tokens` must be set for Anthropic".into(),
             ));
         };
+        let model = req.model.clone().unwrap_or_else(|| model.to_string());
 
         let mut full_history = vec![];
         if let Some(docs) = req.normalized_documents() {
@@ -1320,7 +1321,7 @@ impl TryFrom<AnthropicRequestParams<'_>> for AnthropicCompletionRequest {
         };
 
         Ok(Self {
-            model: model.to_string(),
+            model,
             messages,
             max_tokens,
             system,
@@ -1470,6 +1471,8 @@ where
                     }
                 }
             } else {
+                let status = response.status();
+                let headers = response.headers().clone();
                 let text: String = String::from_utf8_lossy(
                     &response
                         .into_body()
@@ -1477,7 +1480,9 @@ where
                         .map_err(CompletionError::HttpError)?,
                 )
                 .into();
-                Err(CompletionError::ProviderError(text))
+                Err(CompletionError::provider_error_response(
+                    status, &headers, text,
+                ))
             }
         }
         .instrument(span)
@@ -1522,6 +1527,40 @@ mod tests {
             Some(64_000)
         );
         assert_eq!(default_max_tokens_for_model(CLAUDE_HAIKU_4_5), Some(64_000));
+    }
+
+    #[test]
+    fn conformance_request_serializes_core_fields() {
+        let request = crate::providers::conformance::completion_request_fixture();
+
+        let anthropic_request = AnthropicCompletionRequest::try_from(AnthropicRequestParams {
+            model: crate::providers::conformance::DEFAULT_MODEL,
+            request,
+            prompt_caching: false,
+            automatic_caching: false,
+            automatic_caching_ttl: None,
+        })
+        .expect("request conversion should succeed");
+        let serialized =
+            serde_json::to_value(anthropic_request).expect("serialization should succeed");
+
+        assert_eq!(
+            serialized["model"],
+            crate::providers::conformance::REQUEST_MODEL
+        );
+        assert_eq!(serialized["max_tokens"], 128);
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::SYSTEM_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::USER_TEXT,
+        );
+        crate::providers::conformance::assert_json_contains(
+            &serialized,
+            crate::providers::conformance::TOOL_NAME,
+        );
     }
 
     #[test]
