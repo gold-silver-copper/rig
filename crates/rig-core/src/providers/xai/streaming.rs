@@ -25,7 +25,7 @@ where
         completion_request: CompletionRequest,
     ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
     {
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let mut request =
             XAICompletionRequest::try_from((self.model.as_str(), completion_request))?;
 

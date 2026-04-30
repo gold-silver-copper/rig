@@ -157,7 +157,7 @@ where
                 gen_ai.operation.name = "chat_streaming",
                 gen_ai.provider.name = Ext::PROVIDER_NAME,
                 gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt().as_deref(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = &request_model,
                 gen_ai.usage.output_tokens = tracing::field::Empty,
@@ -180,11 +180,7 @@ where
             ));
         };
 
-        let mut full_history = vec![];
-        if let Some(docs) = completion_request.normalized_documents() {
-            full_history.push(docs);
-        }
-        full_history.extend(completion_request.chat_history);
+        let full_history = completion_request.messages_with_documents();
         let (history_system, full_history) = split_system_messages_from_history(full_history);
 
         let mut messages = full_history
@@ -192,21 +188,7 @@ where
             .map(Message::try_from)
             .collect::<Result<Vec<Message>, _>>()?;
 
-        // Convert system prompt to array format for cache_control support
-        let mut system: Vec<SystemContent> =
-            if let Some(preamble) = completion_request.preamble.as_ref() {
-                if preamble.is_empty() {
-                    vec![]
-                } else {
-                    vec![SystemContent::Text {
-                        text: preamble.clone(),
-                        cache_control: None,
-                    }]
-                }
-            } else {
-                vec![]
-            };
-        system.extend(history_system);
+        let mut system: Vec<SystemContent> = history_system;
 
         // Apply cache control breakpoints only if prompt_caching is enabled
         if self.prompt_caching {

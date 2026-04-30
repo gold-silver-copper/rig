@@ -88,7 +88,7 @@ where
                 gen_ai.operation.name = "chat_streaming",
                 gen_ai.provider.name = "gcp.gemini",
                 gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt().as_deref(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = &request_model,
                 gen_ai.usage.output_tokens = tracing::field::Empty,

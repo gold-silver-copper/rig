@@ -718,8 +718,8 @@ data: [DONE]"#;
     fn test_normalize_system_messages_into_instructions() {
         let completion_request = completion::CompletionRequest {
             model: Some("gpt-5.4".to_string()),
-            preamble: Some("System one".to_string()),
             chat_history: OneOrMany::many(vec![
+                completion::Message::system("System one"),
                 completion::Message::system("System two"),
                 completion::Message::user("hi"),
             ])
@@ -754,7 +754,6 @@ data: [DONE]"#;
         let request = model
             .create_request(completion::CompletionRequest {
                 model: None,
-                preamble: None,
                 chat_history: OneOrMany::one(completion::Message::user("hello")),
                 documents: Vec::new(),
                 tools: Vec::new(),

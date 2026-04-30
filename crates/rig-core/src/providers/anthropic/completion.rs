@@ -1257,11 +1257,7 @@ impl TryFrom<AnthropicRequestParams<'_>> for AnthropicCompletionRequest {
         };
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
 
-        let mut full_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            full_history.push(docs);
-        }
-        full_history.extend(req.chat_history);
+        let full_history = req.messages_with_documents();
         let (history_system, full_history) = split_system_messages_from_history(full_history);
 
         let mut messages = full_history
@@ -1288,20 +1284,7 @@ impl TryFrom<AnthropicRequestParams<'_>> for AnthropicCompletionRequest {
             .collect::<Result<Vec<_>, _>>()?;
         tools.append(&mut additional_tools);
 
-        // Convert system prompt to array format for cache_control support
-        let mut system = if let Some(preamble) = req.preamble {
-            if preamble.is_empty() {
-                vec![]
-            } else {
-                vec![SystemContent::Text {
-                    text: preamble,
-                    cache_control: None,
-                }]
-            }
-        } else {
-            vec![]
-        };
-        system.extend(history_system);
+        let mut system = history_system;
 
         // Apply cache control breakpoints only if prompt_caching is enabled
         if prompt_caching {
@@ -1390,7 +1373,7 @@ where
                 gen_ai.operation.name = "chat",
                 gen_ai.provider.name = Ext::PROVIDER_NAME,
                 gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt().as_deref(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = tracing::field::Empty,
                 gen_ai.usage.output_tokens = tracing::field::Empty,

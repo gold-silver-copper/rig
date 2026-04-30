@@ -55,19 +55,12 @@ impl TryFrom<(&str, CompletionRequest)> for XAICompletionRequest {
             tracing::warn!("Structured outputs currently not supported for xAI");
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut input: Vec<Message> = req
-            .preamble
-            .as_ref()
-            .map_or_else(Vec::new, |p| vec![Message::system(p)]);
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            input.extend(docs);
-        }
+        let messages = req.messages_with_documents();
+        let mut input = Vec::new();
 
         let mut additional_params_payload = req.additional_params.unwrap_or(Value::Null);
 
-        for msg in req.chat_history {
+        for msg in messages {
             let msg: Vec<Message> = msg.try_into()?;
             input.extend(msg);
         }
@@ -228,7 +221,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         let request =
             XAICompletionRequest::try_from((self.model.to_string().as_ref(), completion_request))?;
@@ -297,8 +293,11 @@ mod tests {
     fn xai_request_includes_normalized_documents() {
         let request = CompletionRequest {
             model: None,
-            preamble: Some("Use the provided context.".to_string()),
-            chat_history: OneOrMany::one("What is glarb-glarb?".into()),
+            chat_history: OneOrMany::many(vec![
+                crate::message::Message::system("Use the provided context."),
+                "What is glarb-glarb?".into(),
+            ])
+            .expect("history"),
             documents: vec![Document {
                 id: "doc_1".to_string(),
                 text: "Definition of glarb-glarb: an ancient tool.".to_string(),

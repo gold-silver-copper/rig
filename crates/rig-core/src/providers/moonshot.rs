@@ -331,18 +331,7 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
-
-        let mut full_history: Vec<Value> = match &req.preamble {
-            Some(preamble) => vec![serde_json::to_value(openai::Message::system(preamble))?],
-            None => vec![],
-        };
-
-        full_history.extend(moonshot_history_values(partial_history)?);
+        let mut full_history = moonshot_history_values(req.messages_with_documents())?;
 
         let mut tool_choice = None;
         let mut tool_choice_required = false;
@@ -517,7 +506,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         let request =
             MoonshotCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
@@ -599,7 +591,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            request.system_prompt().as_deref(),
+        );
         let mut request = MoonshotCompletionRequest::try_from((self.model.as_ref(), request))?;
 
         let params = json_utils::merge(
@@ -701,7 +696,6 @@ mod tests {
 
         let request = CompletionRequest {
             model: Some("kimi-k2-thinking".to_string()),
-            preamble: None,
             chat_history: crate::OneOrMany::one(assistant),
             documents: vec![],
             tools: vec![],
@@ -732,7 +726,6 @@ mod tests {
     fn moonshot_required_tool_choice_is_coerced() {
         let request = CompletionRequest {
             model: Some("kimi-k2.5".to_string()),
-            preamble: None,
             chat_history: crate::OneOrMany::one(Message::user("Use a tool.")),
             documents: vec![],
             tools: vec![],

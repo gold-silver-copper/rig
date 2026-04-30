@@ -134,7 +134,7 @@ where
             .model
             .clone()
             .unwrap_or_else(|| self.model.clone());
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let mut request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
             model: request_model.as_ref(),
             request: completion_request,

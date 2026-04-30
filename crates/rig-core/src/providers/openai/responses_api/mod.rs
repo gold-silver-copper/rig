@@ -792,21 +792,9 @@ impl TryFrom<(String, crate::completion::CompletionRequest)> for CompletionReque
     ) -> Result<Self, Self::Error> {
         let model = req.model.clone().unwrap_or(model);
         let input = {
-            let mut partial_history = vec![];
-            if let Some(docs) = req.normalized_documents() {
-                partial_history.push(docs);
-            }
-            partial_history.extend(req.chat_history);
+            let partial_history = req.messages_with_documents();
 
-            // Initialize full history with preamble (or empty if non-existent)
-            // Some "Responses API compatible" providers don't support `instructions` field
-            // so we need to add a system message until further notice
-            let mut full_history: Vec<InputItem> = if let Some(content) = req.preamble {
-                vec![InputItem::system_message(content)]
-            } else {
-                Vec::new()
-            };
-
+            let mut full_history = Vec::new();
             for history_item in partial_history {
                 full_history.extend(<Vec<InputItem>>::try_from(history_item)?);
             }

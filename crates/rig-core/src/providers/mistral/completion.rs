@@ -353,26 +353,14 @@ impl TryFrom<(&str, CompletionRequest)> for MistralCompletionRequest {
             tracing::warn!("Structured outputs currently not supported for Mistral");
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble.clone())],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
+        let full_history: Vec<Message> = req
+            .messages_with_documents()
             .into_iter()
             .map(|message| message.try_into())
             .collect::<Result<Vec<Vec<Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
-
-        full_history.extend(chat_history);
 
         if full_history.is_empty() {
             return Err(CompletionError::RequestError(
@@ -584,7 +572,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let request =
             MistralCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
@@ -808,7 +796,6 @@ mod tests {
     #[test]
     fn test_request_conversion_errors_when_all_messages_are_filtered() {
         let request = CompletionRequest {
-            preamble: None,
             chat_history: OneOrMany::one(message::Message::Assistant {
                 id: None,
                 content: OneOrMany::one(message::AssistantContent::reasoning("hidden")),

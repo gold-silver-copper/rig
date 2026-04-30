@@ -14,8 +14,8 @@ pub(crate) const TOOL_NAME: &str = "get_weather";
 pub(crate) fn completion_request_fixture() -> CompletionRequest {
     CompletionRequest {
         model: Some(REQUEST_MODEL.to_string()),
-        preamble: Some(SYSTEM_TEXT.to_string()),
         chat_history: OneOrMany::many(vec![
+            Message::system(SYSTEM_TEXT),
             Message::user(USER_TEXT),
             Message::assistant(ASSISTANT_TEXT),
         ])

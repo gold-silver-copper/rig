@@ -18,7 +18,7 @@ where
         completion_request: CompletionRequest,
     ) -> Result<StreamingCompletionResponse<openai::StreamingCompletionResponse>, CompletionError>
     {
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let mut request = TogetherAICompletionRequest::try_from((
             self.model.to_string().as_ref(),
             completion_request,

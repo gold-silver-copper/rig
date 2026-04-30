@@ -97,7 +97,7 @@ where
                 gen_ai.operation.name = "generate_content",
                 gen_ai.provider.name = "gcp.gemini",
                 gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt().as_deref(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = tracing::field::Empty,
                 gen_ai.usage.output_tokens = tracing::field::Empty,
@@ -196,12 +196,11 @@ where
 pub(crate) fn create_request_body(
     completion_request: CompletionRequest,
 ) -> Result<GenerateContentRequest, CompletionError> {
-    let documents_message = completion_request.normalized_documents();
+    let full_history = completion_request.messages_with_documents();
 
     let CompletionRequest {
         model: _,
-        preamble,
-        chat_history,
+        chat_history: _,
         documents: _,
         tools: function_tools,
         temperature,
@@ -211,11 +210,6 @@ pub(crate) fn create_request_body(
         output_schema,
     } = completion_request;
 
-    let mut full_history = Vec::new();
-    if let Some(msg) = documents_message {
-        full_history.push(msg);
-    }
-    full_history.extend(chat_history);
     let (history_system, full_history) = split_system_messages_from_history(full_history);
 
     let mut additional_params_payload = additional_params
@@ -247,9 +241,6 @@ pub(crate) fn create_request_body(
     }
 
     let mut system_parts: Vec<Part> = Vec::new();
-    if let Some(preamble) = preamble.filter(|preamble| !preamble.is_empty()) {
-        system_parts.push(preamble.into());
-    }
     for content in history_system {
         if !content.is_empty() {
             system_parts.push(content.into());
@@ -2040,7 +2031,6 @@ mod tests {
     fn test_resolve_request_model_uses_override() {
         let request = CompletionRequest {
             model: Some("gemini-2.5-flash".to_string()),
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],
@@ -2067,7 +2057,6 @@ mod tests {
     fn test_resolve_request_model_uses_default_when_unset() {
         let request = CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],
@@ -2758,8 +2747,11 @@ mod tests {
         ];
 
         let completion_request = CompletionRequest {
-            preamble: Some("You are a helpful assistant".to_string()),
-            chat_history: OneOrMany::one(Message::user("What are my notes about?")),
+            chat_history: OneOrMany::many(vec![
+                Message::system("You are a helpful assistant"),
+                Message::user("What are my notes about?"),
+            ])
+            .expect("history"),
             documents: documents.clone(),
             tools: vec![],
             temperature: None,
@@ -2824,8 +2816,11 @@ mod tests {
         use crate::message::Message;
 
         let completion_request = CompletionRequest {
-            preamble: Some("You are a helpful assistant".to_string()),
-            chat_history: OneOrMany::one(Message::user("Hello")),
+            chat_history: OneOrMany::many(vec![
+                Message::system("You are a helpful assistant"),
+                Message::user("Hello"),
+            ])
+            .expect("history"),
             documents: vec![], // No documents
             tools: vec![],
             temperature: None,

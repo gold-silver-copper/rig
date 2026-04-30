@@ -594,27 +594,14 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
             );
         }
 
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<openai::Message> = req
-            .chat_history
-            .clone()
+        let full_history: Vec<openai::Message> = req
+            .messages_with_documents()
             .into_iter()
             .map(|message| message.try_into())
             .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
-
-        full_history.extend(chat_history);
 
         let tool_choice = req
             .tool_choice
@@ -704,7 +691,7 @@ where
                 gen_ai.operation.name = "chat",
                 gen_ai.provider.name = "azure.openai",
                 gen_ai.request.model = self.model,
-                gen_ai.system_instructions = &completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt().as_deref(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = tracing::field::Empty,
                 gen_ai.usage.output_tokens = tracing::field::Empty,
@@ -771,7 +758,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let mut request =
             AzureOpenAICompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
@@ -1127,8 +1114,11 @@ mod azure_tests {
         let completion = model
             .completion(CompletionRequest {
                 model: None,
-                preamble: Some("You are a helpful assistant.".to_string()),
-                chat_history: OneOrMany::one("Hello!".into()),
+                chat_history: OneOrMany::many(vec![
+                    crate::message::Message::system("You are a helpful assistant."),
+                    "Hello!".into(),
+                ])
+                .expect("history"),
                 documents: vec![],
                 max_tokens: Some(100),
                 temperature: Some(0.0),

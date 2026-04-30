@@ -230,21 +230,11 @@ impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
         }
         partial_history.extend(req.chat_history);
 
-        // Initialize full history with preamble (or empty if non-existent)
-        let mut full_history: Vec<Message> = req.preamble.map_or_else(Vec::new, |preamble| {
-            vec![Message {
-                role: Role::System,
-                content: preamble,
-            }]
-        });
-
         // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Message>, _>>()?,
-        );
+        let full_history = partial_history
+            .into_iter()
+            .map(message::Message::try_into)
+            .collect::<Result<Vec<Message>, _>>()?;
 
         Ok(Self {
             model: model.to_string(),
@@ -371,7 +361,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         if completion_request.tool_choice.is_some() {
             tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");
@@ -457,7 +450,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         if completion_request.tool_choice.is_some() {
             tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");

@@ -297,28 +297,14 @@ impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
 
-        // Build message history: preamble -> documents -> chat history
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<openai::Message> = req
-            .chat_history
-            .clone()
+        let full_history: Vec<openai::Message> = req
+            .messages_with_documents()
             .into_iter()
             .map(|msg| msg.try_into())
             .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
-
-        full_history.extend(chat_history);
 
         Ok(Self {
             model,
@@ -383,7 +369,7 @@ where
                 gen_ai.operation.name = "chat",
                 gen_ai.provider.name = "llamafile",
                 gen_ai.request.model = self.model,
-                gen_ai.system_instructions = completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = tracing::field::Empty,
                 gen_ai.usage.output_tokens = tracing::field::Empty,
@@ -467,7 +453,7 @@ where
                 gen_ai.operation.name = "chat_streaming",
                 gen_ai.provider.name = "llamafile",
                 gen_ai.request.model = self.model,
-                gen_ai.system_instructions = completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = tracing::field::Empty,
                 gen_ai.usage.output_tokens = tracing::field::Empty,
@@ -763,12 +749,15 @@ mod tests {
 
         let completion_request = CompletionRequest {
             model: None,
-            preamble: Some("You are a helpful assistant.".to_string()),
-            chat_history: OneOrMany::one(CompletionMessage::User {
-                content: OneOrMany::one(UserContent::Text(Text {
-                    text: "Hello!".to_string(),
-                })),
-            }),
+            chat_history: OneOrMany::many(vec![
+                CompletionMessage::system("You are a helpful assistant."),
+                CompletionMessage::User {
+                    content: OneOrMany::one(UserContent::Text(Text {
+                        text: "Hello!".to_string(),
+                    })),
+                },
+            ])
+            .expect("history"),
             documents: vec![],
             tools: vec![],
             temperature: Some(0.7),
@@ -800,7 +789,6 @@ mod tests {
 
         let completion_request = CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: OneOrMany::one(CompletionMessage::User {
                 content: OneOrMany::one(UserContent::Text(Text {
                     text: "What does glarb-glarb mean?".to_string(),

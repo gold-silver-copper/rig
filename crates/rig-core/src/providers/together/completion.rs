@@ -151,25 +151,14 @@ impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
             tracing::warn!("Structured outputs currently not supported for TogetherAI");
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<openai::Message> = match &req.preamble {
-            Some(preamble) => vec![openai::Message::system(preamble)],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<openai::Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<openai::Message> = req
-            .chat_history
+        let full_history: Vec<openai::Message> = req
+            .messages_with_documents()
             .into_iter()
             .map(|message| message.try_into())
             .collect::<Result<Vec<Vec<openai::Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
-
-        full_history.extend(chat_history);
 
         if full_history.is_empty() {
             return Err(CompletionError::RequestError(
@@ -253,7 +242,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         let request = TogetherAICompletionRequest::try_from((
             self.model.to_string().as_ref(),
@@ -372,7 +364,6 @@ mod tests {
     #[test]
     fn together_request_conversion_errors_when_all_messages_are_filtered() {
         let request = CompletionRequest {
-            preamble: None,
             chat_history: OneOrMany::one(message::Message::Assistant {
                 id: None,
                 content: OneOrMany::one(message::AssistantContent::reasoning("hidden")),

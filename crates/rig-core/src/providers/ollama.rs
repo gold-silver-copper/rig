@@ -452,22 +452,13 @@ impl TryFrom<(&str, CompletionRequest)> for OllamaCompletionRequest {
         }
         partial_history.extend(req.chat_history);
 
-        // Add preamble to chat history (if available)
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Vec<Message>>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
+        let full_history = partial_history
+            .into_iter()
+            .map(message::Message::try_into)
+            .collect::<Result<Vec<Vec<Message>>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
 
         let mut think = false;
         let mut keep_alive: Option<String> = None;
@@ -598,7 +589,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
         let request = OllamaCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -678,7 +672,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            request.system_prompt().as_deref(),
+        );
 
         let mut request = OllamaCompletionRequest::try_from((self.model.as_ref(), request))?;
         request.stream = true;
@@ -1561,12 +1558,15 @@ mod tests {
         // Create a CompletionRequest with "think": true, "keep_alive", and "num_ctx" in additional_params
         let completion_request = CompletionRequest {
             model: None,
-            preamble: Some("You are a helpful assistant.".to_string()),
-            chat_history: OneOrMany::one(CompletionMessage::User {
-                content: OneOrMany::one(UserContent::Text(Text {
-                    text: "What is 2 + 2?".to_string(),
-                })),
-            }),
+            chat_history: OneOrMany::many(vec![
+                CompletionMessage::system("You are a helpful assistant."),
+                CompletionMessage::User {
+                    content: OneOrMany::one(UserContent::Text(Text {
+                        text: "What is 2 + 2?".to_string(),
+                    })),
+                },
+            ])
+            .expect("history"),
             documents: vec![],
             tools: vec![],
             temperature: Some(0.7),
@@ -1629,12 +1629,15 @@ mod tests {
         // Create a CompletionRequest WITHOUT "think" in additional_params
         let completion_request = CompletionRequest {
             model: None,
-            preamble: Some("You are a helpful assistant.".to_string()),
-            chat_history: OneOrMany::one(CompletionMessage::User {
-                content: OneOrMany::one(UserContent::Text(Text {
-                    text: "Hello!".to_string(),
-                })),
-            }),
+            chat_history: OneOrMany::many(vec![
+                CompletionMessage::system("You are a helpful assistant."),
+                CompletionMessage::User {
+                    content: OneOrMany::one(UserContent::Text(Text {
+                        text: "Hello!".to_string(),
+                    })),
+                },
+            ])
+            .expect("history"),
             documents: vec![],
             tools: vec![],
             temperature: Some(0.5),
@@ -1694,7 +1697,6 @@ mod tests {
 
         let completion_request = CompletionRequest {
             model: Some("llama3.1".to_string()),
-            preamble: None,
             chat_history: OneOrMany::one(CompletionMessage::User {
                 content: OneOrMany::one(UserContent::Text(Text {
                     text: "How old is Ollama?".to_string(),
@@ -1739,7 +1741,6 @@ mod tests {
 
         let completion_request = CompletionRequest {
             model: Some("llama3.1".to_string()),
-            preamble: None,
             chat_history: OneOrMany::one(CompletionMessage::User {
                 content: OneOrMany::one(UserContent::Text(Text {
                     text: "Hello!".to_string(),

@@ -8,6 +8,8 @@
 //! - [StreamingCompletion]: Defines a low-level streaming LLM completion interface
 //!
 
+mod aggregation;
+
 use crate::OneOrMany;
 use crate::agent::Agent;
 use crate::agent::prompt_request::hooks::PromptHook;
@@ -28,6 +30,8 @@ use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::task::{Context, Poll};
 use tokio::sync::watch;
+
+use aggregation::{AggregationOutcome, StreamingAggregation};
 
 /// Control for pausing and resuming a streaming response
 pub struct PauseControl {
@@ -202,9 +206,7 @@ where
     pub(crate) inner: Abortable<StreamingResult<R>>,
     pub(crate) abort_handle: AbortHandle,
     pub(crate) pause_control: PauseControl,
-    assistant_items: Vec<AssistantContent>,
-    text_item_index: Option<usize>,
-    reasoning_item_index: Option<usize>,
+    aggregation: StreamingAggregation,
     /// The final aggregated message from the stream
     /// contains all text and tool calls generated
     pub choice: OneOrMany<AssistantContent>,
@@ -228,9 +230,7 @@ where
             inner: abortable_stream,
             abort_handle,
             pause_control,
-            assistant_items: vec![],
-            text_item_index: None,
-            reasoning_item_index: None,
+            aggregation: StreamingAggregation::new(),
             choice: OneOrMany::one(AssistantContent::text("")),
             response: None,
             final_response_yielded: AtomicBool::new(false),
@@ -252,45 +252,6 @@ where
 
     pub fn is_paused(&self) -> bool {
         self.pause_control.is_paused()
-    }
-
-    fn append_text_chunk(&mut self, text: &str) {
-        if let Some(index) = self.text_item_index
-            && let Some(AssistantContent::Text(existing_text)) = self.assistant_items.get_mut(index)
-        {
-            existing_text.text.push_str(text);
-            return;
-        }
-
-        self.assistant_items
-            .push(AssistantContent::text(text.to_owned()));
-        self.text_item_index = Some(self.assistant_items.len() - 1);
-    }
-
-    /// Accumulate streaming reasoning delta text into assistant_items.
-    /// Providers that only emit ReasoningDelta (not full Reasoning blocks)
-    /// need this so the aggregated response includes reasoning content.
-    fn append_reasoning_chunk(&mut self, id: &Option<String>, text: &str) {
-        if let Some(index) = self.reasoning_item_index
-            && let Some(AssistantContent::Reasoning(existing)) = self.assistant_items.get_mut(index)
-            && let Some(ReasoningContent::Text {
-                text: existing_text,
-                ..
-            }) = existing.content.last_mut()
-        {
-            existing_text.push_str(text);
-            return;
-        }
-
-        self.assistant_items
-            .push(AssistantContent::Reasoning(Reasoning {
-                id: id.clone(),
-                content: vec![ReasoningContent::Text {
-                    text: text.to_string(),
-                    signature: None,
-                }],
-            }));
-        self.reasoning_item_index = Some(self.assistant_items.len() - 1);
     }
 }
 
@@ -325,17 +286,7 @@ where
         match Pin::new(&mut stream.inner).poll_next(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => {
-                // This is run at the end of the inner stream to collect all tokens into
-                // a single unified `Message`.
-                if stream.assistant_items.is_empty() {
-                    stream.assistant_items.push(AssistantContent::text(""));
-                }
-
-                if let Some(choice) =
-                    OneOrMany::from_iter_optional(std::mem::take(&mut stream.assistant_items))
-                {
-                    stream.choice = choice;
-                }
+                stream.choice = stream.aggregation.finish();
 
                 Poll::Ready(None)
             }
@@ -346,56 +297,9 @@ where
                 }
                 Poll::Ready(Some(Err(err)))
             }
-            Poll::Ready(Some(Ok(choice))) => match choice {
-                RawStreamingChoice::Message(text) => {
-                    stream.reasoning_item_index = None;
-                    stream.append_text_chunk(&text);
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::text(&text))))
-                }
-                RawStreamingChoice::ToolCallDelta {
-                    id,
-                    internal_call_id,
-                    content,
-                } => Poll::Ready(Some(Ok(StreamedAssistantContent::ToolCallDelta {
-                    id,
-                    internal_call_id,
-                    content,
-                }))),
-                RawStreamingChoice::Reasoning { id, content } => {
-                    let reasoning = Reasoning {
-                        id,
-                        content: vec![content],
-                    };
-                    stream.text_item_index = None;
-                    // Full reasoning block supersedes any delta accumulation
-                    stream.reasoning_item_index = None;
-                    stream
-                        .assistant_items
-                        .push(AssistantContent::Reasoning(reasoning.clone()));
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::Reasoning(reasoning))))
-                }
-                RawStreamingChoice::ReasoningDelta { id, reasoning } => {
-                    stream.text_item_index = None;
-                    stream.append_reasoning_chunk(&id, &reasoning);
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::ReasoningDelta {
-                        id,
-                        reasoning,
-                    })))
-                }
-                RawStreamingChoice::ToolCall(raw_tool_call) => {
-                    let internal_call_id = raw_tool_call.internal_call_id.clone();
-                    let tool_call: ToolCall = raw_tool_call.into();
-                    stream.text_item_index = None;
-                    stream.reasoning_item_index = None;
-                    stream
-                        .assistant_items
-                        .push(AssistantContent::ToolCall(tool_call.clone()));
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::ToolCall {
-                        tool_call,
-                        internal_call_id,
-                    })))
-                }
-                RawStreamingChoice::FinalResponse(response) => {
+            Poll::Ready(Some(Ok(choice))) => match stream.aggregation.push(choice) {
+                AggregationOutcome::Emit(content) => Poll::Ready(Some(Ok(content))),
+                AggregationOutcome::FinalResponse(response) => {
                     if stream
                         .final_response_yielded
                         .load(std::sync::atomic::Ordering::SeqCst)
@@ -411,7 +315,7 @@ where
                         Poll::Ready(Some(Ok(final_response)))
                     }
                 }
-                RawStreamingChoice::MessageId(id) => {
+                AggregationOutcome::MessageId(id) => {
                     stream.message_id = Some(id);
                     stream.poll_next_unpin(cx)
                 }

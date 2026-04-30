@@ -1594,26 +1594,14 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
             tracing::warn!("Structured outputs currently not supported for OpenRouter");
         }
 
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
+        let full_history: Vec<Message> = req
+            .messages_with_documents()
             .into_iter()
             .map(|message| message.try_into())
             .collect::<Result<Vec<Vec<Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
-
-        full_history.extend(chat_history);
 
         let tool_choice = req
             .tool_choice
@@ -1708,7 +1696,7 @@ where
             .model
             .clone()
             .unwrap_or_else(|| self.model.clone());
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
             model: request_model.as_ref(),
             request: completion_request,
@@ -1809,7 +1797,6 @@ mod tests {
     fn test_openrouter_request_uses_request_model_override() {
         let request = CompletionRequest {
             model: Some("google/gemini-2.5-flash".to_string()),
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],
@@ -1833,7 +1820,6 @@ mod tests {
     fn test_openrouter_request_uses_default_model_when_override_unset() {
         let request = CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],

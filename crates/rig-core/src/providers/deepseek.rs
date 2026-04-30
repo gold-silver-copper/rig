@@ -475,27 +475,14 @@ impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
             tracing::warn!("Structured outputs currently not supported for DeepSeek");
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
+        let full_history: Vec<Message> = req
+            .messages_with_documents()
             .into_iter()
             .map(|message| message.try_into())
             .collect::<Result<Vec<Vec<Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
-
-        full_history.extend(chat_history);
 
         let tool_choice = req
             .tool_choice
@@ -567,7 +554,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         let request =
             DeepseekCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
@@ -636,7 +626,7 @@ where
         crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
         CompletionError,
     > {
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let mut request =
             DeepseekCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 

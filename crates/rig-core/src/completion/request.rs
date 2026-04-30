@@ -634,11 +634,6 @@ pub trait CompletionModel: Clone + WasmCompatSend + WasmCompatSync {
 pub struct CompletionRequest {
     /// Optional model override for this request.
     pub model: Option<String>,
-    /// Legacy preamble field preserved for backwards compatibility.
-    ///
-    /// New code should prefer a leading [`Message::System`]
-    /// in `chat_history` as the canonical representation of system instructions.
-    pub preamble: Option<String>,
     /// The chat history to be sent to the completion model provider.
     /// The very last message will always be the prompt (hence why there is *always* one)
     pub chat_history: OneOrMany<Message>,
@@ -697,6 +692,32 @@ impl CompletionRequest {
             .collect::<Vec<_>>();
 
         OneOrMany::from_iter_optional(messages).map(|content| Message::User { content })
+    }
+
+    /// Returns request messages with normalized documents prepended.
+    pub fn messages_with_documents(&self) -> Vec<Message> {
+        self.normalized_documents()
+            .into_iter()
+            .chain(self.chat_history.clone())
+            .collect()
+    }
+
+    /// Returns system instructions from canonical system messages.
+    pub fn system_prompt(&self) -> Option<String> {
+        let system_messages = self
+            .chat_history
+            .iter()
+            .filter_map(|message| match message {
+                Message::System { content } if !content.is_empty() => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if system_messages.is_empty() {
+            None
+        } else {
+            Some(system_messages.join("\n"))
+        }
     }
 
     /// Adds a provider-hosted tool by storing it in `additional_params.tools`.
@@ -988,7 +1009,6 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
 
     /// Builds the completion request.
     pub fn build(self) -> CompletionRequest {
-        // Build the final message list, prepending preamble if present
         let mut chat_history = self.chat_history;
         let prompt = self.prompt;
         if let Some(preamble) = self.preamble {
@@ -1005,7 +1025,6 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
 
         CompletionRequest {
             model: self.request_model,
-            preamble: None,
             chat_history,
             documents: self.documents,
             tools: self.tools,
@@ -1132,7 +1151,6 @@ mod tests {
 
         let request = CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: OneOrMany::one("What is the capital of France?".into()),
             documents: vec![doc1, doc2],
             tools: Vec::new(),
@@ -1164,7 +1182,6 @@ mod tests {
     fn test_normalize_documents_without_documents() {
         let request = CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: OneOrMany::one("What is the capital of France?".into()),
             documents: Vec::new(),
             tools: Vec::new(),
@@ -1185,8 +1202,6 @@ mod tests {
             .message(Message::user("History"))
             .build();
 
-        assert_eq!(request.preamble, None);
-
         let history = request.chat_history.into_iter().collect::<Vec<_>>();
         assert_eq!(history.len(), 3);
         assert!(matches!(
@@ -1204,10 +1219,23 @@ mod tests {
             .without_preamble()
             .build();
 
-        assert_eq!(request.preamble, None);
         let history = request.chat_history.into_iter().collect::<Vec<_>>();
         assert_eq!(history.len(), 1);
         assert!(matches!(&history[0], Message::User { .. }));
+    }
+
+    #[test]
+    fn request_system_prompt_reads_system_messages() {
+        let request = CompletionRequestBuilder::new(DummyModel, Message::user("Prompt"))
+            .message(Message::system("System one"))
+            .message(Message::user("History"))
+            .message(Message::system("System two"))
+            .build();
+
+        assert_eq!(
+            request.system_prompt().as_deref(),
+            Some("System one\nSystem two")
+        );
     }
 
     #[test]

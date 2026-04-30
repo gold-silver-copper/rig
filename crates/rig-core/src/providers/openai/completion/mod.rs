@@ -1120,14 +1120,9 @@ impl TryFrom<OpenAIRequestParams> for CompletionRequest {
             tool_result_array_content,
         } = params;
 
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
+        let partial_history = req.messages_with_documents();
         let CoreCompletionRequest {
             model: request_model,
-            preamble,
-            chat_history,
             tools,
             temperature,
             max_tokens,
@@ -1137,20 +1132,13 @@ impl TryFrom<OpenAIRequestParams> for CompletionRequest {
             ..
         } = req;
 
-        partial_history.extend(chat_history);
-
-        let mut full_history: Vec<Message> =
-            preamble.map_or_else(Vec::new, |preamble| vec![Message::system(&preamble)]);
-
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Vec<Message>>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
+        let mut full_history = partial_history
+            .into_iter()
+            .map(message::Message::try_into)
+            .collect::<Result<Vec<Vec<Message>>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
 
         if full_history.is_empty() {
             return Err(CompletionError::RequestError(
@@ -1321,7 +1309,7 @@ where
                 gen_ai.operation.name = "chat",
                 gen_ai.provider.name = "openai",
                 gen_ai.request.model = self.model,
-                gen_ai.system_instructions = &completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt().as_deref(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = tracing::field::Empty,
                 gen_ai.usage.output_tokens = tracing::field::Empty,
@@ -1426,7 +1414,6 @@ mod tests {
     fn test_openai_request_uses_request_model_override() {
         let request = crate::completion::CompletionRequest {
             model: Some("gpt-4.1".to_string()),
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],
@@ -1454,7 +1441,6 @@ mod tests {
     fn test_openai_request_uses_default_model_when_override_unset() {
         let request = crate::completion::CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],
@@ -1670,7 +1656,6 @@ mod tests {
     fn test_max_tokens_is_forwarded_to_request() {
         let request = crate::completion::CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],
@@ -1698,7 +1683,6 @@ mod tests {
     fn test_max_tokens_omitted_when_none() {
         let request = crate::completion::CompletionRequest {
             model: None,
-            preamble: None,
             chat_history: crate::OneOrMany::one("Hello".into()),
             documents: vec![],
             tools: vec![],
@@ -1726,7 +1710,6 @@ mod tests {
     fn request_conversion_errors_when_all_messages_are_filtered() {
         let request = CoreCompletionRequest {
             model: None,
-            preamble: None,
             chat_history: OneOrMany::one(message::Message::Assistant {
                 id: None,
                 content: OneOrMany::one(message::AssistantContent::reasoning("hidden")),
@@ -1754,7 +1737,6 @@ mod tests {
     fn request_conversion_omits_response_format_on_initial_tool_turn() {
         let request = CoreCompletionRequest {
             model: None,
-            preamble: None,
             chat_history: OneOrMany::one(message::Message::user(
                 "Hello, whats the weather in London?",
             )),
@@ -1809,7 +1791,6 @@ mod tests {
     fn request_conversion_restores_response_format_after_tool_result() {
         let request = CoreCompletionRequest {
             model: None,
-            preamble: None,
             chat_history: OneOrMany::many(vec![
                 message::Message::user("Hello, whats the weather in London?"),
                 message::Message::Assistant {

@@ -280,27 +280,14 @@ impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
             tracing::warn!("WARNING: `tools` not supported on Hyperbolic");
         }
 
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        if let Some(docs) = req.normalized_documents() {
-            let docs: Vec<Message> = docs.try_into()?;
-            full_history.extend(docs);
-        }
-
-        let chat_history: Vec<Message> = req
-            .chat_history
-            .clone()
+        let full_history: Vec<Message> = req
+            .messages_with_documents()
             .into_iter()
             .map(|message| message.try_into())
             .collect::<Result<Vec<Vec<Message>>, _>>()?
             .into_iter()
             .flatten()
             .collect();
-
-        full_history.extend(chat_history);
 
         Ok(Self {
             model: model.to_string(),
@@ -369,7 +356,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
         let request =
             HyperbolicCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
@@ -440,7 +430,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
         let mut request =
             HyperbolicCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 

@@ -558,25 +558,14 @@ impl TryFrom<(&str, CompletionRequest)> for CohereCompletionRequest {
         }
 
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
-
-        let mut full_history: Vec<Message> = req.preamble.map_or_else(Vec::new, |preamble| {
-            vec![Message::System { content: preamble }]
-        });
-
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Vec<Message>>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
+        let full_history = req
+            .messages_with_documents()
+            .into_iter()
+            .map(message::Message::try_into)
+            .collect::<Result<Vec<Vec<Message>>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
 
         let tool_choice = if let Some(tool_choice) = req.tool_choice {
             if !matches!(tool_choice, ToolChoice::Auto) {

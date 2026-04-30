@@ -295,16 +295,6 @@ pub struct Message {
     pub tool_calls: Vec<openai::ToolCall>,
 }
 
-impl Message {
-    fn system(preamble: &str) -> Self {
-        Self {
-            role: "system".to_string(),
-            content: Some(preamble.to_string()),
-            tool_calls: Vec::new(),
-        }
-    }
-}
-
 impl TryFrom<Message> for message::Message {
     type Error = message::MessageError;
 
@@ -455,26 +445,11 @@ impl TryFrom<(&str, CompletionRequest)> for GaladrielCompletionRequest {
             tracing::warn!("Structured outputs currently not supported for Galadriel");
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
-
-        // Add preamble to chat history (if available)
-        let mut full_history: Vec<Message> = match &req.preamble {
-            Some(preamble) => vec![Message::system(preamble)],
-            None => vec![],
-        };
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Message>, _>>()?,
-        );
+        let full_history = req
+            .messages_with_documents()
+            .into_iter()
+            .map(message::Message::try_into)
+            .collect::<Result<Vec<Message>, _>>()?;
 
         let tool_choice = req
             .tool_choice
@@ -559,7 +534,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         let request =
             GaladrielCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
@@ -622,7 +600,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        let preamble = completion_request.preamble.clone();
+        let preamble = completion_request.system_prompt();
         let mut request =
             GaladrielCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 

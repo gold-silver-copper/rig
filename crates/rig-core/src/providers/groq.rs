@@ -185,29 +185,14 @@ impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
             tracing::warn!("Structured outputs currently not supported for Groq");
         }
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        // Build up the order of messages (context, chat_history, prompt)
-        let mut partial_history = vec![];
-        if let Some(docs) = req.normalized_documents() {
-            partial_history.push(docs);
-        }
-        partial_history.extend(req.chat_history);
-
-        // Add preamble to chat history (if available)
-        let mut full_history: Vec<OpenAIMessage> = match &req.preamble {
-            Some(preamble) => vec![OpenAIMessage::system(preamble)],
-            None => vec![],
-        };
-
-        // Convert and extend the rest of the history
-        full_history.extend(
-            partial_history
-                .into_iter()
-                .map(message::Message::try_into)
-                .collect::<Result<Vec<Vec<OpenAIMessage>>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
+        let full_history = req
+            .messages_with_documents()
+            .into_iter()
+            .map(message::Message::try_into)
+            .collect::<Result<Vec<Vec<OpenAIMessage>>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
 
         let tool_choice = req
             .tool_choice
@@ -379,7 +364,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         let request = GroqCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
@@ -470,7 +458,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            request.system_prompt().as_deref(),
+        );
 
         let mut request = GroqCompletionRequest::try_from((self.model.as_ref(), request))?;
 

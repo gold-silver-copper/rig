@@ -232,13 +232,6 @@ impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         let mut messages = Vec::new();
 
-        if let Some(content) = &req.preamble {
-            messages.push(RawMessage {
-                role: "user".to_string(),
-                content: content.to_string(),
-            });
-        }
-
         if let Some(Message::User { content }) = req.normalized_documents() {
             let text = content
                 .into_iter()
@@ -354,7 +347,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         if !completion_request.tools.is_empty() {
             tracing::warn!(target: "rig::completions",
@@ -459,7 +455,10 @@ where
             tracing::Span::current()
         };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+        span.record(
+            "gen_ai.system_instructions",
+            completion_request.system_prompt().as_deref(),
+        );
 
         if !completion_request.tools.is_empty() {
             tracing::warn!(target: "rig::completions",

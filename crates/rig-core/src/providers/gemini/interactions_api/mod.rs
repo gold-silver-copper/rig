@@ -127,7 +127,7 @@ where
                 gen_ai.operation.name = "interactions",
                 gen_ai.provider.name = "gcp.gemini",
                 gen_ai.request.model = self.model,
-                gen_ai.system_instructions = &completion_request.preamble,
+                gen_ai.system_instructions = completion_request.system_prompt().as_deref(),
                 gen_ai.response.id = tracing::field::Empty,
                 gen_ai.response.model = tracing::field::Empty,
                 gen_ai.usage.output_tokens = tracing::field::Empty,
@@ -331,16 +331,11 @@ pub(crate) fn create_request_body(
         Some(generation_config)
     };
 
-    let system_instruction = completion_request
-        .preamble
-        .or_else(|| {
-            if history_system.is_empty() {
-                None
-            } else {
-                Some(history_system.join("\n\n"))
-            }
-        })
-        .or(params.system_instruction.take());
+    let system_instruction = if history_system.is_empty() {
+        params.system_instruction.take()
+    } else {
+        Some(history_system.join("\n\n"))
+    };
 
     let mut tools = Vec::new();
     if !completion_request.tools.is_empty() {
@@ -2444,8 +2439,8 @@ mod tests {
 
         let request = CompletionRequest {
             model: None,
-            preamble: Some("Be precise.".to_string()),
-            chat_history: OneOrMany::one(prompt),
+            chat_history: OneOrMany::many(vec![Message::system("Be precise."), prompt])
+                .expect("history"),
             documents: vec![],
             tools: vec![],
             temperature: Some(0.7),
