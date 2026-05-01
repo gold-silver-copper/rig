@@ -374,10 +374,13 @@ impl ModelEventAccumulator {
                     .entry(func.id.clone())
                     .or_insert_with(|| nanoid::nanoid!())
                     .clone();
-                let tool_call =
-                    crate::model_event::StreamingToolCall::new(func.id, func.name, func.arguments)
-                        .with_internal_call_id(internal_call_id)
-                        .with_call_id(func.call_id);
+                let tool_call = crate::providers::internal::tool_call::ProviderToolCall::new(
+                    func.id,
+                    func.name,
+                    func.arguments,
+                )
+                .with_internal_call_id(internal_call_id)
+                .with_call_id(func.call_id);
 
                 if emit_completed_tool_calls_immediately {
                     immediate.push(ModelEvent::from(tool_call));

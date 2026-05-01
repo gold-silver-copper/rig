@@ -34,92 +34,6 @@ pub enum ToolCallDeltaContent {
     Delta(String),
 }
 
-/// A complete tool call assembled from provider stream events.
-#[derive(Debug, Clone)]
-pub struct StreamingToolCall {
-    /// Provider-supplied tool call ID.
-    pub id: String,
-    /// Rig-generated unique identifier for correlating tool call deltas/results.
-    pub internal_call_id: String,
-    /// Provider-supplied call ID, when the provider distinguishes it from item ID.
-    pub call_id: Option<String>,
-    /// Tool/function name.
-    pub name: String,
-    /// Tool/function arguments.
-    pub arguments: serde_json::Value,
-    /// Provider signature for the tool call, when present.
-    pub signature: Option<String>,
-    /// Additional provider-specific tool call fields.
-    pub additional_params: Option<serde_json::Value>,
-}
-
-impl StreamingToolCall {
-    /// Creates an empty pending tool call accumulator.
-    pub fn empty() -> Self {
-        Self {
-            id: String::new(),
-            internal_call_id: nanoid::nanoid!(),
-            call_id: None,
-            name: String::new(),
-            arguments: serde_json::Value::Null,
-            signature: None,
-            additional_params: None,
-        }
-    }
-
-    /// Creates a complete streaming tool call.
-    pub fn new(id: String, name: String, arguments: serde_json::Value) -> Self {
-        Self {
-            id,
-            internal_call_id: nanoid::nanoid!(),
-            call_id: None,
-            name,
-            arguments,
-            signature: None,
-            additional_params: None,
-        }
-    }
-
-    /// Sets the internal call ID.
-    pub fn with_internal_call_id(mut self, internal_call_id: String) -> Self {
-        self.internal_call_id = internal_call_id;
-        self
-    }
-
-    /// Sets the provider call ID.
-    pub fn with_call_id(mut self, call_id: String) -> Self {
-        self.call_id = Some(call_id);
-        self
-    }
-
-    /// Sets the provider signature.
-    pub fn with_signature(mut self, signature: Option<String>) -> Self {
-        self.signature = signature;
-        self
-    }
-
-    /// Sets additional provider-specific parameters.
-    pub fn with_additional_params(mut self, additional_params: Option<serde_json::Value>) -> Self {
-        self.additional_params = additional_params;
-        self
-    }
-}
-
-impl From<StreamingToolCall> for ToolCall {
-    fn from(tool_call: StreamingToolCall) -> Self {
-        ToolCall {
-            id: tool_call.id,
-            call_id: tool_call.call_id,
-            function: ToolFunction {
-                name: tool_call.name,
-                arguments: tool_call.arguments,
-            },
-            signature: tool_call.signature,
-            additional_params: tool_call.additional_params,
-        }
-    }
-}
-
 /// A normalized provider/model output event.
 #[derive(Debug)]
 pub enum ModelEvent<R> {
@@ -500,17 +414,6 @@ fn events_from_assistant_content<R>(content: AssistantContent) -> Vec<ModelEvent
                     "image": image,
                 }),
             }]
-        }
-    }
-}
-
-impl<R> From<StreamingToolCall> for ModelEvent<R> {
-    fn from(streaming_tool_call: StreamingToolCall) -> Self {
-        let internal_call_id = streaming_tool_call.internal_call_id.clone();
-        let tool_call: ToolCall = streaming_tool_call.into();
-        Self::ToolCallDone {
-            tool_call,
-            internal_call_id: Some(internal_call_id),
         }
     }
 }

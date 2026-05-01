@@ -15,7 +15,8 @@ use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::json_utils::merge_inplace;
 use crate::message::{Reasoning, ReasoningContent};
-use crate::model_event::{ModelEvent, StreamingToolCall, ToolCallDeltaContent};
+use crate::model_event::{ModelEvent, ToolCallDeltaContent};
+use crate::providers::internal::tool_call::ProviderToolCall;
 use crate::telemetry::SpanCombinator;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 
@@ -495,7 +496,7 @@ fn handle_event(
                 match serde_json::from_str(json_str) {
                     Ok(json_value) => {
                         let raw_tool_call =
-                            StreamingToolCall::new(tool_call.id, tool_call.name, json_value)
+                            ProviderToolCall::new(tool_call.id, tool_call.name, json_value)
                                 .with_internal_call_id(tool_call.internal_call_id);
                         Some(Ok(ModelEvent::from(raw_tool_call)))
                     }

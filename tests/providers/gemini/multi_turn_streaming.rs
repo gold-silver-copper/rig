@@ -33,7 +33,7 @@ enum StreamingError {
     Tool(#[from] ToolSetError),
 }
 
-type StreamingResult = Pin<Box<dyn Stream<Item = Result<Text, StreamingError>> + Send>>;
+type GeminiStreamingResult = Pin<Box<dyn Stream<Item = Result<Text, StreamingError>> + Send>>;
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
@@ -87,7 +87,7 @@ async fn multi_turn_prompt<M>(
     agent: Agent<M>,
     prompt: impl Into<Message> + Send,
     mut chat_history: Vec<completion::Message>,
-) -> StreamingResult
+) -> GeminiStreamingResult
 where
     M: CompletionModel + 'static,
     M::StreamingResponse: Send,
@@ -185,7 +185,7 @@ where
     })
 }
 
-async fn collect_text(stream: &mut StreamingResult) -> Result<String, StreamingError> {
+async fn collect_text(stream: &mut GeminiStreamingResult) -> Result<String, StreamingError> {
     let mut text = String::new();
     while let Some(content) = stream.next().await {
         text.push_str(&content?.text);

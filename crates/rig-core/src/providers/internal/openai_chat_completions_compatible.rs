@@ -17,7 +17,8 @@ use crate::completion::{CompletionError, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::json_utils;
-use crate::model_event::{ModelEvent, StreamingToolCall, ToolCallDeltaContent};
+use crate::model_event::{ModelEvent, ToolCallDeltaContent};
+use crate::providers::internal::tool_call::ProviderToolCall;
 use crate::wasm_compat::WasmCompatSend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +150,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
 
     fn should_evict(
         &self,
-        existing: &StreamingToolCall,
+        existing: &ProviderToolCall,
         incoming: &CompatibleToolCallChunk,
     ) -> bool {
         self.uses_distinct_tool_call_eviction()
@@ -159,7 +160,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
     fn decorate_tool_call(
         &self,
         _detail: &Self::Detail,
-        _tool_calls: &mut HashMap<usize, StreamingToolCall>,
+        _tool_calls: &mut HashMap<usize, ProviderToolCall>,
     ) {
     }
 
@@ -169,7 +170,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
 
     fn should_emit_completed_tool_call_immediately(
         &self,
-        _tool_call: &StreamingToolCall,
+        _tool_call: &ProviderToolCall,
         incoming: &CompatibleToolCallChunk,
     ) -> bool {
         self.emits_complete_single_chunk_tool_calls() && incoming.is_complete_single_chunk()
@@ -177,7 +178,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
 }
 
 pub(crate) fn should_evict_distinct_named_tool_call(
-    existing: &StreamingToolCall,
+    existing: &ProviderToolCall,
     incoming: &CompatibleToolCallChunk,
 ) -> bool {
     if let Some(new_id) = &incoming.id
@@ -208,7 +209,7 @@ where
     let mut event_source = GenericEventSource::new(http_client, req);
 
     let stream = stream! {
-        let mut tool_calls: HashMap<usize, StreamingToolCall> = HashMap::new();
+        let mut tool_calls: HashMap<usize, ProviderToolCall> = HashMap::new();
         let mut final_usage = None;
         let mut terminated_with_error = false;
 
@@ -259,7 +260,7 @@ where
 
                         let existing_tool_call = tool_calls
                             .entry(incoming.index)
-                            .or_insert_with(StreamingToolCall::empty);
+                            .or_insert_with(ProviderToolCall::empty);
 
                         if let Some(id) = incoming.id.as_ref()
                             && !id.is_empty()
@@ -415,7 +416,7 @@ fn record_response_metadata(
     }
 }
 
-fn append_tool_call_arguments(tool_call: &mut StreamingToolCall, chunk: &str) {
+fn append_tool_call_arguments(tool_call: &mut ProviderToolCall, chunk: &str) {
     let current_args = match &tool_call.arguments {
         serde_json::Value::Null => String::new(),
         serde_json::Value::String(existing) => {
@@ -445,8 +446,8 @@ fn append_tool_call_arguments(tool_call: &mut StreamingToolCall, chunk: &str) {
 }
 
 pub(crate) fn finalize_completed_streaming_tool_call(
-    mut tool_call: StreamingToolCall,
-) -> StreamingToolCall {
+    mut tool_call: ProviderToolCall,
+) -> ProviderToolCall {
     if tool_call.arguments.is_null() {
         tool_call.arguments = serde_json::Value::Object(serde_json::Map::new());
     }
@@ -454,7 +455,7 @@ pub(crate) fn finalize_completed_streaming_tool_call(
     tool_call
 }
 
-fn finalize_pending_tool_call(mut tool_call: StreamingToolCall) -> Option<StreamingToolCall> {
+fn finalize_pending_tool_call(mut tool_call: ProviderToolCall) -> Option<ProviderToolCall> {
     // Canonical cleanup for OpenAI Chat Completions-compatible providers:
     // a pending tool call with an established name but no streamed arguments is
     // treated as a valid parameterless invocation and normalized to `{}`.
@@ -486,8 +487,8 @@ enum DroppedToolCallContext {
 }
 
 fn drain_finalized_tool_calls(
-    tool_calls: &mut HashMap<usize, StreamingToolCall>,
-) -> (Vec<StreamingToolCall>, usize) {
+    tool_calls: &mut HashMap<usize, ProviderToolCall>,
+) -> (Vec<ProviderToolCall>, usize) {
     let mut completed_tool_calls = Vec::new();
     let mut dropped_tool_calls = 0;
 
@@ -503,9 +504,9 @@ fn drain_finalized_tool_calls(
 }
 
 fn take_finalized_tool_calls(
-    tool_calls: &mut HashMap<usize, StreamingToolCall>,
+    tool_calls: &mut HashMap<usize, ProviderToolCall>,
     context: DroppedToolCallContext,
-) -> Vec<StreamingToolCall> {
+) -> Vec<ProviderToolCall> {
     let (completed_tool_calls, dropped_tool_calls) = drain_finalized_tool_calls(tool_calls);
 
     if dropped_tool_calls > 0 {
@@ -607,7 +608,8 @@ mod tests {
     };
     use crate::completion::{CompletionError, GetTokenUsage};
     use crate::http_client::mock::MockStreamingClient;
-    use crate::model_event::{ModelEvent, StreamingToolCall, ToolCallDeltaContent};
+    use crate::model_event::{ModelEvent, ToolCallDeltaContent};
+    use crate::providers::internal::tool_call::ProviderToolCall;
     use futures::StreamExt;
 
     #[derive(Clone, Default)]
@@ -790,7 +792,7 @@ mod tests {
 
     #[test]
     fn eof_cleanup_preserves_parameterless_tool_calls() {
-        let tool_call = StreamingToolCall::new(
+        let tool_call = ProviderToolCall::new(
             "call_123".to_owned(),
             "ping".to_owned(),
             serde_json::Value::Null,
@@ -806,7 +808,7 @@ mod tests {
 
     #[test]
     fn eof_cleanup_preserves_empty_argument_chunks_as_empty_object() {
-        let tool_call = StreamingToolCall::new(
+        let tool_call = ProviderToolCall::new(
             "call_123".to_owned(),
             "ping".to_owned(),
             serde_json::Value::String(String::new()),
@@ -820,14 +822,14 @@ mod tests {
 
     #[test]
     fn eof_cleanup_drops_nameless_pending_entries() {
-        let tool_call = StreamingToolCall::empty();
+        let tool_call = ProviderToolCall::empty();
 
         assert!(finalize_pending_tool_call(tool_call).is_none());
     }
 
     #[test]
     fn eof_cleanup_drops_partial_argument_payloads() {
-        let tool_call = StreamingToolCall::new(
+        let tool_call = ProviderToolCall::new(
             "call_123".to_owned(),
             "ping".to_owned(),
             serde_json::Value::String("{\"x\":".to_owned()),
@@ -838,7 +840,7 @@ mod tests {
 
     #[test]
     fn null_placeholder_is_replaced_by_following_json_fragments() {
-        let mut tool_call = StreamingToolCall::new(
+        let mut tool_call = ProviderToolCall::new(
             "call_123".to_owned(),
             "web_search".to_owned(),
             serde_json::Value::String("null".to_owned()),

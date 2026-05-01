@@ -230,7 +230,10 @@ impl CompatibleStreamProfile for OpenRouterCompatibleProfile {
     fn decorate_tool_call(
         &self,
         detail: &Self::Detail,
-        tool_calls: &mut std::collections::HashMap<usize, crate::model_event::StreamingToolCall>,
+        tool_calls: &mut std::collections::HashMap<
+            usize,
+            crate::providers::internal::tool_call::ProviderToolCall,
+        >,
     ) {
         if let ReasoningDetails::Encrypted { id, data, .. } = detail
             && let Some(id) = id

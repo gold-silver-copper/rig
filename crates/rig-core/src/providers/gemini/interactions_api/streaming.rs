@@ -234,7 +234,7 @@ fn content_start_to_choice(content: Content) -> Option<ModelEvent<StreamingRespo
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
             Some(ModelEvent::from(
-                crate::model_event::StreamingToolCall::new(
+                crate::providers::internal::tool_call::ProviderToolCall::new(
                     name.clone(),
                     name,
                     arguments.unwrap_or(Value::Object(Map::new())),
@@ -259,7 +259,7 @@ fn content_delta_to_choice(delta: ContentDelta) -> Option<ModelEvent<StreamingRe
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
             Some(ModelEvent::from(
-                crate::model_event::StreamingToolCall::new(
+                crate::providers::internal::tool_call::ProviderToolCall::new(
                     name.clone(),
                     name,
                     arguments.unwrap_or(Value::Object(Map::new())),

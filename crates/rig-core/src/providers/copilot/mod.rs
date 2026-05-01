@@ -972,7 +972,7 @@ where
                                                 .entry(func.id.clone())
                                                 .or_insert_with(|| nanoid::nanoid!())
                                                 .clone();
-                                            let raw_tool_call = crate::model_event::StreamingToolCall::new(
+                                            let raw_tool_call = crate::providers::internal::tool_call::ProviderToolCall::new(
                                                 func.id.clone(),
                                                 func.name.clone(),
                                                 func.arguments.clone(),

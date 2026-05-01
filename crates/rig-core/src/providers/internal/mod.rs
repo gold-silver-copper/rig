@@ -1,6 +1,7 @@
 //! Internal provider helpers shared across provider implementations.
 
 pub(crate) mod openai_chat_completions_compatible;
+pub(crate) mod tool_call;
 
 pub(crate) fn completion_usage(
     input_tokens: u64,

@@ -3,11 +3,12 @@ use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::json_utils;
 use crate::model_event::ModelEvent;
-use crate::model_event::{StreamingToolCall, ToolCallDeltaContent};
+use crate::model_event::ToolCallDeltaContent;
 use crate::providers::cohere::CompletionModel;
 use crate::providers::cohere::completion::{
     AssistantContent, CohereCompletionRequest, Message, ToolCall, ToolCallFunction, ToolType, Usage,
 };
+use crate::providers::internal::tool_call::ProviderToolCall;
 use crate::telemetry::SpanCombinator;
 use async_stream::stream;
 use futures::StreamExt;
@@ -244,7 +245,7 @@ where
                                     })
                                 });
 
-                                let raw_tool_call = StreamingToolCall::new(tc.0, tc.2, args)
+                                let raw_tool_call = ProviderToolCall::new(tc.0, tc.2, args)
                                     .with_internal_call_id(tc.1);
                                 yield Ok(ModelEvent::from(raw_tool_call));
 

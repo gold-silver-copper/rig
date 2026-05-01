@@ -4,7 +4,7 @@
 
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
-use rig::agent::{AgentEvent, StreamingResult};
+use rig::agent::{AgentEvent, AgentEventStream};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::message::Message;
 use rig::providers::openai;
@@ -13,7 +13,7 @@ use rig::streaming::StreamingChat;
 const PREAMBLE: &str = "You are a comedian here to entertain the user using humour and jokes.";
 const PROMPT: &str = "Entertain me!";
 
-async fn collect_stream_final_response<R>(stream: &mut StreamingResult<R>) -> Result<String> {
+async fn collect_stream_final_response<R>(stream: &mut AgentEventStream<R>) -> Result<String> {
     let mut final_response = None;
 
     while let Some(item) = stream.next().await {

@@ -9233,6 +9233,7 @@ dependencies = [
  "async-stream",
  "base64 0.22.1",
  "futures",
+ "nanoid",
  "prost 0.13.5",
  "protoc-bin-vendored",
  "rig-core",

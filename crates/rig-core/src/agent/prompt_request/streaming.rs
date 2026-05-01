@@ -24,17 +24,11 @@ use crate::{
 };
 
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
-pub type StreamingResult<R> =
+pub type AgentEventStream<R> =
     Pin<Box<dyn Stream<Item = Result<AgentEvent<R>, StreamingError>> + Send>>;
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-pub type StreamingResult<R> = Pin<Box<dyn Stream<Item = Result<AgentEvent<R>, StreamingError>>>>;
-
-#[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
-pub type AgentEventStream<R> = StreamingResult<R>;
-
-#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-pub type AgentEventStream<R> = StreamingResult<R>;
+pub type AgentEventStream<R> = Pin<Box<dyn Stream<Item = Result<AgentEvent<R>, StreamingError>>>>;
 
 /// A normalized event emitted by an agent run.
 #[derive(Debug)]
@@ -360,7 +354,7 @@ where
         }
     }
 
-    async fn send(self) -> StreamingResult<M::StreamingResponse> {
+    async fn send(self) -> AgentEventStream<M::StreamingResponse> {
         let agent_span = if tracing::Span::current().is_disabled() {
             info_span!(
                 "invoke_agent",
@@ -908,7 +902,7 @@ where
     <M as CompletionModel>::StreamingResponse: WasmCompatSend,
     P: PromptHook<M> + 'static,
 {
-    type Output = StreamingResult<M::StreamingResponse>; // what `.await` returns
+    type Output = AgentEventStream<M::StreamingResponse>; // what `.await` returns
     type IntoFuture = WasmBoxedFuture<'static, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -919,7 +913,7 @@ where
 
 /// Helper function to stream a completion request to stdout.
 pub async fn stream_to_stdout<R>(
-    stream: &mut StreamingResult<R>,
+    stream: &mut AgentEventStream<R>,
 ) -> Result<FinalResponse, std::io::Error> {
     let mut final_res = FinalResponse::empty();
     print!("Response: ");
@@ -963,8 +957,9 @@ mod tests {
         ToolResultContent, UserContent,
     };
     use crate::model_event::ModelEvent;
-    use crate::model_event::{ModelEventStream, StreamingToolCall};
+    use crate::model_event::ModelEventStream;
     use crate::providers::anthropic;
+    use crate::providers::internal::tool_call::ProviderToolCall;
     use crate::streaming::StreamingPrompt;
     use futures::StreamExt;
     use serde::{Deserialize, Serialize};
@@ -1244,7 +1239,7 @@ mod tests {
             let stream = async_stream::stream! {
                 if turn == 0 {
                     yield Ok(ModelEvent::from(
-                        StreamingToolCall::new(
+                        ProviderToolCall::new(
                             "tool_call_1".to_string(),
                             "missing_tool".to_string(),
                             serde_json::json!({"input": "value"}),

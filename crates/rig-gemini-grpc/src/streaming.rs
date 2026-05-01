@@ -8,6 +8,7 @@ use futures::StreamExt;
 use serde_json::{Map, Value};
 
 use rig_core::completion::{CompletionError, CompletionRequest, GetTokenUsage};
+use rig_core::message::{ToolCall, ToolFunction};
 use rig_core::model_event::ModelEvent;
 
 use super::Client;
@@ -74,18 +75,23 @@ pub(crate) async fn stream_events(
                                             function_call.id.clone()
                                         };
 
-                                        let mut tool_call = rig_core::model_event::StreamingToolCall::new(
-                                            tool_id,
-                                            function_call.name.clone(),
-                                            args_json,
-                                        )
-                                        .with_signature(encode_signature(&part.thought_signature));
-
-                                        if !function_call.id.is_empty() {
-                                            tool_call = tool_call.with_call_id(function_call.id.clone());
-                                        }
-
-                                        yield Ok(ModelEvent::from(tool_call));
+                                        yield Ok(ModelEvent::ToolCallDone {
+                                            tool_call: ToolCall {
+                                                id: tool_id,
+                                                call_id: if function_call.id.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(function_call.id.clone())
+                                                },
+                                                function: ToolFunction {
+                                                    name: function_call.name.clone(),
+                                                    arguments: args_json,
+                                                },
+                                                signature: encode_signature(&part.thought_signature),
+                                                additional_params: None,
+                                            },
+                                            internal_call_id: Some(nanoid::nanoid!()),
+                                        });
                                     }
                                     _ => {}
                                 }

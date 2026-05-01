@@ -5,10 +5,10 @@ use crate::{
 };
 use async_stream::stream;
 use aws_sdk_bedrockruntime::types as aws_bedrock;
-use rig_core::message::Reasoning;
+use rig_core::message::{Reasoning, ToolCall, ToolFunction};
 use rig_core::{
     completion::{CompletionError, GetTokenUsage},
-    model_event::{ModelEvent, ModelEventStream, StreamingToolCall, ToolCallDeltaContent},
+    model_event::{ModelEvent, ModelEventStream, ToolCallDeltaContent},
 };
 use serde::{Deserialize, Serialize};
 
@@ -197,10 +197,19 @@ impl CompletionModel {
                                     } else {
                                         serde_json::from_str(tool_call.input_json.as_str())?
                                     };
-                                    yield Ok(ModelEvent::from(
-                                        StreamingToolCall::new(tool_call.id, tool_call.name, tool_input)
-                                            .with_internal_call_id(tool_call.internal_call_id)
-                                    ));
+                                    yield Ok(ModelEvent::ToolCallDone {
+                                        tool_call: ToolCall {
+                                            id: tool_call.id,
+                                            call_id: None,
+                                            function: ToolFunction {
+                                                name: tool_call.name,
+                                                arguments: tool_input,
+                                            },
+                                            signature: None,
+                                            additional_params: None,
+                                        },
+                                        internal_call_id: Some(tool_call.internal_call_id),
+                                    });
                                 } else {
                                     yield Err(CompletionError::ProviderError("Failed to call tool".into()))
                                 }

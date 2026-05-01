@@ -119,6 +119,6 @@ pub use completion::Agent;
 pub use prompt_request::hooks::{HookAction, PromptHook, ToolCallHookAction};
 pub use prompt_request::streaming::{
     AgentEvent, AgentEventStream, FinalResponse, StreamingError, StreamingPromptRequest,
-    StreamingResult, stream_to_stdout,
+    stream_to_stdout,
 };
 pub use prompt_request::{PromptRequest, PromptResponse, TypedPromptRequest, TypedPromptResponse};

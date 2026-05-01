@@ -3,7 +3,7 @@
 
 use futures::StreamExt;
 use rig::{
-    agent::{AgentEvent, StreamingError, StreamingResult},
+    agent::{AgentEvent, AgentEventStream, StreamingError},
     completion::{AssistantContent, GetTokenUsage, ToolDefinition},
     embeddings::Embedding,
     model_event::{ModelEvent, ModelEventStream},
@@ -397,7 +397,7 @@ pub(crate) fn assert_embeddings_nonempty_and_consistent(
 }
 
 pub(crate) async fn collect_stream_final_response<R>(
-    stream: &mut StreamingResult<R>,
+    stream: &mut AgentEventStream<R>,
 ) -> Result<String, StreamingError> {
     let mut final_response = None;
 
@@ -501,7 +501,7 @@ impl RawStreamObservation {
 }
 
 pub(crate) async fn collect_stream_observation<R>(
-    stream: &mut StreamingResult<R>,
+    stream: &mut AgentEventStream<R>,
 ) -> StreamObservation {
     let mut observation = StreamObservation::new();
 

@@ -201,7 +201,7 @@ where
                                     ..
                                 } => {
                                     yield Ok(ModelEvent::from(
-                                        crate::model_event::StreamingToolCall::new(function_call.name.clone(), function_call.name.clone(), function_call.args.clone())
+                                        crate::providers::internal::tool_call::ProviderToolCall::new(function_call.name.clone(), function_call.name.clone(), function_call.args.clone())
                                             .with_signature(thought_signature)
                                     ));
                                 },

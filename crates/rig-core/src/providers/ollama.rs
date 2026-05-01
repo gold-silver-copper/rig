@@ -719,7 +719,7 @@ where
                         for tool_call in tool_calls {
                             tool_calls_final.push(tool_call.clone());
                             yield ModelEvent::from(
-                                crate::model_event::StreamingToolCall::new(String::new(), tool_call.function.name, tool_call.function.arguments)
+                                crate::providers::internal::tool_call::ProviderToolCall::new(String::new(), tool_call.function.name, tool_call.function.arguments)
                             );
                         }
                     }
