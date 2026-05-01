@@ -231,52 +231,48 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
+    let Choice { message, .. } = response.choices.first().ok_or_else(|| {
+        CompletionError::ResponseError("Response contained no choices".to_owned())
+    })?;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let Choice { message, .. } = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+    let mut content = message
+        .content
+        .as_ref()
+        .map(|c| vec![completion::AssistantContent::text(c)])
+        .unwrap_or_default();
 
-        let mut content = message
-            .content
-            .as_ref()
-            .map(|c| vec![completion::AssistantContent::text(c)])
-            .unwrap_or_default();
+    content.extend(message.tool_calls.iter().map(|call| {
+        completion::AssistantContent::tool_call(
+            &call.function.name,
+            &call.function.name,
+            call.function.arguments.clone(),
+        )
+    }));
 
-        content.extend(message.tool_calls.iter().map(|call| {
-            completion::AssistantContent::tool_call(
-                &call.function.name,
-                &call.function.name,
-                call.function.arguments.clone(),
-            )
-        }));
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.prompt_tokens as u64,
-                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-                total_tokens: usage.total_tokens as u64,
-                cached_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
     }
+
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|usage| completion::Usage {
+            input_tokens: usage.prompt_tokens as u64,
+            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+            total_tokens: usage.total_tokens as u64,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        })
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -541,10 +537,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -608,7 +601,7 @@ where
                                     usage.total_tokens - usage.prompt_tokens,
                                 );
                             }
-                            response.try_into()
+                            completion_response_events(response)
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -621,12 +614,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

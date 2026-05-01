@@ -1356,10 +1356,7 @@ where
         &self,
         completion_request: crate::completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -1424,7 +1421,7 @@ where
                             response = serde_json::to_string_pretty(&response)?
                         );
                     }
-                    response.try_into()
+                    completion_response_events(response)
                 } else {
                     let text = http_client::text(response).await?;
                     Err(CompletionError::ProviderError(text))
@@ -1433,12 +1430,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
@@ -1450,58 +1442,52 @@ where
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
-
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        if response.output.is_empty() {
-            return Err(CompletionError::ResponseError(
-                "Response contained no parts".to_owned(),
-            ));
-        }
-
-        // Extract the msg_ ID from the first Output::Message item
-        let message_id = response.output.iter().find_map(|item| match item {
-            Output::Message(msg) => Some(msg.id.clone()),
-            _ => None,
-        });
-
-        let content: Vec<completion::AssistantContent> = response
-            .output
-            .iter()
-            .cloned()
-            .flat_map(<Vec<completion::AssistantContent>>::from)
-            .collect();
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                total_tokens: usage.total_tokens,
-                cached_input_tokens: usage
-                    .input_tokens_details
-                    .as_ref()
-                    .map(|d| d.cached_tokens)
-                    .unwrap_or(0),
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id,
-        })
+pub(crate) fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    if response.output.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no parts".to_owned(),
+        ));
     }
+
+    let message_id = response.output.iter().find_map(|item| match item {
+        Output::Message(msg) => Some(msg.id.clone()),
+        _ => None,
+    });
+
+    let content: Vec<completion::AssistantContent> = response
+        .output
+        .iter()
+        .cloned()
+        .flat_map(<Vec<completion::AssistantContent>>::from)
+        .collect();
+
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
+    }
+
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|usage| completion::Usage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            total_tokens: usage.total_tokens,
+            cached_input_tokens: usage
+                .input_tokens_details
+                .as_ref()
+                .map(|d| d.cached_tokens)
+                .unwrap_or(0),
+            cache_creation_input_tokens: 0,
+        })
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, message_id,
+    ))
 }
 
 /// An OpenAI Responses API message.

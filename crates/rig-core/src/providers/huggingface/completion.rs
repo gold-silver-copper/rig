@@ -553,67 +553,57 @@ where
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    let choice = response.choices.first().ok_or_else(|| {
+        CompletionError::ResponseError("Response contained no choices".to_owned())
+    })?;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+    let content = match &choice.message {
+        Message::Assistant {
+            content,
+            tool_calls,
+            ..
+        } => {
+            let mut content = content
+                .iter()
+                .map(|c| match c {
+                    AssistantContent::Text { text } => message::AssistantContent::text(text),
+                })
+                .collect::<Vec<_>>();
 
-        let content = match &choice.message {
-            Message::Assistant {
-                content,
-                tool_calls,
-                ..
-            } => {
-                let mut content = content
-                    .iter()
-                    .map(|c| match c {
-                        AssistantContent::Text { text } => message::AssistantContent::text(text),
-                    })
-                    .collect::<Vec<_>>();
+            content.extend(tool_calls.iter().map(|call| {
+                completion::AssistantContent::tool_call(
+                    &call.id,
+                    &call.function.name,
+                    call.function.arguments.clone(),
+                )
+            }));
+            Ok(content)
+        }
+        _ => Err(CompletionError::ResponseError(
+            "Response did not contain a valid message or tool call".into(),
+        )),
+    }?;
 
-                content.extend(
-                    tool_calls
-                        .iter()
-                        .map(|call| {
-                            completion::AssistantContent::tool_call(
-                                &call.id,
-                                &call.function.name,
-                                call.function.arguments.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                Ok(content)
-            }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
-            )),
-        }?;
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = completion::Usage {
-            input_tokens: response.usage.prompt_tokens as u64,
-            output_tokens: response.usage.completion_tokens as u64,
-            total_tokens: response.usage.total_tokens as u64,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-        };
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
     }
+
+    let usage = completion::Usage {
+        input_tokens: response.usage.prompt_tokens as u64,
+        output_tokens: response.usage.completion_tokens as u64,
+        total_tokens: response.usage.total_tokens as u64,
+        cached_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+    };
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -724,10 +714,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let request_model = completion_request
                 .model
                 .clone()
@@ -798,7 +785,7 @@ where
                             span.record_token_usage(&response.usage);
                             span.record_response_metadata(&response);
 
-                            response.try_into()
+                            completion_response_events(response)
                         }
                         ApiResponse::Err(err) => {
                             Err(CompletionError::ProviderError(err.to_string()))
@@ -818,12 +805,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

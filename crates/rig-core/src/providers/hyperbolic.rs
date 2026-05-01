@@ -17,7 +17,6 @@ use crate::model_event::ModelEventStream;
 
 use crate::providers::openai;
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils,
     providers::openai::Message,
@@ -176,74 +175,64 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
+    let choice = response.choices.first().ok_or_else(|| {
+        CompletionError::ResponseError("Response contained no choices".to_owned())
+    })?;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+    let content = match &choice.message {
+        Message::Assistant {
+            content,
+            tool_calls,
+            ..
+        } => {
+            let mut content = content
+                .iter()
+                .map(|c| match c {
+                    AssistantContent::Text { text } => completion::AssistantContent::text(text),
+                    AssistantContent::Refusal { refusal } => {
+                        completion::AssistantContent::text(refusal)
+                    }
+                })
+                .collect::<Vec<_>>();
 
-        let content = match &choice.message {
-            Message::Assistant {
-                content,
-                tool_calls,
-                ..
-            } => {
-                let mut content = content
-                    .iter()
-                    .map(|c| match c {
-                        AssistantContent::Text { text } => completion::AssistantContent::text(text),
-                        AssistantContent::Refusal { refusal } => {
-                            completion::AssistantContent::text(refusal)
-                        }
-                    })
-                    .collect::<Vec<_>>();
+            content.extend(tool_calls.iter().map(|call| {
+                completion::AssistantContent::tool_call(
+                    &call.id,
+                    &call.function.name,
+                    call.function.arguments.clone(),
+                )
+            }));
+            Ok(content)
+        }
+        _ => Err(CompletionError::ResponseError(
+            "Response did not contain a valid message or tool call".into(),
+        )),
+    }?;
 
-                content.extend(
-                    tool_calls
-                        .iter()
-                        .map(|call| {
-                            completion::AssistantContent::tool_call(
-                                &call.id,
-                                &call.function.name,
-                                call.function.arguments.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                Ok(content)
-            }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
-            )),
-        }?;
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.prompt_tokens as u64,
-                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-                total_tokens: usage.total_tokens as u64,
-                cached_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
     }
+
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|usage| completion::Usage {
+            input_tokens: usage.prompt_tokens as u64,
+            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+            total_tokens: usage.total_tokens as u64,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        })
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -351,10 +340,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -409,7 +395,7 @@ where
                                 );
                             }
 
-                            response.try_into()
+                            completion_response_events(response)
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -422,12 +408,7 @@ where
 
             async_block.instrument(span).await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

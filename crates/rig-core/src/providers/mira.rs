@@ -336,10 +336,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -436,17 +433,12 @@ where
                     }
                 }
 
-                response.try_into()
+                completion_response_events(response)
             };
 
             async_block.instrument(span).await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
@@ -518,91 +510,86 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
+    let (content, usage) = match &response {
+        CompletionResponse::Structured { choices, usage, .. } => {
+            let choice = choices.first().ok_or_else(|| {
+                CompletionError::ResponseError("Response contained no choices".to_owned())
+            })?;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let (content, usage) = match &response {
-            CompletionResponse::Structured { choices, usage, .. } => {
-                let choice = choices.first().ok_or_else(|| {
-                    CompletionError::ResponseError("Response contained no choices".to_owned())
-                })?;
+            let usage = usage
+                .as_ref()
+                .map(|usage| completion::Usage {
+                    input_tokens: usage.prompt_tokens as u64,
+                    output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+                    total_tokens: usage.total_tokens as u64,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                })
+                .unwrap_or_default();
 
-                let usage = usage
-                    .as_ref()
-                    .map(|usage| completion::Usage {
-                        input_tokens: usage.prompt_tokens as u64,
-                        output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-                        total_tokens: usage.total_tokens as u64,
-                        cached_input_tokens: 0,
-                        cache_creation_input_tokens: 0,
-                    })
-                    .unwrap_or_default();
+            let message = message::Message::try_from(choice.message.clone())?;
 
-                // Convert RawMessage to message::Message
-                let message = message::Message::try_from(choice.message.clone())?;
-
-                let content = match message {
-                    Message::Assistant { content, .. } => {
-                        if content.is_empty() {
-                            return Err(CompletionError::ResponseError(
-                                "Response contained empty content".to_owned(),
-                            ));
-                        }
-
-                        // Log warning for unsupported content types
-                        for c in content.iter() {
-                            if !matches!(c, AssistantContent::Text(_)) {
-                                tracing::warn!(target: "rig",
-                                    "Unsupported content type encountered: {:?}. The Mira provider currently only supports text content", c
-                                );
-                            }
-                        }
-
-                        content.iter().map(|c| {
-                            match c {
-                                AssistantContent::Text(text) => Ok(completion::AssistantContent::text(&text.text)),
-                                other => Err(CompletionError::ResponseError(
-                                    format!("Unsupported content type: {other:?}. The Mira provider currently only supports text content")
-                                ))
-                            }
-                        }).collect::<Result<Vec<_>, _>>()?
-                    }
-                    Message::User { .. } => {
-                        tracing::warn!(target: "rig", "Received user message in response where assistant message was expected");
+            let content = match message {
+                Message::Assistant { content, .. } => {
+                    if content.is_empty() {
                         return Err(CompletionError::ResponseError(
-                            "Received user message in response where assistant message was expected".to_owned()
+                            "Response contained empty content".to_owned(),
                         ));
                     }
-                    Message::System { .. } => {
-                        tracing::warn!(target: "rig", "Received system message in response where assistant message was expected");
-                        return Err(CompletionError::ResponseError(
-                            "Received system message in response where assistant message was expected".to_owned(),
-                        ));
+
+                    for c in content.iter() {
+                        if !matches!(c, AssistantContent::Text(_)) {
+                            tracing::warn!(target: "rig",
+                                "Unsupported content type encountered: {:?}. The Mira provider currently only supports text content", c
+                            );
+                        }
                     }
-                };
 
-                (content, usage)
-            }
-            CompletionResponse::Simple(text) => (
-                vec![completion::AssistantContent::text(text)],
-                completion::Usage::new(),
-            ),
-        };
+                    content.iter().map(|c| {
+                        match c {
+                            AssistantContent::Text(text) => Ok(completion::AssistantContent::text(&text.text)),
+                            other => Err(CompletionError::ResponseError(
+                                format!("Unsupported content type: {other:?}. The Mira provider currently only supports text content")
+                            ))
+                        }
+                    }).collect::<Result<Vec<_>, _>>()?
+                }
+                Message::User { .. } => {
+                    tracing::warn!(target: "rig", "Received user message in response where assistant message was expected");
+                    return Err(CompletionError::ResponseError(
+                        "Received user message in response where assistant message was expected"
+                            .to_owned(),
+                    ));
+                }
+                Message::System { .. } => {
+                    tracing::warn!(target: "rig", "Received system message in response where assistant message was expected");
+                    return Err(CompletionError::ResponseError(
+                        "Received system message in response where assistant message was expected"
+                            .to_owned(),
+                    ));
+                }
+            };
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            (content, usage)
+        }
+        CompletionResponse::Simple(text) => (
+            vec![completion::AssistantContent::text(text)],
+            completion::Usage::new(),
+        ),
+    };
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
     }
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -800,8 +787,8 @@ mod tests {
         assert_eq!(original_message, converted_message);
     }
 
-    #[test]
-    fn test_completion_response_conversion() {
+    #[tokio::test]
+    async fn test_completion_response_conversion() {
         let mira_response = CompletionResponse::Structured {
             id: "resp_123".to_string(),
             object: "chat.completion".to_string(),
@@ -821,8 +808,10 @@ mod tests {
             }),
         };
 
-        let completion_response: completion::CompletionResponse<CompletionResponse> =
-            mira_response.try_into().unwrap();
+        let completion_response =
+            crate::model_event::collect(completion_response_events(mira_response).unwrap())
+                .await
+                .unwrap();
 
         assert_eq!(
             completion_response.choice.first(),

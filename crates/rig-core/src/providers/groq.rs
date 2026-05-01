@@ -361,10 +361,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -437,7 +434,7 @@ where
                                 );
                             }
 
-                            response.try_into()
+                            crate::providers::openai::completion_response_events(response)
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -450,12 +447,7 @@ where
 
             tracing::Instrument::instrument(async_block, span).await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

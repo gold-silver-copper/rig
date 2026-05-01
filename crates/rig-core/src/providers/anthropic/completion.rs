@@ -207,50 +207,39 @@ pub enum SystemContent {
     },
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    let mut content = response
+        .content
+        .iter()
+        .map(|content| content.clone().try_into())
+        .collect::<Result<Vec<_>, _>>()?;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let content = response
-            .content
-            .iter()
-            .map(|content| content.clone().try_into())
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let choice = if content.is_empty() {
-            // Anthropic documents empty `end_turn` responses after tool-result round trips.
-            // The generic completion response still requires at least one assistant item, so
-            // normalize that terminal no-op into the same empty-text sentinel used by streaming.
-            if response.stop_reason.as_deref() == Some("end_turn") {
-                OneOrMany::one(completion::AssistantContent::text(""))
-            } else {
-                return Err(CompletionError::ResponseError(
-                    EMPTY_RESPONSE_ERROR.to_owned(),
-                ));
-            }
+    if content.is_empty() {
+        if response.stop_reason.as_deref() == Some("end_turn") {
+            content.push(completion::AssistantContent::text(""));
         } else {
-            OneOrMany::many(content)
-                .map_err(|_| CompletionError::ResponseError(EMPTY_RESPONSE_ERROR.to_owned()))?
-        };
-
-        let usage = completion::Usage {
-            input_tokens: response.usage.input_tokens,
-            output_tokens: response.usage.output_tokens,
-            total_tokens: response.usage.input_tokens
-                + response.usage.cache_read_input_tokens.unwrap_or(0)
-                + response.usage.cache_creation_input_tokens.unwrap_or(0)
-                + response.usage.output_tokens,
-            cached_input_tokens: response.usage.cache_read_input_tokens.unwrap_or(0),
-            cache_creation_input_tokens: response.usage.cache_creation_input_tokens.unwrap_or(0),
-        };
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+            return Err(CompletionError::ResponseError(
+                EMPTY_RESPONSE_ERROR.to_owned(),
+            ));
+        }
     }
+
+    let usage = completion::Usage {
+        input_tokens: response.usage.input_tokens,
+        output_tokens: response.usage.output_tokens,
+        total_tokens: response.usage.input_tokens
+            + response.usage.cache_read_input_tokens.unwrap_or(0)
+            + response.usage.cache_creation_input_tokens.unwrap_or(0)
+            + response.usage.output_tokens,
+        cached_input_tokens: response.usage.cache_read_input_tokens.unwrap_or(0),
+        cache_creation_input_tokens: response.usage.cache_creation_input_tokens.unwrap_or(0),
+    };
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -1378,10 +1367,7 @@ where
         &self,
         mut completion_request: completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let request_model = completion_request
                 .model
                 .clone()
@@ -1467,7 +1453,7 @@ where
                                     serde_json::to_string_pretty(&completion)?
                                 );
                             }
-                            completion.try_into()
+                            completion_response_events(completion)
                         }
                         ApiResponse::Error(ApiErrorResponse { message }) => {
                             Err(CompletionError::ResponseError(message))
@@ -1487,12 +1473,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
@@ -2336,8 +2317,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn empty_end_turn_response_normalizes_to_empty_text_choice() {
+    #[tokio::test]
+    async fn empty_end_turn_response_normalizes_to_empty_text_choice() {
         let response = CompletionResponse {
             content: vec![],
             id: "msg_123".to_string(),
@@ -2353,9 +2334,11 @@ mod tests {
             },
         };
 
-        let parsed: completion::CompletionResponse<CompletionResponse> = response
-            .try_into()
-            .expect("empty end_turn should not error");
+        let parsed = crate::model_event::collect(
+            completion_response_events(response).expect("empty end_turn should not error"),
+        )
+        .await
+        .expect("events should collect");
 
         assert_eq!(parsed.choice.len(), 1);
         assert!(matches!(
@@ -2381,7 +2364,7 @@ mod tests {
             },
         };
 
-        let err = completion::CompletionResponse::<CompletionResponse>::try_from(response)
+        let err = completion_response_events(response)
             .expect_err("empty non-end_turn should remain an error");
 
         assert!(matches!(

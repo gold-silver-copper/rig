@@ -963,19 +963,8 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-            let response_result: Result<
-                crate::completion::CompletionResponse<Self::Response>,
-                CompletionError,
-            > = async {
-                Err(CompletionError::ProviderError(
-                    "dummy completion model".to_string(),
-                ))
-            }
-            .await;
-            let response = response_result?;
-
-            Ok(crate::model_event::events_from_completion_response(
-                response,
+            Err(CompletionError::ProviderError(
+                "dummy completion model".to_string(),
             ))
         }
 

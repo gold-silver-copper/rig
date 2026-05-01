@@ -438,8 +438,8 @@ where
         let text = http_client::text(response).await?;
         let raw_response = responses_api::streaming::parse_sse_completion_body(&text, "ChatGPT")?;
 
-        match raw_response.clone().try_into() {
-            Ok(response) => Ok(response),
+        match responses_api::completion_response_events(raw_response.clone()) {
+            Ok(events) => crate::model_event::collect(events).await,
             Err(CompletionError::ResponseError(message))
                 if message == "Response contained no parts" =>
             {
@@ -481,10 +481,7 @@ where
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let request = self.create_request(completion_request)?;
 
             let span = if tracing::Span::current().is_disabled() {
@@ -524,12 +521,15 @@ where
             )
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
+        .map(|response| {
+            crate::model_event::events_from_parts(
+                response.raw_response,
+                response.choice,
+                response.usage,
+                response.message_id,
+            )
+        })
     }
 
     async fn stream_events(

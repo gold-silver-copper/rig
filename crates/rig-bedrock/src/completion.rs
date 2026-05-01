@@ -3,8 +3,10 @@
 use crate::{
     client::Client,
     types::{
-        assistant_content::AwsConverseOutput, completion_request::AwsCompletionRequest,
-        converse_output::InternalConverseOutput, errors::AwsSdkConverseError,
+        assistant_content::{AwsConverseOutput, completion_response_events},
+        completion_request::AwsCompletionRequest,
+        converse_output::InternalConverseOutput,
+        errors::AwsSdkConverseError,
     },
 };
 
@@ -223,10 +225,7 @@ impl completion::CompletionModel for CompletionModel {
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<rig_core::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            rig_core::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let request_model = resolve_request_model(&self.model, &completion_request);
 
             let span = if tracing::Span::current().is_disabled() {
@@ -284,17 +283,12 @@ impl completion::CompletionModel for CompletionModel {
                 span.record_response_metadata(&aws_output);
                 span.record_token_usage(&aws_output);
 
-                aws_output.try_into()
+                completion_response_events(aws_output)
             }
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(rig_core::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

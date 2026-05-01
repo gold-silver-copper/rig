@@ -2,7 +2,8 @@
 
 use super::Client;
 use crate::types::{
-    completion_request::VertexCompletionRequest, completion_response::VertexGenerateContentOutput,
+    completion_request::VertexCompletionRequest,
+    completion_response::{VertexGenerateContentOutput, completion_response_events},
 };
 use rig_core::completion::{
     CompletionError, CompletionModel as CompletionModelTrait, CompletionRequest, GetTokenUsage,
@@ -81,10 +82,7 @@ impl CompletionModelTrait for CompletionModel {
         &self,
         request: CompletionRequest,
     ) -> Result<rig_core::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            rig_core::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             tracing::debug!(
                 target: "rig_core::vertexai",
                 "Vertex AI completion request: {request:?}"
@@ -135,16 +133,9 @@ impl CompletionModelTrait for CompletionModel {
             );
 
             let vertex_output = VertexGenerateContentOutput(response);
-            let completion_response = vertex_output.try_into()?;
-
-            Ok(completion_response)
+            completion_response_events(vertex_output)
         }
-        .await;
-        let response = response_result?;
-
-        Ok(rig_core::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

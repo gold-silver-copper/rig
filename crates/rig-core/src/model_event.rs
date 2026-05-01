@@ -441,32 +441,20 @@ pub async fn collect<R>(
     })
 }
 
-/// Converts a stream of fallible model events into the canonical infallible event stream.
-pub fn result_stream<R, S>(stream: S) -> ModelEventStream<R>
+/// Creates model events from already-normalized assistant content and raw provider data.
+pub fn events_from_parts<R, I>(
+    raw_response: R,
+    content: I,
+    usage: Usage,
+    message_id: Option<String>,
+) -> ModelEventStream<R>
 where
     R: WasmCompatSend + 'static,
-    S: Stream<Item = Result<ModelEvent<R>, CompletionError>> + WasmCompatSend + 'static,
-{
-    Box::pin(stream.map(|event| match event {
-        Ok(event) => event,
-        Err(error) => ModelEvent::Error { error },
-    }))
-}
-
-/// Converts a collected completion response back into model events.
-pub fn events_from_completion_response<R>(response: CompletionResponse<R>) -> ModelEventStream<R>
-where
-    R: WasmCompatSend + 'static,
+    I: IntoIterator<Item = AssistantContent> + WasmCompatSend + 'static,
+    <I as IntoIterator>::IntoIter: WasmCompatSend + 'static,
 {
     Box::pin(stream! {
-        let CompletionResponse {
-            choice,
-            usage,
-            raw_response,
-            message_id,
-        } = response;
-
-        for content in choice {
+        for content in content {
             for event in events_from_assistant_content(content) {
                 yield event;
             }
@@ -481,6 +469,18 @@ where
         };
         yield ModelEvent::Done;
     })
+}
+
+/// Converts a stream of fallible model events into the canonical infallible event stream.
+pub fn result_stream<R, S>(stream: S) -> ModelEventStream<R>
+where
+    R: WasmCompatSend + 'static,
+    S: Stream<Item = Result<ModelEvent<R>, CompletionError>> + WasmCompatSend + 'static,
+{
+    Box::pin(stream.map(|event| match event {
+        Ok(event) => event,
+        Err(error) => ModelEvent::Error { error },
+    }))
 }
 
 fn events_from_assistant_content<R>(content: AssistantContent) -> Vec<ModelEvent<R>> {

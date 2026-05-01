@@ -9,7 +9,6 @@ use tracing::{Instrument, Level, enabled, info_span};
 
 use super::api::{ApiResponse, Message, ToolDefinition};
 use super::client::Client;
-use crate::OneOrMany;
 use crate::completion::{self, CompletionError, CompletionRequest};
 use crate::http_client::HttpClientExt;
 use crate::model_event::ModelEventStream;
@@ -134,44 +133,41 @@ pub struct CompletionResponse {
     pub usage: Option<ResponsesUsage>,
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
+    let content: Vec<completion::AssistantContent> = response
+        .output
+        .iter()
+        .cloned()
+        .flat_map(<Vec<completion::AssistantContent>>::from)
+        .collect();
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let content: Vec<completion::AssistantContent> = response
-            .output
-            .iter()
-            .cloned()
-            .flat_map(<Vec<completion::AssistantContent>>::from)
-            .collect();
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError("Response contained no output".to_owned())
-        })?;
-
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|u| completion::Usage {
-                input_tokens: u.input_tokens,
-                output_tokens: u.output_tokens,
-                total_tokens: u.total_tokens,
-                cached_input_tokens: u
-                    .input_tokens_details
-                    .clone()
-                    .map(|x| x.cached_tokens)
-                    .unwrap_or_default(),
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no output".to_owned(),
+        ));
     }
+
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|u| completion::Usage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            total_tokens: u.total_tokens,
+            cached_input_tokens: u
+                .input_tokens_details
+                .clone()
+                .map(|x| x.cached_tokens)
+                .unwrap_or_default(),
+            cache_creation_input_tokens: 0,
+        })
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 // ================================================================
@@ -210,10 +206,7 @@ where
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -269,7 +262,7 @@ where
                                 );
                             }
 
-                            response.try_into()
+                            completion_response_events(response)
                         }
                         ApiResponse::Error(error) => {
                             Err(CompletionError::ProviderError(error.message()))
@@ -284,12 +277,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

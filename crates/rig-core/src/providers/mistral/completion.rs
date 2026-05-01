@@ -3,13 +3,12 @@ use std::{convert::Infallible, str::FromStr};
 use tracing::{Instrument, Level, enabled, info_span};
 
 use super::client::{Client, Usage};
+#[cfg(test)]
+use crate::OneOrMany;
 use crate::completion::GetTokenUsage;
 use crate::http_client::{self, HttpClientExt};
-use crate::model_event::ModelEvent;
-use crate::model_event::{ModelEventStream, StreamingToolCall};
-use crate::providers::internal::buffered;
+use crate::model_event::ModelEventStream;
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils, message,
     providers::mistral::client::ApiResponse,
@@ -488,84 +487,59 @@ impl GetTokenUsage for CompletionResponse {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
+    let choice = response.choices.first().ok_or_else(|| {
+        CompletionError::ResponseError("Response contained no choices".to_owned())
+    })?;
+    let content = match &choice.message {
+        Message::Assistant {
+            content,
+            tool_calls,
+            ..
+        } => {
+            let mut content = if content.is_empty() {
+                vec![]
+            } else {
+                vec![completion::AssistantContent::text(content.clone())]
+            };
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
-        let content = match &choice.message {
-            Message::Assistant {
-                content,
-                tool_calls,
-                ..
-            } => {
-                let mut content = if content.is_empty() {
-                    vec![]
-                } else {
-                    vec![completion::AssistantContent::text(content.clone())]
-                };
-
-                content.extend(
-                    tool_calls
-                        .iter()
-                        .map(|call| {
-                            completion::AssistantContent::tool_call(
-                                &call.id,
-                                &call.function.name,
-                                call.function.arguments.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                Ok(content)
-            }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
-            )),
-        }?;
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.prompt_tokens as u64,
-                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-                total_tokens: usage.total_tokens as u64,
-                cached_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
-    }
-}
-
-fn assistant_content_to_streaming_choices(
-    content: message::AssistantContent,
-) -> Result<Vec<ModelEvent<CompletionResponse>>, CompletionError> {
-    match content {
-        message::AssistantContent::Text(t) => Ok(vec![ModelEvent::TextDelta { text: t.text }]),
-        message::AssistantContent::ToolCall(tc) => Ok(vec![ModelEvent::from(
-            StreamingToolCall::new(tc.id, tc.function.name, tc.function.arguments),
-        )]),
-        message::AssistantContent::Reasoning(_) => Ok(Vec::new()),
-        message::AssistantContent::Image(_) => Err(CompletionError::ResponseError(
-            "Image content is not supported on Mistral via Rig".into(),
+            content.extend(tool_calls.iter().map(|call| {
+                completion::AssistantContent::tool_call(
+                    &call.id,
+                    &call.function.name,
+                    call.function.arguments.clone(),
+                )
+            }));
+            Ok(content)
+        }
+        _ => Err(CompletionError::ResponseError(
+            "Response did not contain a valid message or tool call".into(),
         )),
+    }?;
+
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
     }
+
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|usage| completion::Usage {
+            input_tokens: usage.prompt_tokens as u64,
+            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+            total_tokens: usage.total_tokens as u64,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        })
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 impl<T> completion::CompletionModel for CompletionModel<T>
@@ -585,10 +559,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let preamble = completion_request.preamble.clone();
             let request =
                 MistralCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
@@ -637,7 +608,7 @@ where
                             let span = tracing::Span::current();
                             span.record_token_usage(&response);
                             span.record_response_metadata(&response);
-                            response.try_into()
+                            completion_response_events(response)
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -649,20 +620,14 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
         &self,
         request: CompletionRequest,
     ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
-        let resp = self.completion(request).await?;
-        buffered::stream_from_completion_response(resp, assistant_content_to_streaming_choices)
+        self.events(request).await
     }
 }
 
@@ -782,41 +747,6 @@ mod tests {
                 );
             }
             _ => panic!("expected assistant message"),
-        }
-    }
-
-    #[test]
-    fn test_streaming_choice_mapping_skips_reasoning_and_preserves_other_content() {
-        let reasoning_choices =
-            assistant_content_to_streaming_choices(message::AssistantContent::reasoning("hidden"))
-                .expect("reasoning should be ignored");
-        assert!(reasoning_choices.is_empty());
-
-        let text_choices =
-            assistant_content_to_streaming_choices(message::AssistantContent::text("visible"))
-                .expect("text should be preserved");
-        match text_choices.as_slice() {
-            [ModelEvent::TextDelta { text }] => assert_eq!(text, "visible"),
-            _ => panic!("expected text streaming choice"),
-        }
-
-        let tool_choices =
-            assistant_content_to_streaming_choices(message::AssistantContent::tool_call(
-                "call_2",
-                "add",
-                serde_json::json!({"x": 2, "y": 3}),
-            ))
-            .expect("tool call should be preserved");
-        match tool_choices.as_slice() {
-            [ModelEvent::ToolCallDone { tool_call, .. }] => {
-                assert_eq!(tool_call.id, "call_2");
-                assert_eq!(tool_call.function.name, "add");
-                assert_eq!(
-                    tool_call.function.arguments,
-                    serde_json::json!({"x": 2, "y": 3})
-                );
-            }
-            _ => panic!("expected tool-call streaming choice"),
         }
     }
 

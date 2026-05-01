@@ -1,7 +1,6 @@
 //! Google Gemini Interactions API integration.
 //! From <https://ai.google.dev/api/interactions-api>
 
-use crate::OneOrMany;
 use crate::completion::{self, CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::message::{self, MimeType, Reasoning};
@@ -12,6 +11,8 @@ use tracing_futures::Instrument;
 use url::form_urlencoded;
 
 use super::client::InteractionsClient;
+#[cfg(test)]
+use crate::OneOrMany;
 
 /// Streaming helpers for the Interactions API.
 pub mod streaming;
@@ -120,10 +121,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -192,7 +190,7 @@ where
                         );
                     }
 
-                    response.try_into()
+                    completion_response_events(response)
                 } else {
                     let text = String::from_utf8_lossy(
                         &response
@@ -208,12 +206,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
@@ -474,51 +467,46 @@ fn build_interaction_stream_path(interaction_id: &str, last_event_id: Option<&st
     )
 }
 
-impl TryFrom<Interaction> for completion::CompletionResponse<Interaction> {
-    type Error = CompletionError;
-
-    fn try_from(response: Interaction) -> Result<Self, Self::Error> {
-        if response.outputs.is_empty() {
-            let status = response.status.as_ref().map(|status| format!("{status:?}"));
-            let message = match status {
-                Some(status) => format!(
-                    "Interaction contained no outputs (status: {status}). Use get_interaction for background tasks."
-                ),
-                None => "Interaction contained no outputs".to_string(),
-            };
-            return Err(CompletionError::ResponseError(message));
-        }
-
-        let content = response
-            .outputs
-            .iter()
-            .cloned()
-            .filter_map(|output| match assistant_content_from_output(output) {
-                Ok(Some(content)) => Some(Ok(content)),
-                Ok(None) => None,
-                Err(err) => Some(Err(err)),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = response
-            .usage
-            .as_ref()
-            .and_then(|usage| usage.token_usage())
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+fn completion_response_events(
+    response: Interaction,
+) -> Result<crate::model_event::ModelEventStream<Interaction>, CompletionError> {
+    if response.outputs.is_empty() {
+        let status = response.status.as_ref().map(|status| format!("{status:?}"));
+        let message = match status {
+            Some(status) => format!(
+                "Interaction contained no outputs (status: {status}). Use get_interaction for background tasks."
+            ),
+            None => "Interaction contained no outputs".to_string(),
+        };
+        return Err(CompletionError::ResponseError(message));
     }
+
+    let content = response
+        .outputs
+        .iter()
+        .cloned()
+        .filter_map(|output| match assistant_content_from_output(output) {
+            Ok(Some(content)) => Some(Ok(content)),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
+    }
+
+    let usage = response
+        .usage
+        .as_ref()
+        .and_then(|usage| usage.token_usage())
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 fn assistant_content_from_output(
@@ -2508,8 +2496,8 @@ mod tests {
         assert!(format!("{err}").contains("call_id"));
     }
 
-    #[test]
-    fn test_response_function_call_mapping() {
+    #[tokio::test]
+    async fn test_response_function_call_mapping() {
         let interaction = Interaction {
             id: "interaction-1".to_string(),
             outputs: vec![Content::FunctionCall(FunctionCallContent {
@@ -2525,8 +2513,10 @@ mod tests {
             ..Default::default()
         };
 
-        let response: completion::CompletionResponse<Interaction> =
-            interaction.try_into().expect("conversion should succeed");
+        let response =
+            crate::model_event::collect(completion_response_events(interaction).unwrap())
+                .await
+                .unwrap();
 
         let choice = response.choice.first();
         match choice {

@@ -963,43 +963,35 @@ mod tests {
             &self,
             request: CompletionRequest,
         ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-            let response_result: Result<
-                crate::completion::CompletionResponse<Self::Response>,
-                CompletionError,
-            > = async {
+            async {
                 let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
 
-                let choice = if turn == 0 {
-                    OneOrMany::one(AssistantContent::tool_call_with_call_id(
+                let content = if turn == 0 {
+                    vec![AssistantContent::tool_call_with_call_id(
                         "tool_call_1",
                         "call_1".to_string(),
                         "missing_tool",
                         json!({"input": "value"}),
-                    ))
+                    )]
                 } else {
                     validate_follow_up_tool_history(&request);
-                    OneOrMany::one(AssistantContent::text(""))
+                    vec![AssistantContent::text("")]
                 };
 
-                Ok(CompletionResponse {
-                    choice,
-                    usage: Usage {
+                Ok(crate::model_event::events_from_parts(
+                    (),
+                    content,
+                    Usage {
                         input_tokens: 1,
                         output_tokens: 1,
                         total_tokens: 2,
                         cached_input_tokens: 0,
                         cache_creation_input_tokens: 0,
                     },
-                    raw_response: (),
-                    message_id: None,
-                })
+                    None,
+                ))
             }
-            .await;
-            let response = response_result?;
-
-            Ok(crate::model_event::events_from_completion_response(
-                response,
-            ))
+            .await
         }
 
         async fn stream_events(

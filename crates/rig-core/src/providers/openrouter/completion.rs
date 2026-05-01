@@ -588,147 +588,142 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    let choice = response.choices.first().ok_or_else(|| {
+        CompletionError::ResponseError("Response contained no choices".to_owned())
+    })?;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
+    let content = match &choice.message {
+        Message::Assistant {
+            content,
+            tool_calls,
+            reasoning,
+            reasoning_details,
+            ..
+        } => {
+            let mut content = content
+                .iter()
+                .map(|c| match c {
+                    openai::AssistantContent::Text { text } => {
+                        completion::AssistantContent::text(text)
+                    }
+                    openai::AssistantContent::Refusal { refusal } => {
+                        completion::AssistantContent::text(refusal)
+                    }
+                })
+                .collect::<Vec<_>>();
 
-        let content = match &choice.message {
-            Message::Assistant {
-                content,
-                tool_calls,
-                reasoning,
-                reasoning_details,
-                ..
-            } => {
-                let mut content = content
-                    .iter()
-                    .map(|c| match c {
-                        openai::AssistantContent::Text { text } => {
-                            completion::AssistantContent::text(text)
-                        }
-                        openai::AssistantContent::Refusal { refusal } => {
-                            completion::AssistantContent::text(refusal)
-                        }
-                    })
-                    .collect::<Vec<_>>();
+            content.extend(tool_calls.iter().map(|call| {
+                completion::AssistantContent::tool_call(
+                    &call.id,
+                    &call.function.name,
+                    call.function.arguments.clone(),
+                )
+            }));
 
-                content.extend(tool_calls.iter().map(|call| {
-                    completion::AssistantContent::tool_call(
-                        &call.id,
-                        &call.function.name,
-                        call.function.arguments.clone(),
-                    )
-                }));
+            let mut grouped_reasoning: HashMap<
+                Option<String>,
+                Vec<(usize, usize, message::ReasoningContent)>,
+            > = HashMap::new();
+            let mut reasoning_order: Vec<Option<String>> = Vec::new();
+            for (position, detail) in reasoning_details.iter().enumerate() {
+                let (reasoning_id, sort_index, parsed_content) = match detail {
+                    ReasoningDetails::Summary {
+                        id, index, summary, ..
+                    } => (
+                        id.clone(),
+                        *index,
+                        Some(message::ReasoningContent::Summary(summary.clone())),
+                    ),
+                    ReasoningDetails::Encrypted {
+                        id, index, data, ..
+                    } => (
+                        id.clone(),
+                        *index,
+                        Some(message::ReasoningContent::Encrypted(data.clone())),
+                    ),
+                    ReasoningDetails::Text {
+                        id,
+                        index,
+                        text,
+                        signature,
+                        ..
+                    } => (
+                        id.clone(),
+                        *index,
+                        text.as_ref().map(|text| message::ReasoningContent::Text {
+                            text: text.clone(),
+                            signature: signature.clone(),
+                        }),
+                    ),
+                };
 
-                let mut grouped_reasoning: HashMap<
-                    Option<String>,
-                    Vec<(usize, usize, message::ReasoningContent)>,
-                > = HashMap::new();
-                let mut reasoning_order: Vec<Option<String>> = Vec::new();
-                for (position, detail) in reasoning_details.iter().enumerate() {
-                    let (reasoning_id, sort_index, parsed_content) = match detail {
-                        ReasoningDetails::Summary {
-                            id, index, summary, ..
-                        } => (
-                            id.clone(),
-                            *index,
-                            Some(message::ReasoningContent::Summary(summary.clone())),
-                        ),
-                        ReasoningDetails::Encrypted {
-                            id, index, data, ..
-                        } => (
-                            id.clone(),
-                            *index,
-                            Some(message::ReasoningContent::Encrypted(data.clone())),
-                        ),
-                        ReasoningDetails::Text {
-                            id,
-                            index,
-                            text,
-                            signature,
-                            ..
-                        } => (
-                            id.clone(),
-                            *index,
-                            text.as_ref().map(|text| message::ReasoningContent::Text {
-                                text: text.clone(),
-                                signature: signature.clone(),
-                            }),
-                        ),
-                    };
+                let Some(parsed_content) = parsed_content else {
+                    continue;
+                };
+                let sort_index = sort_index.unwrap_or(position);
 
-                    let Some(parsed_content) = parsed_content else {
+                let entry = grouped_reasoning.entry(reasoning_id.clone());
+                if matches!(entry, std::collections::hash_map::Entry::Vacant(_)) {
+                    reasoning_order.push(reasoning_id);
+                }
+                entry
+                    .or_default()
+                    .push((sort_index, position, parsed_content));
+            }
+
+            if grouped_reasoning.is_empty() {
+                if let Some(reasoning) = reasoning {
+                    content.push(completion::AssistantContent::reasoning(reasoning));
+                }
+            } else {
+                for reasoning_id in reasoning_order {
+                    let Some(mut blocks) = grouped_reasoning.remove(&reasoning_id) else {
                         continue;
                     };
-                    let sort_index = sort_index.unwrap_or(position);
-
-                    let entry = grouped_reasoning.entry(reasoning_id.clone());
-                    if matches!(entry, std::collections::hash_map::Entry::Vacant(_)) {
-                        reasoning_order.push(reasoning_id);
-                    }
-                    entry
-                        .or_default()
-                        .push((sort_index, position, parsed_content));
+                    blocks.sort_by_key(|(index, position, _)| (*index, *position));
+                    content.push(completion::AssistantContent::Reasoning(
+                        message::Reasoning {
+                            id: reasoning_id,
+                            content: blocks
+                                .into_iter()
+                                .map(|(_, _, content)| content)
+                                .collect::<Vec<_>>(),
+                        },
+                    ));
                 }
-
-                if grouped_reasoning.is_empty() {
-                    if let Some(reasoning) = reasoning {
-                        content.push(completion::AssistantContent::reasoning(reasoning));
-                    }
-                } else {
-                    for reasoning_id in reasoning_order {
-                        let Some(mut blocks) = grouped_reasoning.remove(&reasoning_id) else {
-                            continue;
-                        };
-                        blocks.sort_by_key(|(index, position, _)| (*index, *position));
-                        content.push(completion::AssistantContent::Reasoning(
-                            message::Reasoning {
-                                id: reasoning_id,
-                                content: blocks
-                                    .into_iter()
-                                    .map(|(_, _, content)| content)
-                                    .collect::<Vec<_>>(),
-                            },
-                        ));
-                    }
-                }
-
-                Ok(content)
             }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
-            )),
-        }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            Ok(content)
+        }
+        _ => Err(CompletionError::ResponseError(
+            "Response did not contain a valid message or tool call".into(),
+        )),
+    }?;
 
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.prompt_tokens as u64,
-                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-                total_tokens: usage.total_tokens as u64,
-                cached_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
     }
+
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|usage| completion::Usage {
+            input_tokens: usage.prompt_tokens as u64,
+            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+            total_tokens: usage.total_tokens as u64,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        })
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 /// User content types supported by OpenRouter.
@@ -1704,10 +1699,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let request_model = completion_request
                 .model
                 .clone()
@@ -1778,7 +1770,7 @@ where
 
                             tracing::debug!(target: "rig::completions",
                             "OpenRouter response: {response:?}");
-                            response.try_into()
+                            completion_response_events(response)
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -1791,12 +1783,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
@@ -2682,8 +2669,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_completion_response_with_reasoning_details_maps_to_typed_reasoning() {
+    #[tokio::test]
+    async fn test_completion_response_with_reasoning_details_maps_to_typed_reasoning() {
         let json = json!({
             "id": "resp_123",
             "object": "chat.completion",
@@ -2706,8 +2693,9 @@ mod tests {
         });
 
         let response: CompletionResponse = serde_json::from_value(json).unwrap();
-        let converted: completion::CompletionResponse<CompletionResponse> =
-            response.try_into().unwrap();
+        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
+            .await
+            .unwrap();
         let items: Vec<completion::AssistantContent> = converted.choice.into_iter().collect();
 
         assert!(items.iter().any(|item| matches!(
@@ -2792,8 +2780,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_completion_response_reasoning_details_respects_index_ordering() {
+    #[tokio::test]
+    async fn test_completion_response_reasoning_details_respects_index_ordering() {
         let json = json!({
             "id": "resp_ordering",
             "object": "chat.completion",
@@ -2815,8 +2803,9 @@ mod tests {
         });
 
         let response: CompletionResponse = serde_json::from_value(json).unwrap();
-        let converted: completion::CompletionResponse<CompletionResponse> =
-            response.try_into().unwrap();
+        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
+            .await
+            .unwrap();
         let items: Vec<completion::AssistantContent> = converted.choice.into_iter().collect();
         let reasoning_blocks: Vec<_> = items
             .into_iter()
@@ -3086,8 +3075,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_completion_response_reasoning_details_with_multiple_ids_stay_separate() {
+    #[tokio::test]
+    async fn test_completion_response_reasoning_details_with_multiple_ids_stay_separate() {
         let json = json!({
             "id": "resp_multi_id",
             "object": "chat.completion",
@@ -3110,8 +3099,9 @@ mod tests {
         });
 
         let response: CompletionResponse = serde_json::from_value(json).unwrap();
-        let converted: completion::CompletionResponse<CompletionResponse> =
-            response.try_into().unwrap();
+        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
+            .await
+            .unwrap();
         let items: Vec<completion::AssistantContent> = converted.choice.into_iter().collect();
         let reasoning_blocks: Vec<_> = items
             .into_iter()

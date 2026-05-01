@@ -27,15 +27,14 @@ use self::gemini_api_types::Schema;
 use crate::http_client::HttpClientExt;
 use crate::message::{self, MimeType, Reasoning};
 
+#[cfg(test)]
+use crate::OneOrMany;
+use crate::completion::{self, CompletionError, CompletionRequest};
 use crate::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, FunctionCallingMode, ToolConfig,
 };
 use crate::providers::gemini::streaming::StreamingResponse;
 use crate::telemetry::SpanCombinator;
-use crate::{
-    OneOrMany,
-    completion::{self, CompletionError, CompletionRequest},
-};
 use gemini_api_types::{
     Content, FunctionDeclaration, GenerateContentRequest, GenerateContentResponse,
     GenerationConfig, Part, PartKind, Role, Tool,
@@ -89,10 +88,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let request_model = resolve_request_model(&self.model, &completion_request);
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
@@ -165,7 +161,7 @@ where
                         );
                     }
 
-                    response.try_into()
+                    completion_response_events(response)
                 } else {
                     let text = String::from_utf8_lossy(
                         &response
@@ -181,12 +177,7 @@ where
             .instrument(span)
             .await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
@@ -415,118 +406,113 @@ impl TryFrom<Vec<completion::ToolDefinition>> for Tool {
     }
 }
 
-impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<GenerateContentResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: GenerateContentResponse,
+) -> Result<crate::model_event::ModelEventStream<GenerateContentResponse>, CompletionError> {
+    let candidate = response.candidates.first().ok_or_else(|| {
+        CompletionError::ResponseError("No response candidates in response".into())
+    })?;
 
-    fn try_from(response: GenerateContentResponse) -> Result<Self, Self::Error> {
-        let candidate = response.candidates.first().ok_or_else(|| {
-            CompletionError::ResponseError("No response candidates in response".into())
-        })?;
+    let content = candidate
+        .content
+        .as_ref()
+        .ok_or_else(|| {
+            let reason = candidate
+                .finish_reason
+                .as_ref()
+                .map(|r| format!("finish_reason={r:?}"))
+                .unwrap_or_else(|| "finish_reason=<unknown>".to_string());
+            let message = candidate
+                .finish_message
+                .as_deref()
+                .unwrap_or("no finish message provided");
+            CompletionError::ResponseError(format!(
+                "Gemini candidate missing content ({reason}, finish_message={message})"
+            ))
+        })?
+        .parts
+        .iter()
+        .map(
+            |Part {
+                 thought,
+                 thought_signature,
+                 part,
+                 ..
+             }| {
+                Ok(match part {
+                    PartKind::Text(text) => {
+                        if let Some(thought) = thought
+                            && *thought
+                        {
+                            completion::AssistantContent::Reasoning(Reasoning::new_with_signature(
+                                text,
+                                thought_signature.clone(),
+                            ))
+                        } else {
+                            completion::AssistantContent::text(text)
+                        }
+                    }
+                    PartKind::InlineData(inline_data) => {
+                        let mime_type = message::MediaType::from_mime_type(&inline_data.mime_type);
 
-        let content = candidate
-            .content
-            .as_ref()
-            .ok_or_else(|| {
-                let reason = candidate
-                    .finish_reason
-                    .as_ref()
-                    .map(|r| format!("finish_reason={r:?}"))
-                    .unwrap_or_else(|| "finish_reason=<unknown>".to_string());
-                let message = candidate
-                    .finish_message
-                    .as_deref()
-                    .unwrap_or("no finish message provided");
-                CompletionError::ResponseError(format!(
-                    "Gemini candidate missing content ({reason}, finish_message={message})"
-                ))
-            })?
-            .parts
-            .iter()
-            .map(
-                |Part {
-                     thought,
-                     thought_signature,
-                     part,
-                     ..
-                 }| {
-                    Ok(match part {
-                        PartKind::Text(text) => {
-                            if let Some(thought) = thought
-                                && *thought
-                            {
-                                completion::AssistantContent::Reasoning(
-                                    Reasoning::new_with_signature(text, thought_signature.clone()),
+                        match mime_type {
+                            Some(message::MediaType::Image(media_type)) => {
+                                message::AssistantContent::image_base64(
+                                    &inline_data.data,
+                                    Some(media_type),
+                                    Some(message::ImageDetail::default()),
                                 )
-                            } else {
-                                completion::AssistantContent::text(text)
+                            }
+                            _ => {
+                                return Err(CompletionError::ResponseError(format!(
+                                    "Unsupported media type {mime_type:?}"
+                                )));
                             }
                         }
-                        PartKind::InlineData(inline_data) => {
-                            let mime_type =
-                                message::MediaType::from_mime_type(&inline_data.mime_type);
-
-                            match mime_type {
-                                Some(message::MediaType::Image(media_type)) => {
-                                    message::AssistantContent::image_base64(
-                                        &inline_data.data,
-                                        Some(media_type),
-                                        Some(message::ImageDetail::default()),
-                                    )
-                                }
-                                _ => {
-                                    return Err(CompletionError::ResponseError(format!(
-                                        "Unsupported media type {mime_type:?}"
-                                    )));
-                                }
-                            }
-                        }
-                        PartKind::FunctionCall(function_call) => {
-                            completion::AssistantContent::ToolCall(
-                                message::ToolCall::new(
+                    }
+                    PartKind::FunctionCall(function_call) => {
+                        completion::AssistantContent::ToolCall(
+                            message::ToolCall::new(
+                                function_call.name.clone(),
+                                message::ToolFunction::new(
                                     function_call.name.clone(),
-                                    message::ToolFunction::new(
-                                        function_call.name.clone(),
-                                        function_call.args.clone(),
-                                    ),
-                                )
-                                .with_signature(thought_signature.clone()),
+                                    function_call.args.clone(),
+                                ),
                             )
-                        }
-                        _ => {
-                            return Err(CompletionError::ResponseError(
-                                "Response did not contain a message or tool call".into(),
-                            ));
-                        }
-                    })
-                },
-            )
-            .collect::<Result<Vec<_>, _>>()?;
+                            .with_signature(thought_signature.clone()),
+                        )
+                    }
+                    _ => {
+                        return Err(CompletionError::ResponseError(
+                            "Response did not contain a message or tool call".into(),
+                        ));
+                    }
+                })
+            },
+        )
+        .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = response
-            .usage_metadata
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.prompt_token_count as u64,
-                output_tokens: usage.candidates_token_count.unwrap_or(0) as u64,
-                total_tokens: usage.total_token_count as u64,
-                cached_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+    if content.is_empty() {
+        return Err(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_owned(),
+        ));
     }
+
+    let usage = response
+        .usage_metadata
+        .as_ref()
+        .map(|usage| completion::Usage {
+            input_tokens: usage.prompt_token_count as u64,
+            output_tokens: usage.candidates_token_count.unwrap_or(0) as u64,
+            total_tokens: usage.total_token_count as u64,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        })
+        .unwrap_or_default();
+
+    Ok(crate::model_event::events_from_parts(
+        response, content, usage, None,
+    ))
 }
 
 pub mod gemini_api_types {
@@ -2262,8 +2248,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_thought_signature_is_preserved_from_response_reasoning_part() {
+    #[tokio::test]
+    async fn test_thought_signature_is_preserved_from_response_reasoning_part() {
         let response = GenerateContentResponse {
             response_id: "resp_1".to_string(),
             candidates: vec![ContentCandidate {
@@ -2290,8 +2276,9 @@ mod tests {
             model_version: None,
         };
 
-        let converted: crate::completion::CompletionResponse<GenerateContentResponse> =
-            response.try_into().expect("convert response");
+        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
+            .await
+            .unwrap();
         let first = converted.choice.first();
         assert!(matches!(
             first,

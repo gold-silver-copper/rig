@@ -5,7 +5,7 @@ use crate::{
     completion::{Document, GetTokenUsage},
     json_utils,
     message::{AssistantContent, ToolChoice, ToolResult, ToolResultContent, UserContent},
-    model_event::ModelEvent,
+    model_event::{CompletionCollector, ModelEvent},
     tool::server::ToolServerHandle,
     wasm_compat::{WasmBoxedFuture, WasmCompatSend},
 };
@@ -132,6 +132,16 @@ fn merge_reasoning_blocks(
     } else {
         accumulated_reasoning.push(incoming.clone());
     }
+}
+
+fn assistant_text_response(choice: &OneOrMany<AssistantContent>) -> String {
+    let mut response = String::new();
+    for content in choice.iter() {
+        if let AssistantContent::Text(text) = content {
+            response.push_str(&text.text);
+        }
+    }
+    response
 }
 
 /// Build full history for error reporting (input + new messages).
@@ -491,9 +501,9 @@ where
                 let mut tool_calls = vec![];
                 let mut tool_results = vec![];
                 let mut accumulated_reasoning: Vec<rig::message::Reasoning> = vec![];
-                let mut turn_text_response = String::new();
                 let mut turn_usage = crate::completion::Usage::new();
                 let mut message_id: Option<String> = None;
+                let mut turn_collector = CompletionCollector::new();
                 // Kept separate from accumulated_reasoning so providers requiring
                 // signatures (e.g. Anthropic) never see unsigned blocks.
                 let mut pending_reasoning_delta_text = String::new();
@@ -525,13 +535,16 @@ where
                                 saw_text_this_turn = true;
                             }
                             text_delta_response.push_str(&text);
-                            turn_text_response.push_str(&text);
                             if let Some(ref hook) = self.hook &&
                                 let HookAction::Terminate { reason } = hook.on_text_delta(&text, &text_delta_response).await {
                                     yield Err(cancelled_prompt_error(chat_history.as_deref(), new_messages.clone(), reason).await);
                                     break 'outer;
                             }
 
+                            if let Err(error) = turn_collector.push(ModelEvent::TextDelta { text: text.clone() }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::TextDelta { text }));
                         },
                         ModelEvent::ToolCallDone { tool_call, internal_call_id } => {
@@ -551,6 +564,13 @@ where
                                 tool_call: tool_call.clone(),
                                 internal_call_id: internal_call_id.clone(),
                             });
+                            if let Err(error) = turn_collector.push(ModelEvent::ToolCallDone {
+                                tool_call: tool_call.clone(),
+                                internal_call_id: Some(internal_call_id.clone()),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::ToolCallDone {
                                 tool_call: tool_call.clone(),
                                 internal_call_id: Some(internal_call_id.clone()),
@@ -647,6 +667,14 @@ where
                                 }
                             }
 
+                            if let Err(error) = turn_collector.push(ModelEvent::ToolCallDelta {
+                                id: id.clone(),
+                                internal_call_id: internal_call_id.clone(),
+                                content: content.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::ToolCallDelta {
                                 id,
                                 internal_call_id,
@@ -662,6 +690,15 @@ where
                                 break 'outer;
                             }
 
+                            if let Err(error) = turn_collector.push(ModelEvent::ToolCallStart {
+                                id: id.clone(),
+                                internal_call_id: internal_call_id.clone(),
+                                call_id: call_id.clone(),
+                                name: name.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::ToolCallStart {
                                 id,
                                 internal_call_id,
@@ -674,6 +711,12 @@ where
                             // OpenAI Responses API requires reasoning items to be sent back
                             // alongside function_call items in multi-turn conversations.
                             merge_reasoning_blocks(&mut accumulated_reasoning, &reasoning);
+                            if let Err(error) = turn_collector.push(ModelEvent::ReasoningDone {
+                                reasoning: reasoning.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::ReasoningDone { reasoning }));
                         },
                         ModelEvent::ReasoningDelta { id, text } => {
@@ -684,10 +727,21 @@ where
                             if pending_reasoning_delta_id.is_none() {
                                 pending_reasoning_delta_id = id.clone();
                             }
+                            if let Err(error) = turn_collector.push(ModelEvent::ReasoningDelta {
+                                id: id.clone(),
+                                text: text.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::ReasoningDelta { id, text }));
                         },
                         ModelEvent::Usage { usage } => {
                             turn_usage = usage;
+                            if let Err(error) = turn_collector.push(ModelEvent::Usage { usage }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::Usage { usage }));
                         }
                         ModelEvent::RawResponse { response: final_resp } => {
@@ -705,18 +759,38 @@ where
 
                                 saw_text_this_turn = false;
                             }
+                            if let Err(error) = turn_collector.push(ModelEvent::RawResponse {
+                                response: final_resp.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::RawResponse { response: final_resp }));
                         }
                         ModelEvent::MessageDone { id } => {
                             if id.is_some() {
                                 message_id = id.clone();
                             }
+                            if let Err(error) = turn_collector.push(ModelEvent::MessageDone { id: id.clone() }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::MessageDone { id }));
                         }
                         ModelEvent::ProviderMetadata { metadata } => {
+                            if let Err(error) = turn_collector.push(ModelEvent::ProviderMetadata {
+                                metadata: metadata.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::ProviderMetadata { metadata }));
                         }
                         ModelEvent::Done => {
+                            if let Err(error) = turn_collector.push(ModelEvent::Done) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
                             yield Ok(AgentEvent::Model(ModelEvent::Done));
                         }
                         ModelEvent::Error { error } => {
@@ -727,6 +801,14 @@ where
                 }
 
                 aggregated_usage += turn_usage;
+                let assistant_response = match turn_collector.finish_optional() {
+                    Ok(response) => response,
+                    Err(error) => {
+                        yield Err(error.into());
+                        break 'outer;
+                    }
+                };
+                let turn_text_response = assistant_text_response(&assistant_response.choice);
 
                 // Providers like Gemini emit thinking as incremental deltas
                 // without signatures; assemble into a single block so
@@ -1144,19 +1226,8 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-            let response_result: Result<
-                crate::completion::CompletionResponse<Self::Response>,
-                CompletionError,
-            > = async {
-                Err(CompletionError::ProviderError(
-                    "completion is unused in this streaming test".to_string(),
-                ))
-            }
-            .await;
-            let response = response_result?;
-
-            Ok(crate::model_event::events_from_completion_response(
-                response,
+            Err(CompletionError::ProviderError(
+                "completion is unused in this streaming test".to_string(),
             ))
         }
 
@@ -1288,19 +1359,8 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-            let response_result: Result<
-                crate::completion::CompletionResponse<Self::Response>,
-                CompletionError,
-            > = async {
-                Err(CompletionError::ProviderError(
-                    "completion is unused in this streaming test".to_string(),
-                ))
-            }
-            .await;
-            let response = response_result?;
-
-            Ok(crate::model_event::events_from_completion_response(
-                response,
+            Err(CompletionError::ProviderError(
+                "completion is unused in this streaming test".to_string(),
             ))
         }
 

@@ -4,7 +4,7 @@
 use rig::OneOrMany;
 use rig::agent::AgentBuilder;
 use rig::completion::{
-    CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Message, Prompt, Usage,
+    CompletionError, CompletionModel, CompletionRequest, Message, Prompt, Usage,
 };
 use rig::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
 use rig::model_event::ModelEventStream;
@@ -33,29 +33,20 @@ impl CompletionModel for SimpleTextModel {
         &self,
         _request: CompletionRequest,
     ) -> Result<rig::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            rig::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
-            Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::Text(Text {
-                    text: "hello from mock".to_string(),
-                })),
-                usage: Usage {
-                    input_tokens: 10,
-                    output_tokens: 5,
-                    total_tokens: 15,
-                    cached_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                },
-                raw_response: (),
-                message_id: Some("msg_mock_1".to_string()),
-            })
-        }
-        .await;
-        let response = response_result?;
-
-        Ok(rig::model_event::events_from_completion_response(response))
+        Ok(rig::model_event::events_from_parts(
+            (),
+            OneOrMany::one(AssistantContent::Text(Text {
+                text: "hello from mock".to_string(),
+            })),
+            Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+                total_tokens: 15,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            },
+            Some("msg_mock_1".to_string()),
+        ))
     }
 
     async fn stream_events(
@@ -95,54 +86,43 @@ impl CompletionModel for ToolThenTextModel {
         &self,
         _request: CompletionRequest,
     ) -> Result<rig::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            rig::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
-            let turn = self.turn.fetch_add(1, Ordering::SeqCst);
+        let turn = self.turn.fetch_add(1, Ordering::SeqCst);
 
-            if turn == 0 {
-                // First turn: return a tool call
-                Ok(CompletionResponse {
-                    choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                        "tc_1".to_string(),
-                        ToolFunction::new(
-                            "calculator".to_string(),
-                            serde_json::json!({"op": "add", "a": 2, "b": 3}),
-                        ),
-                    ))),
-                    usage: Usage {
-                        input_tokens: 15,
-                        output_tokens: 8,
-                        total_tokens: 23,
-                        cached_input_tokens: 0,
-                        cache_creation_input_tokens: 0,
-                    },
-                    raw_response: (),
-                    message_id: Some("msg_tool".to_string()),
-                })
-            } else {
-                // Second turn: return a text response
-                Ok(CompletionResponse {
-                    choice: OneOrMany::one(AssistantContent::Text(Text {
-                        text: "The answer is 5".to_string(),
-                    })),
-                    usage: Usage {
-                        input_tokens: 20,
-                        output_tokens: 4,
-                        total_tokens: 24,
-                        cached_input_tokens: 0,
-                        cache_creation_input_tokens: 0,
-                    },
-                    raw_response: (),
-                    message_id: Some("msg_text".to_string()),
-                })
-            }
+        if turn == 0 {
+            Ok(rig::model_event::events_from_parts(
+                (),
+                OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                    "tc_1".to_string(),
+                    ToolFunction::new(
+                        "calculator".to_string(),
+                        serde_json::json!({"op": "add", "a": 2, "b": 3}),
+                    ),
+                ))),
+                Usage {
+                    input_tokens: 15,
+                    output_tokens: 8,
+                    total_tokens: 23,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                },
+                Some("msg_tool".to_string()),
+            ))
+        } else {
+            Ok(rig::model_event::events_from_parts(
+                (),
+                OneOrMany::one(AssistantContent::Text(Text {
+                    text: "The answer is 5".to_string(),
+                })),
+                Usage {
+                    input_tokens: 20,
+                    output_tokens: 4,
+                    total_tokens: 24,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                },
+                Some("msg_text".to_string()),
+            ))
         }
-        .await;
-        let response = response_result?;
-
-        Ok(rig::model_event::events_from_completion_response(response))
     }
 
     async fn stream_events(
@@ -172,24 +152,15 @@ impl CompletionModel for AlwaysToolCallModel {
         &self,
         _request: CompletionRequest,
     ) -> Result<rig::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            rig::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
-            Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                    "tc_loop".to_string(),
-                    ToolFunction::new("infinite_tool".to_string(), serde_json::json!({"x": 1})),
-                ))),
-                usage: Usage::new(),
-                raw_response: (),
-                message_id: None,
-            })
-        }
-        .await;
-        let response = response_result?;
-
-        Ok(rig::model_event::events_from_completion_response(response))
+        Ok(rig::model_event::events_from_parts(
+            (),
+            OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                "tc_loop".to_string(),
+                ToolFunction::new("infinite_tool".to_string(), serde_json::json!({"x": 1})),
+            ))),
+            Usage::new(),
+            None,
+        ))
     }
 
     async fn stream_events(

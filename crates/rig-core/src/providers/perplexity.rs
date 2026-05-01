@@ -14,7 +14,6 @@ use crate::model_event::ModelEventStream;
 use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
 use crate::{
-    OneOrMany,
     client::{
         self, Capabilities, Capable, DebugExt, Nothing, Provider, ProviderBuilder, ProviderClient,
     },
@@ -172,34 +171,36 @@ impl std::fmt::Display for Usage {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
+    let choice = response.choices.first().ok_or_else(|| {
+        CompletionError::ResponseError("Response contained no choices".to_owned())
+    })?;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
-
-        match &choice.message {
-            Message {
-                role: Role::Assistant,
-                content,
-            } => Ok(completion::CompletionResponse {
-                choice: OneOrMany::one(content.clone().into()),
-                usage: completion::Usage {
-                    input_tokens: response.usage.prompt_tokens as u64,
-                    output_tokens: response.usage.completion_tokens as u64,
-                    total_tokens: response.usage.total_tokens as u64,
-                    cached_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                },
-                raw_response: response,
-                message_id: None,
-            }),
-            _ => Err(CompletionError::ResponseError(
-                "Response contained no assistant message".to_owned(),
-            )),
+    match &choice.message {
+        Message {
+            role: Role::Assistant,
+            content,
+        } => {
+            let content = content.clone();
+            let usage = completion::Usage {
+                input_tokens: response.usage.prompt_tokens as u64,
+                output_tokens: response.usage.completion_tokens as u64,
+                total_tokens: response.usage.total_tokens as u64,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            };
+            Ok(crate::model_event::events_from_parts(
+                response,
+                vec![completion::AssistantContent::text(content)],
+                usage,
+                None,
+            ))
         }
+        _ => Err(CompletionError::ResponseError(
+            "Response contained no assistant message".to_owned(),
+        )),
     }
 }
 
@@ -353,10 +354,7 @@ where
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -426,7 +424,7 @@ where
                                     serde_json::to_string_pretty(&response)?
                                 );
                             }
-                            Ok(response.try_into()?)
+                            completion_response_events(response)
                         }
                         ApiResponse::Err(error) => {
                             Err(CompletionError::ProviderError(error.message))
@@ -441,12 +439,7 @@ where
 
             async_block.instrument(span).await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(

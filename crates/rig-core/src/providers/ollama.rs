@@ -346,74 +346,50 @@ pub struct CompletionResponse {
     #[serde(default)]
     pub eval_duration: Option<u64>,
 }
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
-    fn try_from(resp: CompletionResponse) -> Result<Self, Self::Error> {
-        match resp.message {
-            // Process only if an assistant message is present.
-            Message::Assistant {
-                content,
-                thinking,
-                tool_calls,
-                ..
-            } => {
-                let mut assistant_contents = Vec::new();
-                // Add the assistant's text content if any.
-                if !content.is_empty() {
-                    assistant_contents.push(completion::AssistantContent::text(&content));
-                }
-                // Process tool_calls following Ollama's chat response definition.
-                // Each ToolCall has an id, a type, and a function field.
-                for tc in tool_calls.iter() {
-                    assistant_contents.push(completion::AssistantContent::tool_call(
-                        tc.function.name.clone(),
-                        tc.function.name.clone(),
-                        tc.function.arguments.clone(),
-                    ));
-                }
-                let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-                    CompletionError::ResponseError("No content provided".to_owned())
-                })?;
-                let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
-                let completion_tokens = resp.eval_count.unwrap_or(0);
-
-                let raw_response = CompletionResponse {
-                    model: resp.model,
-                    created_at: resp.created_at,
-                    done: resp.done,
-                    done_reason: resp.done_reason,
-                    total_duration: resp.total_duration,
-                    load_duration: resp.load_duration,
-                    prompt_eval_count: resp.prompt_eval_count,
-                    prompt_eval_duration: resp.prompt_eval_duration,
-                    eval_count: resp.eval_count,
-                    eval_duration: resp.eval_duration,
-                    message: Message::Assistant {
-                        content,
-                        thinking,
-                        images: None,
-                        name: None,
-                        tool_calls,
-                    },
-                };
-
-                Ok(completion::CompletionResponse {
-                    choice,
-                    usage: Usage {
-                        input_tokens: prompt_tokens,
-                        output_tokens: completion_tokens,
-                        total_tokens: prompt_tokens + completion_tokens,
-                        cached_input_tokens: 0,
-                        cache_creation_input_tokens: 0,
-                    },
-                    raw_response,
-                    message_id: None,
-                })
+fn completion_response_events(
+    resp: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    match &resp.message {
+        Message::Assistant {
+            content,
+            tool_calls,
+            ..
+        } => {
+            let mut assistant_contents = Vec::new();
+            if !content.is_empty() {
+                assistant_contents.push(completion::AssistantContent::text(content));
             }
-            _ => Err(CompletionError::ResponseError(
-                "Chat response does not include an assistant message".into(),
-            )),
+            for tc in tool_calls.iter() {
+                assistant_contents.push(completion::AssistantContent::tool_call(
+                    tc.function.name.clone(),
+                    tc.function.name.clone(),
+                    tc.function.arguments.clone(),
+                ));
+            }
+            if assistant_contents.is_empty() {
+                return Err(CompletionError::ResponseError(
+                    "No content provided".to_owned(),
+                ));
+            }
+            let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
+            let completion_tokens = resp.eval_count.unwrap_or(0);
+
+            Ok(crate::model_event::events_from_parts(
+                resp,
+                assistant_contents,
+                Usage {
+                    input_tokens: prompt_tokens,
+                    output_tokens: completion_tokens,
+                    total_tokens: prompt_tokens + completion_tokens,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                },
+                None,
+            ))
         }
+        _ => Err(CompletionError::ResponseError(
+            "Chat response does not include an assistant message".into(),
+        )),
     }
 }
 
@@ -579,10 +555,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
-        let response_result: Result<
-            crate::completion::CompletionResponse<Self::Response>,
-            CompletionError,
-        > = async {
+        async {
             let span = if tracing::Span::current().is_disabled() {
                 info_span!(
                     target: "rig::completions",
@@ -650,20 +623,12 @@ where
                     );
                 }
 
-                let response: completion::CompletionResponse<CompletionResponse> =
-                    response.try_into()?;
-
-                Ok(response)
+                completion_response_events(response)
             };
 
             tracing::Instrument::instrument(async_block, span).await
         }
-        .await;
-        let response = response_result?;
-
-        Ok(crate::model_event::events_from_completion_response(
-            response,
-        ))
+        .await
     }
 
     async fn stream_events(
@@ -1265,8 +1230,9 @@ mod tests {
 
         let chat_resp: CompletionResponse =
             serde_json::from_str(&sample_text).expect("Invalid JSON structure");
-        let conv: completion::CompletionResponse<CompletionResponse> =
-            chat_resp.try_into().unwrap();
+        let conv = crate::model_event::collect(completion_response_events(chat_resp).unwrap())
+            .await
+            .unwrap();
         assert!(
             !conv.choice.is_empty(),
             "Expected non-empty choice in chat response"
