@@ -12,6 +12,8 @@ use crate::completion::message::ReasoningContent;
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
+use crate::message::Reasoning;
+use crate::model_event::ModelEvent;
 use crate::streaming;
 use crate::telemetry::SpanCombinator;
 
@@ -170,17 +172,19 @@ where
                                             // thinking block; emit a full Reasoning so the
                                             // core accumulator captures the signature for
                                             // Gemini 3+ roundtrip.
-                                            yield Ok(streaming::RawStreamingChoice::Reasoning {
-                                                id: None,
-                                                content: ReasoningContent::Text {
-                                                    text,
-                                                    signature: thought_signature,
+                                            yield Ok(ModelEvent::ReasoningDone {
+                                                reasoning: Reasoning {
+                                                    id: None,
+                                                    content: vec![ReasoningContent::Text {
+                                                        text,
+                                                        signature: thought_signature,
+                                                    }],
                                                 },
                                             });
                                         } else {
-                                            yield Ok(streaming::RawStreamingChoice::ReasoningDelta {
+                                            yield Ok(ModelEvent::ReasoningDelta {
                                                 id: None,
-                                                reasoning: text,
+                                                text,
                                             });
                                         }
                                     }
@@ -190,7 +194,7 @@ where
                                     ..
                                 } => {
                                     if !text.is_empty() {
-                                        yield Ok(streaming::RawStreamingChoice::Message(text));
+                                        yield Ok(ModelEvent::TextDelta { text });
                                     }
                                 },
                                 Part {
@@ -198,7 +202,7 @@ where
                                     thought_signature,
                                     ..
                                 } => {
-                                    yield Ok(streaming::RawStreamingChoice::ToolCall(
+                                    yield Ok(ModelEvent::from(
                                         streaming::RawStreamingToolCall::new(function_call.name.clone(), function_call.name.clone(), function_call.args.clone())
                                             .with_signature(thought_signature)
                                     ));
@@ -231,9 +235,14 @@ where
             // Ensure event source is closed when stream ends
             event_source.close();
 
-            yield Ok(streaming::RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
+            let response = StreamingCompletionResponse {
                 usage_metadata: final_usage.unwrap_or_default()
-            }));
+            };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         }.instrument(span);
 
         Ok(streaming::StreamingCompletionResponse::stream(Box::pin(

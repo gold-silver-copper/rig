@@ -65,6 +65,7 @@
 
 use super::message::{AssistantContent, DocumentMediaType};
 use crate::message::ToolChoice;
+use crate::model_event::ModelEventStream;
 use crate::streaming::StreamingCompletionResponse;
 use crate::tool::server::ToolServerError;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
@@ -465,7 +466,7 @@ impl AddAssign for Usage {
 /// either from a third party provider (e.g.: OpenAI) or a local model.
 pub trait CompletionModel: Clone + WasmCompatSend + WasmCompatSync {
     /// The raw response type returned by the underlying completion model.
-    type Response: WasmCompatSend + WasmCompatSync + Serialize + DeserializeOwned;
+    type Response: WasmCompatSend + WasmCompatSync + Serialize + DeserializeOwned + 'static;
     /// The raw response type returned by the underlying completion model when streaming.
     type StreamingResponse: Clone
         + Unpin
@@ -473,7 +474,8 @@ pub trait CompletionModel: Clone + WasmCompatSend + WasmCompatSync {
         + WasmCompatSync
         + Serialize
         + DeserializeOwned
-        + GetTokenUsage;
+        + GetTokenUsage
+        + 'static;
 
     type Client;
 
@@ -493,6 +495,39 @@ pub trait CompletionModel: Clone + WasmCompatSend + WasmCompatSync {
     ) -> impl std::future::Future<
         Output = Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>,
     > + WasmCompatSend;
+
+    /// Generates normalized model events for the given completion request.
+    ///
+    /// This is the canonical completion representation. The default adapter
+    /// converts the model's non-streaming completion response into events so
+    /// existing providers can migrate incrementally.
+    fn events(
+        &self,
+        request: CompletionRequest,
+    ) -> impl std::future::Future<Output = Result<ModelEventStream<Self::Response>, CompletionError>>
+    + WasmCompatSend {
+        let model = self.clone();
+        async move {
+            let response = model.completion(request).await?;
+            Ok(crate::model_event::events_from_completion_response(
+                response,
+            ))
+        }
+    }
+
+    /// Generates normalized model events from the provider's streaming path.
+    fn stream_events(
+        &self,
+        request: CompletionRequest,
+    ) -> impl std::future::Future<
+        Output = Result<ModelEventStream<Self::StreamingResponse>, CompletionError>,
+    > + WasmCompatSend {
+        let model = self.clone();
+        async move {
+            let response = model.stream(request).await?;
+            Ok(crate::model_event::events_from_streaming_response(response))
+        }
+    }
 
     /// Generates a completion request builder for the given `prompt`.
     fn completion_request(&self, prompt: impl Into<Message>) -> CompletionRequestBuilder<Self> {
@@ -891,7 +926,14 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
     /// Sends the completion request to the completion model provider and returns the completion response.
     pub async fn send(self) -> Result<CompletionResponse<M::Response>, CompletionError> {
         let model = self.model.clone();
-        model.completion(self.build()).await
+        let events = model.events(self.build()).await?;
+        crate::model_event::collect(events).await
+    }
+
+    /// Sends the completion request and returns normalized model events.
+    pub async fn events(self) -> Result<ModelEventStream<M::Response>, CompletionError> {
+        let model = self.model.clone();
+        model.events(self.build()).await
     }
 
     /// Stream the completion request
@@ -904,6 +946,18 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
     {
         let model = self.model.clone();
         model.stream(self.build()).await
+    }
+
+    /// Stream the completion request as normalized model events.
+    pub async fn stream_events<'a>(
+        self,
+    ) -> Result<ModelEventStream<M::StreamingResponse>, CompletionError>
+    where
+        <M as CompletionModel>::StreamingResponse: 'a,
+        Self: 'a,
+    {
+        let model = self.model.clone();
+        model.stream_events(self.build()).await
     }
 }
 

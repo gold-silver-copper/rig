@@ -3,8 +3,8 @@
 use futures::StreamExt;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
+use rig::model_event::ModelEvent;
 use rig::providers::ollama;
-use rig::streaming::StreamedAssistantContent;
 use tokio::time::{Duration, sleep};
 
 #[tokio::test]
@@ -23,14 +23,13 @@ async fn streaming_pause_and_resume() {
     let mut chunk_count = 0usize;
     let mut paused_once = false;
     while let Some(chunk) = stream.next().await {
-        match chunk.expect("stream chunk should succeed") {
-            StreamedAssistantContent::Text(text) => {
-                chunk_count += usize::from(!text.text.is_empty());
+        match chunk {
+            ModelEvent::TextDelta { text } => {
+                chunk_count += usize::from(!text.is_empty());
             }
-            StreamedAssistantContent::ToolCall { .. } | StreamedAssistantContent::Reasoning(_) => {
-                chunk_count += 1
-            }
-            StreamedAssistantContent::Final(_) => break,
+            ModelEvent::ToolCallDone { .. } | ModelEvent::ReasoningDone { .. } => chunk_count += 1,
+            ModelEvent::RawResponse { .. } => break,
+            ModelEvent::Error { error } => panic!("stream chunk should succeed: {error}"),
             _ => {}
         }
 

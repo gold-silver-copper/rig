@@ -4,9 +4,9 @@ use crate::completion::{self, CompletionError, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::message::ReasoningContent;
+use crate::model_event::ModelEvent;
 use crate::providers::openai::responses_api::{ReasoningSummary, ResponsesUsage};
 use crate::streaming;
-use crate::streaming::RawStreamingChoice;
 use crate::wasm_compat::WasmCompatSend;
 use async_stream::stream;
 use futures::StreamExt;
@@ -16,7 +16,7 @@ use tracing_futures::Instrument as _;
 
 use super::{CompletionResponse, GenericResponsesCompletionModel, Output};
 
-type StreamingRawChoice = RawStreamingChoice<StreamingCompletionResponse>;
+type StreamingModelEvent = ModelEvent<StreamingCompletionResponse>;
 
 // ================================================================
 // OpenAI Responses Streaming API
@@ -40,25 +40,29 @@ pub struct StreamingCompletionResponse {
     pub usage: ResponsesUsage,
 }
 
-pub(crate) fn reasoning_choices_from_done_item(
+pub(crate) fn reasoning_choices_from_done_item<R>(
     id: &str,
     summary: &[ReasoningSummary],
     encrypted_content: Option<&str>,
-) -> Vec<RawStreamingChoice<StreamingCompletionResponse>> {
+) -> Vec<ModelEvent<R>> {
     let mut choices = summary
         .iter()
         .map(|reasoning_summary| match reasoning_summary {
-            ReasoningSummary::SummaryText { text } => RawStreamingChoice::Reasoning {
-                id: Some(id.to_owned()),
-                content: ReasoningContent::Summary(text.to_owned()),
+            ReasoningSummary::SummaryText { text } => ModelEvent::ReasoningDone {
+                reasoning: crate::message::Reasoning {
+                    id: Some(id.to_owned()),
+                    content: vec![ReasoningContent::Summary(text.to_owned())],
+                },
             },
         })
         .collect::<Vec<_>>();
 
     if let Some(encrypted_content) = encrypted_content {
-        choices.push(RawStreamingChoice::Reasoning {
-            id: Some(id.to_owned()),
-            content: ReasoningContent::Encrypted(encrypted_content.to_owned()),
+        choices.push(ModelEvent::ReasoningDone {
+            reasoning: crate::message::Reasoning {
+                id: Some(id.to_owned()),
+                content: vec![ReasoningContent::Encrypted(encrypted_content.to_owned())],
+            },
         });
     }
 
@@ -253,13 +257,13 @@ pub(crate) fn parse_sse_completion_body(
     })
 }
 
-struct RawChoiceAccumulator {
+struct ModelEventAccumulator {
     final_usage: ResponsesUsage,
-    tool_calls: Vec<StreamingRawChoice>,
+    tool_calls: Vec<StreamingModelEvent>,
     tool_call_internal_ids: std::collections::HashMap<String, String>,
 }
 
-impl RawChoiceAccumulator {
+impl ModelEventAccumulator {
     fn new(initial_usage: ResponsesUsage) -> Self {
         Self {
             final_usage: initial_usage,
@@ -272,7 +276,7 @@ impl RawChoiceAccumulator {
         &mut self,
         item: ItemChunkKind,
         options: ResponsesStreamOptions,
-    ) -> Vec<StreamingRawChoice> {
+    ) -> Vec<StreamingModelEvent> {
         let mut immediate = Vec::new();
 
         match item {
@@ -285,7 +289,7 @@ impl RawChoiceAccumulator {
                     .entry(func.id.clone())
                     .or_insert_with(|| nanoid::nanoid!())
                     .clone();
-                immediate.push(streaming::RawStreamingChoice::ToolCallDelta {
+                immediate.push(ModelEvent::ToolCallDelta {
                     id: func.id,
                     internal_call_id,
                     content: streaming::ToolCallDeltaContent::Name(func.name),
@@ -299,16 +303,16 @@ impl RawChoiceAccumulator {
                 );
             }
             ItemChunkKind::OutputTextDelta(delta) => {
-                immediate.push(streaming::RawStreamingChoice::Message(delta.delta));
+                immediate.push(ModelEvent::TextDelta { text: delta.delta });
             }
             ItemChunkKind::ReasoningSummaryTextDelta(delta) => {
-                immediate.push(streaming::RawStreamingChoice::ReasoningDelta {
+                immediate.push(ModelEvent::ReasoningDelta {
                     id: None,
-                    reasoning: delta.delta,
+                    text: delta.delta,
                 });
             }
             ItemChunkKind::RefusalDelta(delta) => {
-                immediate.push(streaming::RawStreamingChoice::Message(delta.delta));
+                immediate.push(ModelEvent::TextDelta { text: delta.delta });
             }
             ItemChunkKind::FunctionCallArgsDelta(delta) => {
                 let internal_call_id = self
@@ -316,7 +320,7 @@ impl RawChoiceAccumulator {
                     .entry(delta.item_id.clone())
                     .or_insert_with(|| nanoid::nanoid!())
                     .clone();
-                immediate.push(streaming::RawStreamingChoice::ToolCallDelta {
+                immediate.push(ModelEvent::ToolCallDelta {
                     id: delta.item_id,
                     internal_call_id,
                     content: streaming::ToolCallDeltaContent::Delta(delta.delta),
@@ -361,7 +365,7 @@ impl RawChoiceAccumulator {
     fn push_output_item_done(
         &mut self,
         item: Output,
-        immediate: &mut Vec<StreamingRawChoice>,
+        immediate: &mut Vec<StreamingModelEvent>,
         emit_completed_tool_calls_immediately: bool,
     ) {
         match item {
@@ -377,10 +381,9 @@ impl RawChoiceAccumulator {
                         .with_call_id(func.call_id);
 
                 if emit_completed_tool_calls_immediately {
-                    immediate.push(streaming::RawStreamingChoice::ToolCall(tool_call));
+                    immediate.push(ModelEvent::from(tool_call));
                 } else {
-                    self.tool_calls
-                        .push(streaming::RawStreamingChoice::ToolCall(tool_call));
+                    self.tool_calls.push(ModelEvent::from(tool_call));
                 }
             }
             Output::Reasoning {
@@ -396,31 +399,36 @@ impl RawChoiceAccumulator {
                 ));
             }
             Output::Message(message) => {
-                immediate.push(streaming::RawStreamingChoice::MessageId(message.id));
+                immediate.push(ModelEvent::MessageDone {
+                    id: Some(message.id),
+                });
             }
             Output::Unknown => {}
         }
     }
 
-    fn finish(mut self) -> Vec<StreamingRawChoice> {
-        let mut choices = Vec::new();
-        choices.append(&mut self.tool_calls);
-        choices.push(RawStreamingChoice::FinalResponse(
-            StreamingCompletionResponse {
-                usage: self.final_usage,
-            },
-        ));
-        choices
+    fn finish(mut self) -> Vec<StreamingModelEvent> {
+        let mut events = Vec::new();
+        events.append(&mut self.tool_calls);
+        let response = StreamingCompletionResponse {
+            usage: self.final_usage,
+        };
+        if let Some(usage) = response.token_usage() {
+            events.push(ModelEvent::Usage { usage });
+        }
+        events.push(ModelEvent::RawResponse { response });
+        events.push(ModelEvent::Done);
+        events
     }
 }
 
-pub(crate) fn raw_choices_from_sse_body(
+pub(crate) fn model_events_from_sse_body(
     body: &str,
     initial_usage: ResponsesUsage,
     provider_name: &str,
-) -> Result<Vec<StreamingRawChoice>, CompletionError> {
-    let mut raw_choices = Vec::new();
-    let mut accumulator = RawChoiceAccumulator::new(initial_usage);
+) -> Result<Vec<StreamingModelEvent>, CompletionError> {
+    let mut model_events = Vec::new();
+    let mut accumulator = ModelEventAccumulator::new(initial_usage);
     let options = ResponsesStreamOptions::strict();
 
     for line in body.lines() {
@@ -435,7 +443,7 @@ pub(crate) fn raw_choices_from_sse_body(
         if let Ok(chunk) = serde_json::from_str::<StreamingCompletionChunk>(data) {
             match chunk {
                 StreamingCompletionChunk::Delta(chunk) => {
-                    raw_choices.extend(accumulator.decode_item_chunk(chunk.data, options));
+                    model_events.extend(accumulator.decode_item_chunk(chunk.data, options));
                 }
                 StreamingCompletionChunk::Response(chunk) => {
                     let ResponseChunk { kind, response, .. } = *chunk;
@@ -453,14 +461,16 @@ pub(crate) fn raw_choices_from_sse_body(
         match value.get("type").and_then(serde_json::Value::as_str) {
             Some("response.output_text.delta") | Some("response.refusal.delta") => {
                 if let Some(delta) = value.get("delta").and_then(serde_json::Value::as_str) {
-                    raw_choices.push(streaming::RawStreamingChoice::Message(delta.to_owned()));
+                    model_events.push(ModelEvent::TextDelta {
+                        text: delta.to_owned(),
+                    });
                 }
             }
             Some("response.reasoning_summary_text.delta") => {
                 if let Some(delta) = value.get("delta").and_then(serde_json::Value::as_str) {
-                    raw_choices.push(streaming::RawStreamingChoice::ReasoningDelta {
+                    model_events.push(ModelEvent::ReasoningDelta {
                         id: None,
-                        reasoning: delta.to_owned(),
+                        text: delta.to_owned(),
                     });
                 }
             }
@@ -476,7 +486,7 @@ pub(crate) fn raw_choices_from_sse_body(
                         .entry(func.id.clone())
                         .or_insert_with(|| nanoid::nanoid!())
                         .clone();
-                    raw_choices.push(streaming::RawStreamingChoice::ToolCallDelta {
+                    model_events.push(ModelEvent::ToolCallDelta {
                         id: func.id,
                         internal_call_id,
                         content: streaming::ToolCallDeltaContent::Name(func.name),
@@ -489,7 +499,7 @@ pub(crate) fn raw_choices_from_sse_body(
                     .cloned()
                     .and_then(|item| serde_json::from_value::<Output>(item).ok())
                 {
-                    accumulator.push_output_item_done(item, &mut raw_choices, false);
+                    accumulator.push_output_item_done(item, &mut model_events, false);
                 }
             }
             Some("response.function_call_arguments.delta") => {
@@ -502,7 +512,7 @@ pub(crate) fn raw_choices_from_sse_body(
                         .entry(item_id.to_owned())
                         .or_insert_with(|| nanoid::nanoid!())
                         .clone();
-                    raw_choices.push(streaming::RawStreamingChoice::ToolCallDelta {
+                    model_events.push(ModelEvent::ToolCallDelta {
                         id: item_id.to_owned(),
                         internal_call_id,
                         content: streaming::ToolCallDeltaContent::Delta(delta.to_owned()),
@@ -535,8 +545,8 @@ pub(crate) fn raw_choices_from_sse_body(
         }
     }
 
-    raw_choices.extend(accumulator.finish());
-    Ok(raw_choices)
+    model_events.extend(accumulator.finish());
+    Ok(model_events)
 }
 
 pub(crate) async fn completion_response_from_sse_body(
@@ -544,7 +554,7 @@ pub(crate) async fn completion_response_from_sse_body(
     raw_response: CompletionResponse,
     provider_name: &str,
 ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-    let raw_choices = raw_choices_from_sse_body(
+    let model_events = model_events_from_sse_body(
         body,
         raw_response
             .usage
@@ -553,7 +563,7 @@ pub(crate) async fn completion_response_from_sse_body(
         provider_name,
     )?;
     let stream = futures::stream::iter(
-        raw_choices
+        model_events
             .into_iter()
             .map(Ok::<_, CompletionError>)
             .collect::<Vec<_>>(),
@@ -561,7 +571,9 @@ pub(crate) async fn completion_response_from_sse_body(
     let mut stream = crate::streaming::StreamingCompletionResponse::stream(Box::pin(stream));
 
     while let Some(item) = stream.next().await {
-        item?;
+        if let ModelEvent::Error { error } = item {
+            return Err(error);
+        }
     }
 
     if choice_is_empty(&stream.choice) {
@@ -637,7 +649,7 @@ where
     RequestBody: Into<bytes::Bytes> + Clone + WasmCompatSend + 'static,
 {
     let stream = stream! {
-        let mut accumulator = RawChoiceAccumulator::new(ResponsesUsage::new());
+        let mut accumulator = ModelEventAccumulator::new(ResponsesUsage::new());
         let span = tracing::Span::current();
 
         let mut terminated_with_error = false;
@@ -918,12 +930,12 @@ mod tests {
     use crate::completion::CompletionModel;
     use crate::http_client::mock::MockStreamingClient;
     use crate::message::ReasoningContent;
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::sse_bytes_from_json_events;
     use crate::providers::openai::responses_api::{
         AdditionalParameters, CompletionResponse, IncompleteDetailsReason, OutputTokensDetails,
         ReasoningSummary, ResponseError, ResponseObject, ResponseStatus, ResponsesUsage,
     };
-    use crate::streaming::{RawStreamingChoice, StreamedAssistantContent};
     use bytes::Bytes;
     use futures::StreamExt;
     use serde_json::{self, json};
@@ -989,7 +1001,8 @@ mod tests {
             .next()
             .await
             .expect("stream should yield an item")
-            .expect_err("stream should surface a provider error")
+            .into_error()
+            .expect("stream should surface a provider error")
     }
 
     async fn final_usage_from_event(event: serde_json::Value) -> ResponsesUsage {
@@ -1005,8 +1018,9 @@ mod tests {
         let mut stream = model.stream(request).await.expect("stream should start");
 
         while let Some(item) = stream.next().await {
-            match item.expect("completed stream should not error") {
-                StreamedAssistantContent::Final(res) => return res.usage,
+            match item {
+                ModelEvent::RawResponse { response } => return response.usage,
+                ModelEvent::Error { error } => panic!("completed stream should not error: {error}"),
                 _ => continue,
             }
         }
@@ -1048,29 +1062,36 @@ mod tests {
                 text: "step 2".to_string(),
             },
         ];
-        let choices = reasoning_choices_from_done_item("rs_1", &summary, Some("enc_blob"));
+        let choices: Vec<ModelEvent<()>> =
+            reasoning_choices_from_done_item("rs_1", &summary, Some("enc_blob"));
 
         assert_eq!(choices.len(), 3);
         assert!(matches!(
             choices.first(),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Summary(text),
-            }) if id == "rs_1" && text == "step 1"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("rs_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Summary(text)) if text == "step 1"
+                    )
         ));
         assert!(matches!(
             choices.get(1),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Summary(text),
-            }) if id == "rs_1" && text == "step 2"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("rs_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Summary(text)) if text == "step 2"
+                    )
         ));
         assert!(matches!(
             choices.get(2),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Encrypted(data),
-            }) if id == "rs_1" && data == "enc_blob"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("rs_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Encrypted(data)) if data == "enc_blob"
+                    )
         ));
     }
 
@@ -1079,15 +1100,17 @@ mod tests {
         let summary = vec![ReasoningSummary::SummaryText {
             text: "only summary".to_string(),
         }];
-        let choices = reasoning_choices_from_done_item("rs_2", &summary, None);
+        let choices: Vec<ModelEvent<()>> = reasoning_choices_from_done_item("rs_2", &summary, None);
 
         assert_eq!(choices.len(), 1);
         assert!(matches!(
             choices.first(),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Summary(text),
-            }) if id == "rs_2" && text == "only summary"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("rs_2")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Summary(text)) if text == "only summary"
+                    )
         ));
     }
 
@@ -1298,7 +1321,8 @@ mod tests {
             .next()
             .await
             .expect("stream should yield an item")
-            .expect_err("stream should surface a provider error");
+            .into_error()
+            .expect("stream should surface a provider error");
         assert_eq!(
             err.to_string(),
             "ProviderError: server_error: response stream failed"
@@ -1400,10 +1424,10 @@ mod tests {
 
         let mut final_usage = None;
         while let Some(item) = stream.next().await {
-            if let StreamedAssistantContent::Final(response) =
-                item.expect("stream should complete successfully")
-            {
+            if let ModelEvent::RawResponse { response } = item {
                 final_usage = Some(response.usage);
+            } else if let ModelEvent::Error { error } = item {
+                panic!("stream should complete successfully: {error}");
             }
         }
 

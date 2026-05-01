@@ -221,6 +221,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::{
         assert_zero_arg_tool_call_is_emitted, sse_bytes_from_data_lines,
     };
@@ -425,8 +426,8 @@ mod tests {
 
         let mut final_usage = None;
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::Final(res) = chunk.unwrap() {
-                final_usage = Some(res.usage);
+            if let ModelEvent::RawResponse { response } = chunk {
+                final_usage = Some(response.usage);
                 break;
             }
         }
@@ -462,8 +463,8 @@ mod tests {
 
         let mut final_response = None;
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::Final(res) = chunk.unwrap() {
-                final_response = Some(res);
+            if let ModelEvent::RawResponse { response } = chunk {
+                final_response = Some(response);
                 break;
             }
         }
@@ -524,11 +525,7 @@ mod tests {
 
         let mut collected_tool_calls = Vec::new();
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::ToolCall {
-                tool_call,
-                internal_call_id: _,
-            } = chunk.unwrap()
-            {
+            if let ModelEvent::ToolCallDone { tool_call, .. } = chunk {
                 collected_tool_calls.push(tool_call);
             }
         }
@@ -588,11 +585,7 @@ mod tests {
 
         let mut collected_tool_calls = Vec::new();
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::ToolCall {
-                tool_call,
-                internal_call_id: _,
-            } = chunk.unwrap()
-            {
+            if let ModelEvent::ToolCallDone { tool_call, .. } = chunk {
                 collected_tool_calls.push(tool_call);
             }
         }

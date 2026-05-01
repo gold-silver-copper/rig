@@ -3,7 +3,8 @@ use rig::OneOrMany;
 use rig::agent::MultiTurnStreamItem;
 use rig::completion::Usage;
 use rig::message::{ToolCall, ToolFunction, ToolResult, ToolResultContent};
-use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+use rig::model_event::ModelEvent;
+use rig::streaming::StreamedUserContent;
 
 use crate::reasoning::collect_stream_stats;
 
@@ -24,21 +25,19 @@ async fn collect_stream_stats_tracks_only_final_turn_text() {
     };
 
     let items = vec![
-        Ok(MultiTurnStreamItem::StreamAssistantItem(
-            StreamedAssistantContent::<()>::text("Sure! Let me check the weather right away!"),
-        )),
-        Ok(MultiTurnStreamItem::StreamAssistantItem(
-            StreamedAssistantContent::ToolCall {
-                tool_call,
-                internal_call_id: internal_call_id.clone(),
-            },
-        )),
+        Ok(MultiTurnStreamItem::Model(ModelEvent::<()>::TextDelta {
+            text: "Sure! Let me check the weather right away!".to_string(),
+        })),
+        Ok(MultiTurnStreamItem::Model(ModelEvent::ToolCallDone {
+            tool_call,
+            internal_call_id: Some(internal_call_id.clone()),
+        })),
         Ok(MultiTurnStreamItem::StreamUserItem(
             StreamedUserContent::tool_result(tool_result, internal_call_id),
         )),
-        Ok(MultiTurnStreamItem::StreamAssistantItem(
-            StreamedAssistantContent::<()>::text("It's 72F and sunny in Tokyo."),
-        )),
+        Ok(MultiTurnStreamItem::Model(ModelEvent::<()>::TextDelta {
+            text: "It's 72F and sunny in Tokyo.".to_string(),
+        })),
         Ok(MultiTurnStreamItem::final_response(
             "It's 72F and sunny in Tokyo.",
             Usage::new(),

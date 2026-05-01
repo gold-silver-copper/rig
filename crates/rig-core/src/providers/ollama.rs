@@ -45,7 +45,7 @@ use crate::completion::{GetTokenUsage, Usage};
 use crate::http_client::{self, HttpClientExt};
 use crate::message::DocumentSourceKind;
 use crate::model::{Model, ModelList, ModelListingError};
-use crate::streaming::RawStreamingChoice;
+use crate::model_event::ModelEvent;
 use crate::{
     OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
@@ -729,20 +729,20 @@ where
                     if let Message::Assistant { content, thinking, tool_calls, .. } = response.message {
                         if let Some(thinking_content) = thinking && !thinking_content.is_empty() {
                             thinking_response += &thinking_content;
-                            yield RawStreamingChoice::ReasoningDelta {
+                            yield ModelEvent::ReasoningDelta {
                                 id: None,
-                                reasoning: thinking_content,
+                                text: thinking_content,
                             };
                         }
 
                         if !content.is_empty() {
                             text_response += &content;
-                            yield RawStreamingChoice::Message(content);
+                            yield ModelEvent::TextDelta { text: content };
                         }
 
                         for tool_call in tool_calls {
                             tool_calls_final.push(tool_call.clone());
-                            yield RawStreamingChoice::ToolCall(
+                            yield ModelEvent::from(
                                 crate::streaming::RawStreamingToolCall::new(String::new(), tool_call.function.name, tool_call.function.arguments)
                             );
                         }
@@ -761,17 +761,22 @@ where
                         if let Ok(serialized_message) = serde_json::to_string(&vec![message]) {
                             span.record("gen_ai.output.messages", serialized_message);
                         }
-                        yield RawStreamingChoice::FinalResponse(
-                            StreamingCompletionResponse {
-                                total_duration: response.total_duration,
-                                load_duration: response.load_duration,
-                                prompt_eval_count: response.prompt_eval_count,
-                                prompt_eval_duration: response.prompt_eval_duration,
-                                eval_count: response.eval_count,
-                                eval_duration: response.eval_duration,
-                                done_reason: response.done_reason,
-                            }
-                        );
+                        let final_response = StreamingCompletionResponse {
+                            total_duration: response.total_duration,
+                            load_duration: response.load_duration,
+                            prompt_eval_count: response.prompt_eval_count,
+                            prompt_eval_duration: response.prompt_eval_duration,
+                            eval_count: response.eval_count,
+                            eval_duration: response.eval_duration,
+                            done_reason: response.done_reason,
+                        };
+                        if let Some(usage) = final_response.token_usage() {
+                            yield ModelEvent::Usage { usage };
+                        }
+                        yield ModelEvent::RawResponse {
+                            response: final_response,
+                        };
+                        yield ModelEvent::Done;
                         break;
                     }
                 }

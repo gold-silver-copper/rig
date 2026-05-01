@@ -4,7 +4,8 @@ use async_stream::stream;
 
 use crate::completion::{self, CompletionError, GetTokenUsage};
 use crate::message::AssistantContent;
-use crate::streaming::{RawStreamingChoice, StreamingCompletionResponse};
+use crate::model_event::ModelEvent;
+use crate::streaming::StreamingCompletionResponse;
 use crate::wasm_compat::WasmCompatSend;
 
 pub(crate) fn stream_from_completion_response<R, F>(
@@ -13,7 +14,7 @@ pub(crate) fn stream_from_completion_response<R, F>(
 ) -> Result<StreamingCompletionResponse<R>, CompletionError>
 where
     R: Clone + Unpin + GetTokenUsage + WasmCompatSend + 'static,
-    F: FnMut(AssistantContent) -> Result<Vec<RawStreamingChoice<R>>, CompletionError>
+    F: FnMut(AssistantContent) -> Result<Vec<ModelEvent<R>>, CompletionError>
         + WasmCompatSend
         + 'static,
 {
@@ -38,7 +39,13 @@ where
             }
         }
 
-        yield Ok(RawStreamingChoice::FinalResponse(raw_response));
+        if let Some(usage) = raw_response.token_usage() {
+            yield Ok(ModelEvent::Usage { usage });
+        }
+        yield Ok(ModelEvent::RawResponse {
+            response: raw_response,
+        });
+        yield Ok(ModelEvent::Done);
     };
 
     Ok(StreamingCompletionResponse::stream(Box::pin(stream)))

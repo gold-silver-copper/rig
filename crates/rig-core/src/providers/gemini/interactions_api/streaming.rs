@@ -16,6 +16,7 @@ use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::Request;
 use crate::http_client::sse::{Event, GenericEventSource};
+use crate::model_event::ModelEvent;
 use crate::streaming;
 use crate::telemetry::SpanCombinator;
 use serde_json::{Map, Value};
@@ -158,10 +159,15 @@ where
 
             event_source.close();
 
-            yield Ok(streaming::RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
+            let response = StreamingCompletionResponse {
                 usage: final_usage.or_else(|| final_interaction.as_ref().and_then(|i| i.usage.clone())),
                 interaction: final_interaction,
-            }));
+            };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         }
         .instrument(span);
 
@@ -215,15 +221,13 @@ where
     Box::pin(stream)
 }
 
-fn content_start_to_choice(
-    content: Content,
-) -> Option<streaming::RawStreamingChoice<StreamingCompletionResponse>> {
+fn content_start_to_choice(content: Content) -> Option<ModelEvent<StreamingCompletionResponse>> {
     match content {
         Content::Text(TextContent { text, .. }) => {
             if text.is_empty() {
                 None
             } else {
-                Some(streaming::RawStreamingChoice::Message(text))
+                Some(ModelEvent::TextDelta { text })
             }
         }
         Content::FunctionCall(FunctionCallContent {
@@ -233,7 +237,7 @@ fn content_start_to_choice(
         }) => {
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
-            Some(streaming::RawStreamingChoice::ToolCall(
+            Some(ModelEvent::from(
                 streaming::RawStreamingToolCall::new(
                     name.clone(),
                     name,
@@ -246,13 +250,11 @@ fn content_start_to_choice(
     }
 }
 
-fn content_delta_to_choice(
-    delta: ContentDelta,
-) -> Option<streaming::RawStreamingChoice<StreamingCompletionResponse>> {
+fn content_delta_to_choice(delta: ContentDelta) -> Option<ModelEvent<StreamingCompletionResponse>> {
     match delta {
         ContentDelta::Text(TextDelta {
             text: Some(text), ..
-        }) => Some(streaming::RawStreamingChoice::Message(text)),
+        }) => Some(ModelEvent::TextDelta { text }),
         ContentDelta::FunctionCall(FunctionCallDelta {
             name,
             arguments,
@@ -260,7 +262,7 @@ fn content_delta_to_choice(
         }) => {
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
-            Some(streaming::RawStreamingChoice::ToolCall(
+            Some(ModelEvent::from(
                 streaming::RawStreamingToolCall::new(
                     name.clone(),
                     name,
@@ -274,10 +276,7 @@ fn content_delta_to_choice(
                 ThoughtSummaryContent::Text(text) => text.text,
                 _ => return None,
             };
-            Some(streaming::RawStreamingChoice::ReasoningDelta {
-                id: None,
-                reasoning: text,
-            })
+            Some(ModelEvent::ReasoningDelta { id: None, text })
         }
         _ => None,
     }
@@ -306,7 +305,7 @@ mod tests {
 
         let choice = content_delta_to_choice(delta).expect("choice should exist");
         match choice {
-            crate::streaming::RawStreamingChoice::Message(text) => {
+            ModelEvent::TextDelta { text } => {
                 assert_eq!(text, "Hello");
             }
             other => panic!("unexpected choice: {other:?}"),
@@ -333,9 +332,9 @@ mod tests {
 
         let choice = content_delta_to_choice(delta).expect("choice should exist");
         match choice {
-            crate::streaming::RawStreamingChoice::ToolCall(call) => {
-                assert_eq!(call.name, "get_weather");
-                assert_eq!(call.call_id.as_deref(), Some("call-1"));
+            ModelEvent::ToolCallDone { tool_call, .. } => {
+                assert_eq!(tool_call.function.name, "get_weather");
+                assert_eq!(tool_call.call_id.as_deref(), Some("call-1"));
             }
             other => panic!("unexpected choice: {other:?}"),
         }

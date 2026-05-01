@@ -17,15 +17,15 @@ use crate::completion::{
     Message, Usage,
 };
 use crate::message::{
-    AssistantContent, Reasoning, ReasoningContent, Text, ToolCall, ToolFunction, ToolResult,
+    AssistantContent, Reasoning, ReasoningContent, ToolCall, ToolFunction, ToolResult,
 };
+use crate::model_event::{IntoModelEvents, ModelEvent};
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use futures::stream::{AbortHandle, Abortable};
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::AtomicBool;
 use std::task::{Context, Poll};
 use tokio::sync::watch;
 
@@ -68,45 +68,6 @@ impl Default for PauseControl {
 pub enum ToolCallDeltaContent {
     Name(String),
     Delta(String),
-}
-
-/// Enum representing a streaming chunk from the model
-#[derive(Debug, Clone)]
-pub enum RawStreamingChoice<R>
-where
-    R: Clone,
-{
-    /// A text chunk from a message response
-    Message(String),
-
-    /// A tool call response (in its entirety)
-    ToolCall(RawStreamingToolCall),
-    /// A tool call partial/delta
-    ToolCallDelta {
-        /// Provider-supplied tool call ID.
-        id: String,
-        /// Rig-generated unique identifier for this tool call.
-        internal_call_id: String,
-        content: ToolCallDeltaContent,
-    },
-    /// A reasoning (in its entirety)
-    Reasoning {
-        id: Option<String>,
-        content: ReasoningContent,
-    },
-    /// A reasoning partial/delta
-    ReasoningDelta {
-        id: Option<String>,
-        reasoning: String,
-    },
-
-    /// The final response object, must be yielded if you want the
-    /// `response` field to be populated on the `StreamingCompletionResponse`
-    FinalResponse(R),
-
-    /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
-    /// Captured silently into `StreamingCompletionResponse::message_id`.
-    MessageId(String),
 }
 
 /// Describes a streaming tool call response (in its entirety)
@@ -185,12 +146,10 @@ impl From<RawStreamingToolCall> for ToolCall {
 }
 
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
-pub type StreamingResult<R> =
-    Pin<Box<dyn Stream<Item = Result<RawStreamingChoice<R>, CompletionError>> + Send>>;
+pub type StreamingResult<R> = Pin<Box<dyn Stream<Item = ModelEvent<R>> + Send>>;
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-pub type StreamingResult<R> =
-    Pin<Box<dyn Stream<Item = Result<RawStreamingChoice<R>, CompletionError>>>>;
+pub type StreamingResult<R> = Pin<Box<dyn Stream<Item = ModelEvent<R>>>>;
 
 /// The response from a streaming completion request;
 /// message and response are populated at the end of the
@@ -211,17 +170,23 @@ where
     /// The final response from the stream, may be `None`
     /// if the provider didn't yield it during the stream
     pub response: Option<R>,
-    pub final_response_yielded: AtomicBool,
+    pub usage: Usage,
     /// Provider-assigned message ID (e.g. OpenAI Responses API `msg_` ID).
     pub message_id: Option<String>,
 }
 
 impl<R> StreamingCompletionResponse<R>
 where
-    R: Clone + Unpin + GetTokenUsage,
+    R: Clone + Unpin + GetTokenUsage + WasmCompatSend + 'static,
 {
-    pub fn stream(inner: StreamingResult<R>) -> StreamingCompletionResponse<R> {
+    pub fn stream<S, E>(inner: S) -> StreamingCompletionResponse<R>
+    where
+        S: Stream<Item = E> + WasmCompatSend + 'static,
+        E: IntoModelEvents<R> + WasmCompatSend + 'static,
+    {
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        let inner = inner.flat_map(|item| futures::stream::iter(item.into_model_events()));
+        let inner: StreamingResult<R> = Box::pin(inner);
         let abortable_stream = Abortable::new(inner, abort_registration);
         let pause_control = PauseControl::new();
         Self {
@@ -233,7 +198,7 @@ where
             reasoning_item_index: None,
             choice: OneOrMany::one(AssistantContent::text("")),
             response: None,
-            final_response_yielded: AtomicBool::new(false),
+            usage: Usage::new(),
             message_id: None,
         }
     }
@@ -292,6 +257,47 @@ where
             }));
         self.reasoning_item_index = Some(self.assistant_items.len() - 1);
     }
+
+    fn record_event(&mut self, event: &ModelEvent<R>) {
+        match event {
+            ModelEvent::TextDelta { text } => {
+                self.reasoning_item_index = None;
+                self.append_text_chunk(text);
+            }
+            ModelEvent::ReasoningDone { reasoning } => {
+                self.text_item_index = None;
+                self.reasoning_item_index = None;
+                self.assistant_items
+                    .push(AssistantContent::Reasoning(reasoning.clone()));
+            }
+            ModelEvent::ReasoningDelta { id, text } => {
+                self.text_item_index = None;
+                self.append_reasoning_chunk(id, text);
+            }
+            ModelEvent::ToolCallDone { tool_call, .. } => {
+                self.text_item_index = None;
+                self.reasoning_item_index = None;
+                self.assistant_items
+                    .push(AssistantContent::ToolCall(tool_call.clone()));
+            }
+            ModelEvent::MessageDone { id } => {
+                if id.is_some() {
+                    self.message_id = id.clone();
+                }
+            }
+            ModelEvent::Usage { usage } => {
+                self.usage = *usage;
+            }
+            ModelEvent::RawResponse { response } => {
+                self.response = Some(response.clone());
+            }
+            ModelEvent::ToolCallStart { .. }
+            | ModelEvent::ToolCallDelta { .. }
+            | ModelEvent::ProviderMetadata { .. }
+            | ModelEvent::Error { .. }
+            | ModelEvent::Done => {}
+        }
+    }
 }
 
 impl<R> From<StreamingCompletionResponse<R>> for CompletionResponse<Option<R>>
@@ -301,7 +307,7 @@ where
     fn from(value: StreamingCompletionResponse<R>) -> CompletionResponse<Option<R>> {
         CompletionResponse {
             choice: value.choice,
-            usage: Usage::new(), // Usage is not tracked in streaming responses
+            usage: value.usage,
             raw_response: value.response,
             message_id: value.message_id,
         }
@@ -310,9 +316,9 @@ where
 
 impl<R> Stream for StreamingCompletionResponse<R>
 where
-    R: Clone + Unpin + GetTokenUsage,
+    R: Clone + Unpin + GetTokenUsage + WasmCompatSend + 'static,
 {
-    type Item = Result<StreamedAssistantContent<R>, CompletionError>;
+    type Item = ModelEvent<R>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let stream = self.get_mut();
@@ -339,83 +345,16 @@ where
 
                 Poll::Ready(None)
             }
-            Poll::Ready(Some(Err(err))) => {
-                if matches!(err, CompletionError::ProviderError(ref e) if e.to_string().contains("aborted"))
+            Poll::Ready(Some(event)) => {
+                if let ModelEvent::Error { error } = &event
+                    && matches!(error, CompletionError::ProviderError(e) if e.contains("aborted"))
                 {
-                    return Poll::Ready(None); // Treat cancellation as stream termination
+                    return Poll::Ready(None);
                 }
-                Poll::Ready(Some(Err(err)))
+
+                stream.record_event(&event);
+                Poll::Ready(Some(event))
             }
-            Poll::Ready(Some(Ok(choice))) => match choice {
-                RawStreamingChoice::Message(text) => {
-                    stream.reasoning_item_index = None;
-                    stream.append_text_chunk(&text);
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::text(&text))))
-                }
-                RawStreamingChoice::ToolCallDelta {
-                    id,
-                    internal_call_id,
-                    content,
-                } => Poll::Ready(Some(Ok(StreamedAssistantContent::ToolCallDelta {
-                    id,
-                    internal_call_id,
-                    content,
-                }))),
-                RawStreamingChoice::Reasoning { id, content } => {
-                    let reasoning = Reasoning {
-                        id,
-                        content: vec![content],
-                    };
-                    stream.text_item_index = None;
-                    // Full reasoning block supersedes any delta accumulation
-                    stream.reasoning_item_index = None;
-                    stream
-                        .assistant_items
-                        .push(AssistantContent::Reasoning(reasoning.clone()));
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::Reasoning(reasoning))))
-                }
-                RawStreamingChoice::ReasoningDelta { id, reasoning } => {
-                    stream.text_item_index = None;
-                    stream.append_reasoning_chunk(&id, &reasoning);
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::ReasoningDelta {
-                        id,
-                        reasoning,
-                    })))
-                }
-                RawStreamingChoice::ToolCall(raw_tool_call) => {
-                    let internal_call_id = raw_tool_call.internal_call_id.clone();
-                    let tool_call: ToolCall = raw_tool_call.into();
-                    stream.text_item_index = None;
-                    stream.reasoning_item_index = None;
-                    stream
-                        .assistant_items
-                        .push(AssistantContent::ToolCall(tool_call.clone()));
-                    Poll::Ready(Some(Ok(StreamedAssistantContent::ToolCall {
-                        tool_call,
-                        internal_call_id,
-                    })))
-                }
-                RawStreamingChoice::FinalResponse(response) => {
-                    if stream
-                        .final_response_yielded
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                    {
-                        stream.poll_next_unpin(cx)
-                    } else {
-                        // Set the final response field and return the next item in the stream
-                        stream.response = Some(response.clone());
-                        stream
-                            .final_response_yielded
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
-                        let final_response = StreamedAssistantContent::final_response(response);
-                        Poll::Ready(Some(Ok(final_response)))
-                    }
-                }
-                RawStreamingChoice::MessageId(id) => {
-                    stream.message_id = Some(id);
-                    stream.poll_next_unpin(cx)
-                }
-            },
         }
     }
 }
@@ -551,18 +490,18 @@ where
     print!("Response: ");
     while let Some(chunk) = stream.next().await {
         match chunk {
-            Ok(StreamedAssistantContent::Text(text)) => {
+            ModelEvent::TextDelta { text } => {
                 if is_reasoning {
                     is_reasoning = false;
                     println!("\n---\n");
                 }
-                print!("{}", text.text);
+                print!("{text}");
                 std::io::Write::flush(&mut std::io::stdout())?;
             }
-            Ok(StreamedAssistantContent::ToolCall {
+            ModelEvent::ToolCallDone {
                 tool_call,
                 internal_call_id: _,
-            }) => {
+            } => {
                 let res = agent
                     .tool_server_handle
                     .call_tool(
@@ -573,13 +512,13 @@ where
                     .map_err(|x| std::io::Error::other(x.to_string()))?;
                 println!("\nResult: {res}");
             }
-            Ok(StreamedAssistantContent::Final(res)) => {
-                if let Ok(json_res) = serde_json::to_string_pretty(&res) {
+            ModelEvent::RawResponse { response } => {
+                if let Ok(json_res) = serde_json::to_string_pretty(&response) {
                     println!();
                     tracing::info!("Final result: {json_res}");
                 }
             }
-            Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+            ModelEvent::ReasoningDone { reasoning } => {
                 if !is_reasoning {
                     is_reasoning = true;
                     println!();
@@ -590,7 +529,18 @@ where
                 print!("{reasoning}");
                 std::io::Write::flush(&mut std::io::stdout())?;
             }
-            Err(e) => {
+            ModelEvent::ReasoningDelta { text, .. } => {
+                if !is_reasoning {
+                    is_reasoning = true;
+                    println!();
+                    println!("Thinking: ");
+                }
+
+                print!("{text}");
+                std::io::Write::flush(&mut std::io::stdout())?;
+            }
+            ModelEvent::Error { error } => {
+                let e = error;
                 if e.to_string().contains("aborted") {
                     println!("\nStream cancelled.");
                     break;
@@ -598,7 +548,12 @@ where
                 eprintln!("Error: {e}");
                 break;
             }
-            _ => {}
+            ModelEvent::ToolCallStart { .. }
+            | ModelEvent::ToolCallDelta { .. }
+            | ModelEvent::MessageDone { .. }
+            | ModelEvent::Usage { .. }
+            | ModelEvent::ProviderMetadata { .. }
+            | ModelEvent::Done => {}
         }
     }
 
@@ -613,6 +568,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::message::Text;
     use async_stream::stream;
     use tokio::time::sleep;
 
@@ -630,32 +586,27 @@ mod tests {
         }
     }
 
-    #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
     fn to_stream_result(
-        stream: impl futures::Stream<Item = Result<RawStreamingChoice<MockResponse>, CompletionError>>
-        + Send
-        + 'static,
-    ) -> StreamingResult<MockResponse> {
-        Box::pin(stream)
-    }
-
-    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-    fn to_stream_result(
-        stream: impl futures::Stream<Item = Result<RawStreamingChoice<MockResponse>, CompletionError>>
-        + 'static,
-    ) -> StreamingResult<MockResponse> {
-        Box::pin(stream)
+        stream: impl futures::Stream<Item = Result<ModelEvent<MockResponse>, CompletionError>> + 'static,
+    ) -> impl futures::Stream<Item = Result<ModelEvent<MockResponse>, CompletionError>> + 'static
+    {
+        stream
     }
 
     fn create_mock_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
-            yield Ok(RawStreamingChoice::Message("hello 1".to_string()));
+            yield Ok(ModelEvent::TextDelta { text: "hello 1".to_string() });
             sleep(Duration::from_millis(100)).await;
-            yield Ok(RawStreamingChoice::Message("hello 2".to_string()));
+            yield Ok(ModelEvent::TextDelta { text: "hello 2".to_string() });
             sleep(Duration::from_millis(100)).await;
-            yield Ok(RawStreamingChoice::Message("hello 3".to_string()));
+            yield Ok(ModelEvent::TextDelta { text: "hello 3".to_string() });
             sleep(Duration::from_millis(100)).await;
-            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 15 }));
+            let response = MockResponse { token_count: 15 };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         };
 
         StreamingCompletionResponse::stream(to_stream_result(stream))
@@ -663,15 +614,22 @@ mod tests {
 
     fn create_reasoning_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
-            yield Ok(RawStreamingChoice::Reasoning {
-                id: Some("rs_1".to_string()),
-                content: ReasoningContent::Text {
+            yield Ok(ModelEvent::ReasoningDone {
+                reasoning: Reasoning {
+                    id: Some("rs_1".to_string()),
+                    content: vec![ReasoningContent::Text {
                     text: "step one".to_string(),
                     signature: Some("sig_1".to_string()),
-                },
+                    }],
+                }
             });
-            yield Ok(RawStreamingChoice::Message("final answer".to_string()));
-            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 5 }));
+            yield Ok(ModelEvent::TextDelta { text: "final answer".to_string() });
+            let response = MockResponse { token_count: 5 };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         };
 
         StreamingCompletionResponse::stream(to_stream_result(stream))
@@ -679,11 +637,18 @@ mod tests {
 
     fn create_reasoning_only_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
-            yield Ok(RawStreamingChoice::Reasoning {
-                id: Some("rs_only".to_string()),
-                content: ReasoningContent::Summary("hidden summary".to_string()),
+            yield Ok(ModelEvent::ReasoningDone {
+                reasoning: Reasoning {
+                    id: Some("rs_only".to_string()),
+                    content: vec![ReasoningContent::Summary("hidden summary".to_string())],
+                }
             });
-            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 2 }));
+            let response = MockResponse { token_count: 2 };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         };
 
         StreamingCompletionResponse::stream(to_stream_result(stream))
@@ -691,22 +656,29 @@ mod tests {
 
     fn create_interleaved_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
-            yield Ok(RawStreamingChoice::Reasoning {
-                id: Some("rs_interleaved".to_string()),
-                content: ReasoningContent::Text {
+            yield Ok(ModelEvent::ReasoningDone {
+                reasoning: Reasoning {
+                    id: Some("rs_interleaved".to_string()),
+                    content: vec![ReasoningContent::Text {
                     text: "chain-of-thought".to_string(),
                     signature: None,
-                },
+                    }],
+                }
             });
-            yield Ok(RawStreamingChoice::Message("final-text".to_string()));
-            yield Ok(RawStreamingChoice::ToolCall(
+            yield Ok(ModelEvent::TextDelta { text: "final-text".to_string() });
+            yield Ok(ModelEvent::from(
                 RawStreamingToolCall::new(
                     "tool_1".to_string(),
                     "mock_tool".to_string(),
                     serde_json::json!({"arg": 1}),
                 ),
             ));
-            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 3 }));
+            let response = MockResponse { token_count: 3 };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         };
 
         StreamingCompletionResponse::stream(to_stream_result(stream))
@@ -714,16 +686,21 @@ mod tests {
 
     fn create_text_tool_text_stream() -> StreamingCompletionResponse<MockResponse> {
         let stream = stream! {
-            yield Ok(RawStreamingChoice::Message("first".to_string()));
-            yield Ok(RawStreamingChoice::ToolCall(
+            yield Ok(ModelEvent::TextDelta { text: "first".to_string() });
+            yield Ok(ModelEvent::from(
                 RawStreamingToolCall::new(
                     "tool_split".to_string(),
                     "mock_tool".to_string(),
                     serde_json::json!({"arg": "x"}),
                 ),
             ));
-            yield Ok(RawStreamingChoice::Message("second".to_string()));
-            yield Ok(RawStreamingChoice::FinalResponse(MockResponse { token_count: 3 }));
+            yield Ok(ModelEvent::TextDelta { text: "second".to_string() });
+            let response = MockResponse { token_count: 3 };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         };
 
         StreamingCompletionResponse::stream(to_stream_result(stream))
@@ -737,44 +714,49 @@ mod tests {
         let mut chunk_count = 0;
         while let Some(chunk) = stream.next().await {
             match chunk {
-                Ok(StreamedAssistantContent::Text(text)) => {
-                    print!("{}", text.text);
+                ModelEvent::TextDelta { text } => {
+                    print!("{text}");
                     std::io::Write::flush(&mut std::io::stdout()).unwrap();
                     chunk_count += 1;
                 }
-                Ok(StreamedAssistantContent::ToolCall {
+                ModelEvent::ToolCallDone {
                     tool_call,
                     internal_call_id,
-                }) => {
+                } => {
                     println!("\nTool Call: {tool_call:?}, internal_call_id={internal_call_id:?}");
                     chunk_count += 1;
                 }
-                Ok(StreamedAssistantContent::ToolCallDelta {
+                ModelEvent::ToolCallDelta {
                     id,
                     internal_call_id,
                     content,
-                }) => {
+                } => {
                     println!(
                         "\nTool Call delta: id={id:?}, internal_call_id={internal_call_id:?}, content={content:?}"
                     );
                     chunk_count += 1;
                 }
-                Ok(StreamedAssistantContent::Final(res)) => {
-                    println!("\nFinal response: {res:?}");
+                ModelEvent::RawResponse { response } => {
+                    println!("\nFinal response: {response:?}");
                 }
-                Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+                ModelEvent::ReasoningDone { reasoning } => {
                     let reasoning = reasoning.display_text();
                     print!("{reasoning}");
                     std::io::Write::flush(&mut std::io::stdout()).unwrap();
                 }
-                Ok(StreamedAssistantContent::ReasoningDelta { reasoning, .. }) => {
-                    println!("Reasoning delta: {reasoning}");
+                ModelEvent::ReasoningDelta { text, .. } => {
+                    println!("Reasoning delta: {text}");
                     chunk_count += 1;
                 }
-                Err(e) => {
-                    eprintln!("Error: {e:?}");
+                ModelEvent::Error { error } => {
+                    eprintln!("Error: {error:?}");
                     break;
                 }
+                ModelEvent::ToolCallStart { .. }
+                | ModelEvent::MessageDone { .. }
+                | ModelEvent::Usage { .. }
+                | ModelEvent::ProviderMetadata { .. }
+                | ModelEvent::Done => {}
             }
 
             if chunk_count >= 2 {
@@ -884,47 +866,6 @@ mod tests {
     }
 }
 
-/// Describes responses from a streamed provider response which is either text, a tool call or a final usage response.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(untagged)]
-pub enum StreamedAssistantContent<R> {
-    Text(Text),
-    ToolCall {
-        tool_call: ToolCall,
-        /// Rig-generated unique identifier for this tool call.
-        /// Use this to correlate with ToolCallDelta events.
-        internal_call_id: String,
-    },
-    ToolCallDelta {
-        /// Provider-supplied tool call ID.
-        id: String,
-        /// Rig-generated unique identifier for this tool call.
-        internal_call_id: String,
-        content: ToolCallDeltaContent,
-    },
-    Reasoning(Reasoning),
-    ReasoningDelta {
-        id: Option<String>,
-        reasoning: String,
-    },
-    Final(R),
-}
-
-impl<R> StreamedAssistantContent<R>
-where
-    R: Clone + Unpin,
-{
-    pub fn text(text: &str) -> Self {
-        Self::Text(Text {
-            text: text.to_string(),
-        })
-    }
-
-    pub fn final_response(res: R) -> Self {
-        Self::Final(res)
-    }
-}
-
 /// Streamed user content. This content is primarily used to represent tool results from tool calls made during a multi-turn/step agent prompt.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
@@ -933,7 +874,7 @@ pub enum StreamedUserContent {
         tool_result: ToolResult,
         /// Rig-generated unique identifier for the tool call this result
         /// belongs to. Use this to correlate with the originating
-        /// [`StreamedAssistantContent::ToolCall::internal_call_id`].
+        /// [`ModelEvent::ToolCallDone`] internal call id.
         internal_call_id: String,
     },
 }

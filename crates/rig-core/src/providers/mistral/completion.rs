@@ -5,8 +5,9 @@ use tracing::{Instrument, Level, enabled, info_span};
 use super::client::{Client, Usage};
 use crate::completion::GetTokenUsage;
 use crate::http_client::{self, HttpClientExt};
+use crate::model_event::ModelEvent;
 use crate::providers::internal::buffered;
-use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
+use crate::streaming::{RawStreamingToolCall, StreamingCompletionResponse};
 use crate::{
     OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
@@ -554,10 +555,10 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 
 fn assistant_content_to_streaming_choices(
     content: message::AssistantContent,
-) -> Result<Vec<RawStreamingChoice<CompletionResponse>>, CompletionError> {
+) -> Result<Vec<ModelEvent<CompletionResponse>>, CompletionError> {
     match content {
-        message::AssistantContent::Text(t) => Ok(vec![RawStreamingChoice::Message(t.text)]),
-        message::AssistantContent::ToolCall(tc) => Ok(vec![RawStreamingChoice::ToolCall(
+        message::AssistantContent::Text(t) => Ok(vec![ModelEvent::TextDelta { text: t.text }]),
+        message::AssistantContent::ToolCall(tc) => Ok(vec![ModelEvent::from(
             RawStreamingToolCall::new(tc.id, tc.function.name, tc.function.arguments),
         )]),
         message::AssistantContent::Reasoning(_) => Ok(Vec::new()),
@@ -784,7 +785,7 @@ mod tests {
             assistant_content_to_streaming_choices(message::AssistantContent::text("visible"))
                 .expect("text should be preserved");
         match text_choices.as_slice() {
-            [RawStreamingChoice::Message(text)] => assert_eq!(text, "visible"),
+            [ModelEvent::TextDelta { text }] => assert_eq!(text, "visible"),
             _ => panic!("expected text streaming choice"),
         }
 
@@ -796,10 +797,13 @@ mod tests {
             ))
             .expect("tool call should be preserved");
         match tool_choices.as_slice() {
-            [RawStreamingChoice::ToolCall(call)] => {
-                assert_eq!(call.id, "call_2");
-                assert_eq!(call.name, "add");
-                assert_eq!(call.arguments, serde_json::json!({"x": 2, "y": 3}));
+            [ModelEvent::ToolCallDone { tool_call, .. }] => {
+                assert_eq!(tool_call.id, "call_2");
+                assert_eq!(tool_call.function.name, "add");
+                assert_eq!(
+                    tool_call.function.arguments,
+                    serde_json::json!({"x": 2, "y": 3})
+                );
             }
             _ => panic!("expected tool-call streaming choice"),
         }

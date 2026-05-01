@@ -14,10 +14,9 @@ use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::json_utils::merge_inplace;
-use crate::message::ReasoningContent;
-use crate::streaming::{
-    self, RawStreamingChoice, RawStreamingToolCall, StreamingResult, ToolCallDeltaContent,
-};
+use crate::message::{Reasoning, ReasoningContent};
+use crate::model_event::ModelEvent;
+use crate::streaming::{self, RawStreamingToolCall, ToolCallDeltaContent};
 use crate::telemetry::SpanCombinator;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 
@@ -293,7 +292,7 @@ where
         let stream = GenericEventSource::new(self.client.clone(), req);
 
         // Use our SSE decoder to directly handle Server-Sent Events format
-        let stream: StreamingResult<StreamingCompletionResponse> = Box::pin(stream! {
+        let stream = stream! {
             let mut current_tool_call: Option<ToolCallState> = None;
             let mut current_thinking: Option<ThinkingState> = None;
             let mut sse_stream = Box::pin(stream);
@@ -339,7 +338,7 @@ where
                                 }
 
                                 if let Some(result) = handle_event(&event, &mut current_tool_call, &mut current_thinking) {
-                                    if let Ok(RawStreamingChoice::Message(ref text)) = result {
+                                    if let Ok(ModelEvent::TextDelta { text }) = &result {
                                         text_content += text;
                                     }
                                     yield result;
@@ -364,10 +363,15 @@ where
             // Ensure event source is closed when stream ends
             sse_stream.close();
 
-            yield Ok(RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
+            let response = StreamingCompletionResponse {
                 usage: final_usage.unwrap_or_default()
-            }))
-        }.instrument(span));
+            };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
+        }.instrument(span);
 
         Ok(streaming::StreamingCompletionResponse::stream(stream))
     }
@@ -393,12 +397,12 @@ fn handle_event(
     event: &StreamingEvent,
     current_tool_call: &mut Option<ToolCallState>,
     current_thinking: &mut Option<ThinkingState>,
-) -> Option<Result<RawStreamingChoice<StreamingCompletionResponse>, CompletionError>> {
+) -> Option<Result<ModelEvent<StreamingCompletionResponse>, CompletionError>> {
     match event {
         StreamingEvent::ContentBlockDelta { delta, .. } => match delta {
             ContentDelta::TextDelta { text } => {
                 if current_tool_call.is_none() {
-                    return Some(Ok(RawStreamingChoice::Message(text.clone())));
+                    return Some(Ok(ModelEvent::TextDelta { text: text.clone() }));
                 }
                 None
             }
@@ -406,7 +410,7 @@ fn handle_event(
                 if let Some(tool_call) = current_tool_call {
                     tool_call.input_json.push_str(partial_json);
                     // Emit the delta so UI can show progress
-                    return Some(Ok(RawStreamingChoice::ToolCallDelta {
+                    return Some(Ok(ModelEvent::ToolCallDelta {
                         id: tool_call.id.clone(),
                         internal_call_id: tool_call.internal_call_id.clone(),
                         content: ToolCallDeltaContent::Delta(partial_json.clone()),
@@ -420,9 +424,9 @@ fn handle_event(
                     .thinking
                     .push_str(thinking);
 
-                Some(Ok(RawStreamingChoice::ReasoningDelta {
+                Some(Ok(ModelEvent::ReasoningDelta {
                     id: None,
-                    reasoning: thinking.clone(),
+                    text: thinking.clone(),
                 }))
             }
             ContentDelta::SignatureDelta { signature } => {
@@ -444,7 +448,7 @@ fn handle_event(
                     internal_call_id: internal_call_id.clone(),
                     input_json: String::new(),
                 });
-                Some(Ok(RawStreamingChoice::ToolCallDelta {
+                Some(Ok(ModelEvent::ToolCallDelta {
                     id: id.clone(),
                     internal_call_id,
                     content: ToolCallDeltaContent::Name(name.clone()),
@@ -454,9 +458,11 @@ fn handle_event(
                 *current_thinking = Some(ThinkingState::default());
                 None
             }
-            Content::RedactedThinking { data } => Some(Ok(RawStreamingChoice::Reasoning {
-                id: None,
-                content: ReasoningContent::Redacted { data: data.clone() },
+            Content::RedactedThinking { data } => Some(Ok(ModelEvent::ReasoningDone {
+                reasoning: Reasoning {
+                    id: None,
+                    content: vec![ReasoningContent::Redacted { data: data.clone() }],
+                },
             })),
             // Handle other content types - they don't need special handling
             _ => None,
@@ -471,11 +477,13 @@ fn handle_event(
                     Some(thinking_state.signature)
                 };
 
-                return Some(Ok(RawStreamingChoice::Reasoning {
-                    id: None,
-                    content: ReasoningContent::Text {
-                        text: thinking_state.thinking,
-                        signature,
+                return Some(Ok(ModelEvent::ReasoningDone {
+                    reasoning: Reasoning {
+                        id: None,
+                        content: vec![ReasoningContent::Text {
+                            text: thinking_state.thinking,
+                            signature,
+                        }],
                     },
                 }));
             }
@@ -491,7 +499,7 @@ fn handle_event(
                         let raw_tool_call =
                             RawStreamingToolCall::new(tool_call.id, tool_call.name, json_value)
                                 .with_internal_call_id(tool_call.internal_call_id);
-                        Some(Ok(RawStreamingChoice::ToolCall(raw_tool_call)))
+                        Some(Ok(ModelEvent::from(raw_tool_call)))
                     }
                     Err(e) => Some(Err(CompletionError::from(e))),
                 }
@@ -609,9 +617,9 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::ReasoningDelta { id, reasoning, .. } => {
+            ModelEvent::ReasoningDelta { id, text } => {
                 assert_eq!(id, None);
-                assert_eq!(reasoning, "Analyzing the request...");
+                assert_eq!(text, "Analyzing the request...");
             }
             _ => panic!("Expected ReasoningDelta choice"),
         }
@@ -656,11 +664,11 @@ mod tests {
 
         assert!(result.is_some());
         match result.unwrap().unwrap() {
-            RawStreamingChoice::Reasoning {
-                content: ReasoningContent::Redacted { data },
-                ..
-            } => {
-                assert_eq!(data, "redacted_blob");
+            ModelEvent::ReasoningDone { reasoning } => {
+                assert!(matches!(
+                    reasoning.content.first(),
+                    Some(ReasoningContent::Redacted { data }) if data == "redacted_blob"
+                ));
             }
             _ => panic!("Expected Redacted reasoning chunk"),
         }
@@ -683,7 +691,7 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::Message(text) => {
+            ModelEvent::TextDelta { text } => {
                 assert_eq!(text, "Hello, world!");
             }
             _ => panic!("Expected Message choice"),
@@ -714,8 +722,8 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::ReasoningDelta { reasoning, .. } => {
-                assert_eq!(reasoning, "Thinking while tool is active...");
+            ModelEvent::ReasoningDelta { text, .. } => {
+                assert_eq!(text, "Thinking while tool is active...");
             }
             _ => panic!("Expected ReasoningDelta choice"),
         }
@@ -748,7 +756,7 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::ToolCallDelta {
+            ModelEvent::ToolCallDelta {
                 id,
                 internal_call_id: _,
                 content,
@@ -822,19 +830,29 @@ mod tests {
         assert!(final_result.is_some());
 
         match final_result.unwrap().unwrap() {
-            RawStreamingChoice::ToolCall(RawStreamingToolCall {
-                id,
-                name,
-                arguments,
-                ..
-            }) => {
-                assert_eq!(id, "tool_123");
-                assert_eq!(name, "test_tool");
+            ModelEvent::ToolCallDone { tool_call, .. } => {
+                assert_eq!(tool_call.id, "tool_123");
+                assert_eq!(tool_call.function.name, "test_tool");
                 assert_eq!(
-                    arguments.get("location").unwrap().as_str().unwrap(),
+                    tool_call
+                        .function
+                        .arguments
+                        .get("location")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
                     "Paris"
                 );
-                assert_eq!(arguments.get("temp").unwrap().as_str().unwrap(), "20C");
+                assert_eq!(
+                    tool_call
+                        .function
+                        .arguments
+                        .get("temp")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
+                    "20C"
+                );
             }
             other => panic!("Expected ToolCall, got {:?}", other),
         }

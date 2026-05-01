@@ -5,7 +5,8 @@ use rig::client::CompletionClient;
 use rig::completion::CompletionModel;
 use rig::message::AssistantContent;
 use rig::message::Message;
-use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+use rig::model_event::ModelEvent;
+use rig::streaming::StreamingPrompt;
 
 use crate::chatgpt::{LIVE_MODEL, live_builder, live_client};
 use crate::support::{
@@ -57,10 +58,12 @@ async fn system_messages_are_lifted_into_instructions() {
 
     let mut text = String::new();
     while let Some(item) = stream.next().await {
-        if let StreamedAssistantContent::Text(delta) =
-            item.expect("system-message stream item should succeed")
-        {
-            text.push_str(&delta.text);
+        match item {
+            ModelEvent::TextDelta { text: delta } => text.push_str(&delta),
+            ModelEvent::Error { error } => {
+                panic!("system-message stream item should succeed: {error}")
+            }
+            _ => {}
         }
     }
     if text.trim().is_empty() {

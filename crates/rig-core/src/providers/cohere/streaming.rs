@@ -1,11 +1,12 @@
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
+use crate::model_event::ModelEvent;
 use crate::providers::cohere::CompletionModel;
 use crate::providers::cohere::completion::{
     AssistantContent, CohereCompletionRequest, Message, ToolCall, ToolCallFunction, ToolType, Usage,
 };
-use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, ToolCallDeltaContent};
+use crate::streaming::{RawStreamingToolCall, ToolCallDeltaContent};
 use crate::telemetry::SpanCombinator;
 use crate::{json_utils, streaming};
 use async_stream::stream;
@@ -177,7 +178,7 @@ where
 
                                 text_response += text;
 
-                                yield Ok(RawStreamingChoice::Message(text.clone()));
+                                yield Ok(ModelEvent::TextDelta { text: text.clone() });
                             },
 
                             StreamingEvent::MessageEnd { delta: Some(delta) } => {
@@ -207,7 +208,7 @@ where
                                 let internal_call_id = nanoid::nanoid!();
                                 current_tool_call = Some((id.clone(), internal_call_id.clone(), name.clone(), arguments));
 
-                                yield Ok(RawStreamingChoice::ToolCallDelta {
+                                yield Ok(ModelEvent::ToolCallDelta {
                                     id,
                                     internal_call_id,
                                     content: ToolCallDeltaContent::Name(name),
@@ -224,7 +225,7 @@ where
                                 current_tool_call = Some((tc.0.clone(), tc.1.clone(), tc.2, format!("{}{}", tc.3, arguments)));
 
                                 // Emit the delta so UI can show progress
-                                yield Ok(RawStreamingChoice::ToolCallDelta {
+                                yield Ok(ModelEvent::ToolCallDelta {
                                     id: tc.0,
                                     internal_call_id: tc.1,
                                     content: ToolCallDeltaContent::Delta(arguments),
@@ -246,7 +247,7 @@ where
 
                                 let raw_tool_call = RawStreamingToolCall::new(tc.0, tc.2, args)
                                     .with_internal_call_id(tc.1);
-                                yield Ok(RawStreamingChoice::ToolCall(raw_tool_call));
+                                yield Ok(ModelEvent::from(raw_tool_call));
 
                                 current_tool_call = None;
                             },
@@ -268,9 +269,14 @@ where
             // Ensure event source is closed when stream ends
             event_source.close();
 
-            yield Ok(RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
+            let response = StreamingCompletionResponse {
                 usage: final_usage.unwrap_or_default()
-            }))
+            };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         }.instrument(span);
 
         Ok(streaming::StreamingCompletionResponse::stream(Box::pin(

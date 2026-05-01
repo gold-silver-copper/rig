@@ -6,11 +6,12 @@ use crate::{
 use async_stream::stream;
 use aws_sdk_bedrockruntime::types as aws_bedrock;
 use rig_core::completion::GetTokenUsage;
+use rig_core::message::Reasoning;
+use rig_core::model_event::ModelEvent;
 use rig_core::streaming::StreamingCompletionResponse;
 use rig_core::{
     completion::CompletionError,
-    message::ReasoningContent,
-    streaming::{RawStreamingChoice, RawStreamingToolCall, ToolCallDeltaContent},
+    streaming::{RawStreamingToolCall, ToolCallDeltaContent},
 };
 use serde::{Deserialize, Serialize};
 
@@ -65,19 +66,12 @@ struct ReasoningState {
 /// Field required` when the conversation is replayed to Bedrock. We must emit
 /// whenever either the content or the signature is present; both-empty is
 /// still skipped.
-fn finalize_reasoning(
-    state: ReasoningState,
-) -> Option<RawStreamingChoice<BedrockStreamingResponse>> {
+fn finalize_reasoning(state: ReasoningState) -> Option<ModelEvent<BedrockStreamingResponse>> {
     if state.content.is_empty() && state.signature.is_none() {
         return None;
     }
-    Some(RawStreamingChoice::Reasoning {
-        id: None,
-        content: ReasoningContent::Text {
-            text: state.content,
-            signature: state.signature,
-        },
-    })
+    let reasoning = Reasoning::new_with_signature(&state.content, state.signature);
+    Some(ModelEvent::ReasoningDone { reasoning })
 }
 
 impl CompletionModel {
@@ -122,7 +116,7 @@ impl CompletionModel {
                         match delta {
                             aws_bedrock::ContentBlockDelta::Text(text) => {
                                 if current_tool_call.is_none() {
-                                    yield Ok(RawStreamingChoice::Message(text))
+                                    yield Ok(ModelEvent::TextDelta { text })
                                 }
                             },
                             aws_bedrock::ContentBlockDelta::ToolUse(tool) => {
@@ -131,7 +125,7 @@ impl CompletionModel {
                                     tool_call.input_json.push_str(&delta);
 
                                     // Emit the delta so UI can show progress
-                                    yield Ok(RawStreamingChoice::ToolCallDelta {
+                                    yield Ok(ModelEvent::ToolCallDelta {
                                         id: tool_call.id.clone(),
                                         internal_call_id: tool_call.internal_call_id.clone(),
                                         content: ToolCallDeltaContent::Delta(delta),
@@ -150,8 +144,8 @@ impl CompletionModel {
                                         }
 
                                         if !text.is_empty() {
-                                            yield Ok(RawStreamingChoice::ReasoningDelta {
-                                                reasoning: text.clone(),
+                                            yield Ok(ModelEvent::ReasoningDelta {
+                                                text: text.clone(),
                                                 id: None,
                                             })
                                         }
@@ -181,7 +175,7 @@ impl CompletionModel {
                                     internal_call_id: internal_call_id.clone(),
                                     input_json: String::new(),
                                 });
-                                yield Ok(RawStreamingChoice::ToolCallDelta {
+                                yield Ok(ModelEvent::ToolCallDelta {
                                     id: tool_use.tool_use_id,
                                     internal_call_id,
                                     content: ToolCallDeltaContent::Name(tool_use.name),
@@ -206,7 +200,7 @@ impl CompletionModel {
                                     } else {
                                         serde_json::from_str(tool_call.input_json.as_str())?
                                     };
-                                    yield Ok(RawStreamingChoice::ToolCall(
+                                    yield Ok(ModelEvent::from(
                                         RawStreamingToolCall::new(tool_call.id, tool_call.name, tool_input)
                                             .with_internal_call_id(tool_call.internal_call_id)
                                     ));
@@ -223,7 +217,7 @@ impl CompletionModel {
                     aws_bedrock::ConverseStreamOutput::Metadata(metadata_event) => {
                         // Extract usage information from metadata
                         if let Some(usage) = metadata_event.usage {
-                            yield Ok(RawStreamingChoice::FinalResponse(BedrockStreamingResponse {
+                            let response = BedrockStreamingResponse {
                                 usage: Some(BedrockUsage {
                                     input_tokens: usage.input_tokens,
                                     output_tokens: usage.output_tokens,
@@ -231,7 +225,12 @@ impl CompletionModel {
                                     cache_read_input_tokens: usage.cache_read_input_tokens,
                                     cache_write_input_tokens: usage.cache_write_input_tokens,
                                 }),
-                            }));
+                            };
+                            if let Some(usage) = response.token_usage() {
+                                yield Ok(ModelEvent::Usage { usage });
+                            }
+                            yield Ok(ModelEvent::RawResponse { response });
+                            yield Ok(ModelEvent::Done);
                         }
                     },
                     _ => {}
@@ -246,6 +245,7 @@ impl CompletionModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rig_core::message::ReasoningContent;
 
     #[test]
     fn test_bedrock_usage_creation() {
@@ -556,17 +556,20 @@ mod tests {
 
         let choice = finalize_reasoning(state).expect("should emit reasoning");
         match choice {
-            RawStreamingChoice::Reasoning { id, content } => {
-                assert!(id.is_none());
-                match content {
-                    ReasoningContent::Text { text, signature } => {
-                        assert_eq!(text, "I am thinking");
-                        assert_eq!(signature.as_deref(), Some("sig-abc"));
-                    }
-                    other => panic!("expected ReasoningContent::Text, got {:?}", other),
-                }
+            ModelEvent::ReasoningDone { reasoning } => {
+                assert!(reasoning.id.is_none());
+                match reasoning.content.as_slice() {
+                    [content] => match content {
+                        ReasoningContent::Text { text, signature } => {
+                            assert_eq!(text, "I am thinking");
+                            assert_eq!(signature.as_deref(), Some("sig-abc"));
+                        }
+                        other => panic!("expected ReasoningContent::Text, got {:?}", other),
+                    },
+                    other => panic!("expected one reasoning content block, got {:?}", other),
+                };
             }
-            _ => panic!("expected RawStreamingChoice::Reasoning"),
+            _ => panic!("expected ModelEvent::ReasoningDone"),
         }
     }
 
@@ -583,14 +586,14 @@ mod tests {
         let choice =
             finalize_reasoning(state).expect("should emit reasoning for signature-only state");
         match choice {
-            RawStreamingChoice::Reasoning { content, .. } => match content {
-                ReasoningContent::Text { text, signature } => {
+            ModelEvent::ReasoningDone { reasoning } => match reasoning.content.as_slice() {
+                [ReasoningContent::Text { text, signature }] => {
                     assert!(text.is_empty());
                     assert_eq!(signature.as_deref(), Some("sig-only"));
                 }
                 other => panic!("expected ReasoningContent::Text, got {:?}", other),
             },
-            _ => panic!("expected RawStreamingChoice::Reasoning"),
+            _ => panic!("expected ModelEvent::ReasoningDone"),
         }
     }
 
@@ -604,14 +607,14 @@ mod tests {
         let choice =
             finalize_reasoning(state).expect("should emit reasoning for content-only state");
         match choice {
-            RawStreamingChoice::Reasoning { content, .. } => match content {
-                ReasoningContent::Text { text, signature } => {
+            ModelEvent::ReasoningDone { reasoning } => match reasoning.content.as_slice() {
+                [ReasoningContent::Text { text, signature }] => {
                     assert_eq!(text, "thoughts without sig");
                     assert!(signature.is_none());
                 }
                 other => panic!("expected ReasoningContent::Text, got {:?}", other),
             },
-            _ => panic!("expected RawStreamingChoice::Reasoning"),
+            _ => panic!("expected ModelEvent::ReasoningDone"),
         }
     }
 

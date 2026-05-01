@@ -139,6 +139,7 @@ pub(crate) mod json_utils;
 pub mod loaders;
 pub mod markers;
 pub mod model;
+pub mod model_event;
 pub mod one_or_many;
 pub mod pipeline;
 pub mod prelude;

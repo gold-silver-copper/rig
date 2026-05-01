@@ -10,8 +10,9 @@ use rig::agent::Agent;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{self, CompletionError, CompletionModel, PromptError, ToolDefinition};
 use rig::message::{AssistantContent, Message, Text, ToolResultContent, UserContent};
+use rig::model_event::ModelEvent;
 use rig::providers::gemini;
-use rig::streaming::{StreamedAssistantContent, StreamingCompletion};
+use rig::streaming::StreamingCompletion;
 use rig::tool::{Tool, ToolError, ToolSetError};
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
@@ -110,11 +111,11 @@ where
 
             while let Some(content) = stream.next().await {
                 match content {
-                    Ok(StreamedAssistantContent::Text(text)) => {
-                        yield Ok(Text { text: text.text });
+                    ModelEvent::TextDelta { text } => {
+                        yield Ok(Text { text });
                         did_call_tool = false;
                     }
-                    Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
+                    ModelEvent::ToolCallDone { tool_call, .. } => {
                         let tool_result = agent
                             .tool_server_handle
                             .call_tool(
@@ -132,18 +133,24 @@ where
                         tool_results.push((tool_call.id, tool_call.call_id, tool_result));
                         did_call_tool = true;
                     }
-                    Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+                    ModelEvent::ReasoningDone { reasoning } => {
                         let rendered = reasoning.display_text();
                         if !rendered.is_empty() {
                             yield Ok(Text { text: rendered });
                         }
                         did_call_tool = false;
                     }
-                    Ok(_) => {}
-                    Err(error) => {
+                    ModelEvent::ReasoningDelta { text, .. } => {
+                        if !text.is_empty() {
+                            yield Ok(Text { text });
+                        }
+                        did_call_tool = false;
+                    }
+                    ModelEvent::Error { error } => {
                         yield Err(error.into());
                         break 'outer;
                     }
+                    _ => {}
                 }
             }
 

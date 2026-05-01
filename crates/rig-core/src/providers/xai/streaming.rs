@@ -97,10 +97,10 @@ where
 mod tests {
     use super::send_xai_streaming_request;
     use crate::message::ReasoningContent;
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::sse_bytes_from_json_events;
     use crate::providers::openai::responses_api::ReasoningSummary;
     use crate::providers::openai::responses_api::streaming::reasoning_choices_from_done_item;
-    use crate::streaming::{RawStreamingChoice, StreamedAssistantContent};
 
     #[test]
     fn reasoning_done_item_emits_summary_then_encrypted() {
@@ -112,29 +112,36 @@ mod tests {
                 text: "s2".to_string(),
             },
         ];
-        let choices = reasoning_choices_from_done_item("xr_1", &summary, Some("enc"));
+        let choices: Vec<ModelEvent<()>> =
+            reasoning_choices_from_done_item("xr_1", &summary, Some("enc"));
 
         assert_eq!(choices.len(), 3);
         assert!(matches!(
             choices.first(),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Summary(text),
-            }) if id == "xr_1" && text == "s1"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("xr_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Summary(text)) if text == "s1"
+                    )
         ));
         assert!(matches!(
             choices.get(1),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Summary(text),
-            }) if id == "xr_1" && text == "s2"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("xr_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Summary(text)) if text == "s2"
+                    )
         ));
         assert!(matches!(
             choices.get(2),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Encrypted(data),
-            }) if id == "xr_1" && data == "enc"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("xr_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Encrypted(data)) if data == "enc"
+                    )
         ));
     }
 
@@ -193,13 +200,8 @@ mod tests {
             .await
             .expect("stream should start");
 
-        match stream
-            .next()
-            .await
-            .expect("stream should yield an item")
-            .expect("first stream item should be ok")
-        {
-            StreamedAssistantContent::ToolCall { tool_call, .. } => {
+        match stream.next().await.expect("stream should yield an item") {
+            ModelEvent::ToolCallDone { tool_call, .. } => {
                 assert_eq!(tool_call.id, "fc_123");
                 assert_eq!(tool_call.call_id.as_deref(), Some("call_123"));
                 assert_eq!(tool_call.function.name, "example_tool");
@@ -211,8 +213,10 @@ mod tests {
         let err = stream
             .next()
             .await
-            .expect("stream should yield terminal error")
-            .expect_err("stream should surface a provider error");
+            .expect("stream should yield terminal error");
+        let ModelEvent::Error { error: err } = err else {
+            panic!("stream should surface a provider error");
+        };
         assert_eq!(
             err.to_string(),
             "ProviderError: server_error: response stream failed"

@@ -102,8 +102,7 @@ async fn streaming_history_preserves_hybrid_tool_result_image_parts() {
                 final_history = response.history().map(|history| history.to_vec());
                 break;
             }
-            MultiTurnStreamItem::StreamAssistantItem(_)
-            | MultiTurnStreamItem::StreamUserItem(_) => {}
+            MultiTurnStreamItem::Model(_) | MultiTurnStreamItem::StreamUserItem(_) => {}
             _ => {}
         }
     }

@@ -29,13 +29,14 @@ use crate::client::{
 use crate::completion::{self, CompletionError, GetTokenUsage};
 use crate::embeddings::{self, EmbeddingError};
 use crate::http_client::{self, HttpClientExt};
+use crate::model_event::ModelEvent;
 use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
     CompatibleToolCallChunk,
 };
 use crate::providers::openai;
 use crate::providers::openai::responses_api::{self, CompletionRequest as ResponsesRequest};
-use crate::streaming::{self, RawStreamingChoice, StreamingCompletionResponse};
+use crate::streaming::{self, StreamingCompletionResponse};
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use async_stream::stream;
 use futures::StreamExt;
@@ -898,7 +899,7 @@ where
         let stream = tracing_futures::Instrument::instrument(
             stream! {
                 let mut final_usage = responses_api::ResponsesUsage::new();
-                let mut tool_calls: Vec<streaming::RawStreamingChoice<CopilotStreamingResponse>> = Vec::new();
+                let mut tool_calls: Vec<ModelEvent<CopilotStreamingResponse>> = Vec::new();
                 let mut tool_call_internal_ids: HashMap<String, String> = HashMap::new();
                 let span = tracing::Span::current();
 
@@ -926,7 +927,7 @@ where
                                                 .entry(func.id.clone())
                                                 .or_insert_with(|| nanoid::nanoid!())
                                                 .clone();
-                                            yield Ok(RawStreamingChoice::ToolCallDelta {
+                                            yield Ok(ModelEvent::ToolCallDelta {
                                                 id: func.id.clone(),
                                                 internal_call_id,
                                                 content: streaming::ToolCallDeltaContent::Name(func.name.clone()),
@@ -946,7 +947,7 @@ where
                                             )
                                             .with_internal_call_id(internal_id)
                                             .with_call_id(func.call_id.clone());
-                                            tool_calls.push(RawStreamingChoice::ToolCall(raw_tool_call));
+                                            tool_calls.push(ModelEvent::from(raw_tool_call));
                                         }
                                         StreamingItemDoneOutput { item: responses_api::Output::Reasoning { summary, id, encrypted_content, .. }, .. } => {
                                             for reasoning_choice in responses_api::streaming::reasoning_choices_from_done_item(
@@ -954,37 +955,29 @@ where
                                                 summary,
                                                 encrypted_content.as_deref(),
                                             ) {
-                                                match reasoning_choice {
-                                                    RawStreamingChoice::Reasoning { id, content } => {
-                                                        yield Ok(RawStreamingChoice::Reasoning { id, content });
-                                                    }
-                                                    RawStreamingChoice::ReasoningDelta { id, reasoning } => {
-                                                        yield Ok(RawStreamingChoice::ReasoningDelta { id, reasoning });
-                                                    }
-                                                    _ => {}
-                                                }
+                                                yield Ok(reasoning_choice);
                                             }
                                         }
                                         StreamingItemDoneOutput { item: responses_api::Output::Message(msg), .. } => {
-                                            yield Ok(RawStreamingChoice::MessageId(msg.id.clone()));
+                                            yield Ok(ModelEvent::MessageDone { id: Some(msg.id.clone()) });
                                         }
                                         StreamingItemDoneOutput { item: responses_api::Output::Unknown, .. } => {}
                                     },
                                     ItemChunkKind::OutputTextDelta(delta) => {
-                                        yield Ok(RawStreamingChoice::Message(delta.delta.clone()))
+                                        yield Ok(ModelEvent::TextDelta { text: delta.delta.clone() })
                                     }
                                     ItemChunkKind::ReasoningSummaryTextDelta(delta) => {
-                                        yield Ok(RawStreamingChoice::ReasoningDelta { id: None, reasoning: delta.delta.clone() })
+                                        yield Ok(ModelEvent::ReasoningDelta { id: None, text: delta.delta.clone() })
                                     }
                                     ItemChunkKind::RefusalDelta(delta) => {
-                                        yield Ok(RawStreamingChoice::Message(delta.delta.clone()))
+                                        yield Ok(ModelEvent::TextDelta { text: delta.delta.clone() })
                                     }
                                     ItemChunkKind::FunctionCallArgsDelta(delta) => {
                                         let internal_call_id = tool_call_internal_ids
                                             .entry(delta.item_id.clone())
                                             .or_insert_with(|| nanoid::nanoid!())
                                             .clone();
-                                        yield Ok(RawStreamingChoice::ToolCallDelta {
+                                        yield Ok(ModelEvent::ToolCallDelta {
                                             id: delta.item_id.clone(),
                                             internal_call_id,
                                             content: streaming::ToolCallDeltaContent::Delta(delta.delta.clone())
@@ -1036,8 +1029,8 @@ where
                     return;
                 }
 
-                for tool_call in &tool_calls {
-                    yield Ok(tool_call.to_owned())
+                for tool_call in tool_calls {
+                    yield Ok(tool_call)
                 }
 
                 span.record("gen_ai.usage.input_tokens", final_usage.input_tokens);
@@ -1051,11 +1044,14 @@ where
                         .unwrap_or(0),
                 );
 
-                yield Ok(RawStreamingChoice::FinalResponse(
-                    CopilotStreamingResponse::Responses(
-                        responses_api::streaming::StreamingCompletionResponse { usage: final_usage }
-                    )
-                ));
+                let response = CopilotStreamingResponse::Responses(
+                    responses_api::streaming::StreamingCompletionResponse { usage: final_usage }
+                );
+                if let Some(usage) = response.token_usage() {
+                    yield Ok(ModelEvent::Usage { usage });
+                }
+                yield Ok(ModelEvent::RawResponse { response });
+                yield Ok(ModelEvent::Done);
             },
             span,
         );
@@ -1405,10 +1401,10 @@ mod tests {
     use crate::completion::CompletionModel;
     use crate::http_client::mock::MockStreamingClient;
     use crate::http_client::{self, HttpClientExt, LazyBody, MultipartForm, Request, Response};
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::{
         sse_bytes_from_data_lines, sse_bytes_from_json_events,
     };
-    use crate::streaming::StreamedAssistantContent;
     use bytes::Bytes;
     use futures::StreamExt;
     use std::collections::HashMap;
@@ -1866,8 +1862,8 @@ mod tests {
         let mut stream = model.stream(request).await.expect("stream should start");
 
         let err = match stream.next().await.expect("stream should yield an item") {
-            Ok(_) => panic!("stream should surface a provider error"),
-            Err(err) => err,
+            ModelEvent::Error { error } => error,
+            _ => panic!("stream should surface a provider error"),
         };
         assert_eq!(
             err.to_string(),
@@ -1903,8 +1899,8 @@ mod tests {
         let mut saw_error = false;
         while let Some(item) = stream.next().await {
             match item {
-                Ok(StreamedAssistantContent::ToolCallDelta { .. }) => {}
-                Err(err) => {
+                ModelEvent::ToolCallDelta { .. } => {}
+                ModelEvent::Error { error: err } => {
                     assert_eq!(
                         err.to_string(),
                         "ProviderError: Invalid status code: 502 Bad Gateway"
@@ -1912,7 +1908,7 @@ mod tests {
                     saw_error = true;
                     break;
                 }
-                Ok(_) => panic!("unexpected non-error stream item before transport failure"),
+                _ => panic!("unexpected non-error stream item before transport failure"),
             }
         }
 

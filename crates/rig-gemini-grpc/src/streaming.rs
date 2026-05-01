@@ -7,7 +7,8 @@ use base64::Engine as _;
 use futures::StreamExt;
 use serde_json::{Map, Value};
 
-use rig_core::completion::{CompletionError, CompletionRequest};
+use rig_core::completion::{CompletionError, CompletionRequest, GetTokenUsage};
+use rig_core::model_event::ModelEvent;
 use rig_core::streaming;
 
 use super::Client;
@@ -53,12 +54,12 @@ pub(crate) async fn stream(
                                 match &part.data {
                                     Some(proto::part::Data::Text(text)) => {
                                         if part.thought {
-                                            yield Ok(streaming::RawStreamingChoice::ReasoningDelta {
+                                            yield Ok(ModelEvent::ReasoningDelta {
                                                 id: None,
-                                                reasoning: text.clone(),
+                                                text: text.clone(),
                                             });
                                         } else {
-                                            yield Ok(streaming::RawStreamingChoice::Message(text.clone()));
+                                            yield Ok(ModelEvent::TextDelta { text: text.clone() });
                                         }
                                     }
                                     Some(proto::part::Data::FunctionCall(function_call)) => {
@@ -85,7 +86,7 @@ pub(crate) async fn stream(
                                             tool_call = tool_call.with_call_id(function_call.id.clone());
                                         }
 
-                                        yield Ok(streaming::RawStreamingChoice::ToolCall(tool_call));
+                                        yield Ok(ModelEvent::from(tool_call));
                                     }
                                     _ => {}
                                 }
@@ -108,7 +109,11 @@ pub(crate) async fn stream(
         }
 
         let resp = final_resp.or(last_resp).unwrap_or_default();
-        yield Ok(streaming::RawStreamingChoice::FinalResponse(resp));
+        if let Some(usage) = resp.token_usage() {
+            yield Ok(ModelEvent::Usage { usage });
+        }
+        yield Ok(ModelEvent::RawResponse { response: resp });
+        yield Ok(ModelEvent::Done);
     };
 
     Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
