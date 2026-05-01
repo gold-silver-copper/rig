@@ -1,5 +1,5 @@
 use crate::{
-    agent::{Agent, MultiTurnStreamItem},
+    agent::{Agent, AgentEvent},
     completion::{Chat, CompletionError, CompletionModel, PromptError, Usage},
     markers::{Missing, Provided},
     message::Message,
@@ -83,11 +83,11 @@ where
             };
 
             match chunk {
-                Ok(MultiTurnStreamItem::Model(ModelEvent::TextDelta { text })) => {
+                Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
                     print!("{}", text);
                     acc.push_str(&text);
                 }
-                Ok(MultiTurnStreamItem::FinalResponse(final_response)) => {
+                Ok(AgentEvent::FinalResponse(final_response)) => {
                     self.usage = final_response.usage();
                 }
                 Err(e) => {

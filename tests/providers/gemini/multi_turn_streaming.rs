@@ -102,7 +102,7 @@ where
             let mut stream = agent
                 .stream_completion(current_prompt.clone(), &chat_history)
                 .await?
-                .stream()
+                .stream_events()
                 .await?;
 
             chat_history.push(current_prompt.clone());

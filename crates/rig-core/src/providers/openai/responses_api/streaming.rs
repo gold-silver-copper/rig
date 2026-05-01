@@ -6,7 +6,6 @@ use crate::http_client::sse::{Event, GenericEventSource};
 use crate::message::ReasoningContent;
 use crate::model_event::ModelEvent;
 use crate::providers::openai::responses_api::{ReasoningSummary, ResponsesUsage};
-use crate::streaming;
 use crate::wasm_compat::WasmCompatSend;
 use async_stream::stream;
 use futures::StreamExt;
@@ -16,7 +15,7 @@ use tracing_futures::Instrument as _;
 
 use super::{CompletionResponse, GenericResponsesCompletionModel, Output};
 
-type StreamingModelEvent = ModelEvent<StreamingCompletionResponse>;
+type StreamingModelEvent = ModelEvent<StreamingResponse>;
 
 // ================================================================
 // OpenAI Responses Streaming API
@@ -35,7 +34,7 @@ pub enum StreamingCompletionChunk {
 
 /// The final streaming response from the OpenAI Responses API.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     /// Token usage
     pub usage: ResponsesUsage,
 }
@@ -69,7 +68,7 @@ pub(crate) fn reasoning_choices_from_done_item<R>(
     choices
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -292,7 +291,7 @@ impl ModelEventAccumulator {
                 immediate.push(ModelEvent::ToolCallDelta {
                     id: func.id,
                     internal_call_id,
-                    content: streaming::ToolCallDeltaContent::Name(func.name),
+                    content: crate::model_event::ToolCallDeltaContent::Name(func.name),
                 });
             }
             ItemChunkKind::OutputItemDone(message) => {
@@ -323,7 +322,7 @@ impl ModelEventAccumulator {
                 immediate.push(ModelEvent::ToolCallDelta {
                     id: delta.item_id,
                     internal_call_id,
-                    content: streaming::ToolCallDeltaContent::Delta(delta.delta),
+                    content: crate::model_event::ToolCallDeltaContent::Delta(delta.delta),
                 });
             }
             _ => {}
@@ -376,7 +375,7 @@ impl ModelEventAccumulator {
                     .or_insert_with(|| nanoid::nanoid!())
                     .clone();
                 let tool_call =
-                    streaming::RawStreamingToolCall::new(func.id, func.name, func.arguments)
+                    crate::model_event::StreamingToolCall::new(func.id, func.name, func.arguments)
                         .with_internal_call_id(internal_call_id)
                         .with_call_id(func.call_id);
 
@@ -410,7 +409,7 @@ impl ModelEventAccumulator {
     fn finish(mut self) -> Vec<StreamingModelEvent> {
         let mut events = Vec::new();
         events.append(&mut self.tool_calls);
-        let response = StreamingCompletionResponse {
+        let response = StreamingResponse {
             usage: self.final_usage,
         };
         if let Some(usage) = response.token_usage() {
@@ -489,7 +488,7 @@ pub(crate) fn model_events_from_sse_body(
                     model_events.push(ModelEvent::ToolCallDelta {
                         id: func.id,
                         internal_call_id,
-                        content: streaming::ToolCallDeltaContent::Name(func.name),
+                        content: crate::model_event::ToolCallDeltaContent::Name(func.name),
                     });
                 }
             }
@@ -515,7 +514,7 @@ pub(crate) fn model_events_from_sse_body(
                     model_events.push(ModelEvent::ToolCallDelta {
                         id: item_id.to_owned(),
                         internal_call_id,
-                        content: streaming::ToolCallDeltaContent::Delta(delta.to_owned()),
+                        content: crate::model_event::ToolCallDeltaContent::Delta(delta.to_owned()),
                     });
                 }
             }
@@ -568,31 +567,27 @@ pub(crate) async fn completion_response_from_sse_body(
             .map(Ok::<_, CompletionError>)
             .collect::<Vec<_>>(),
     );
-    let mut stream = crate::streaming::StreamingCompletionResponse::stream(Box::pin(stream));
+    let collected =
+        crate::model_event::collect_optional(crate::model_event::result_stream(Box::pin(stream)))
+            .await?;
 
-    while let Some(item) = stream.next().await {
-        if let ModelEvent::Error { error } = item {
-            return Err(error);
-        }
-    }
-
-    if choice_is_empty(&stream.choice) {
+    if choice_is_empty(&collected.choice) {
         return Err(CompletionError::ResponseError(
             "Response contained no parts".to_owned(),
         ));
     }
 
     Ok(completion::CompletionResponse {
-        usage: stream
-            .response
+        usage: collected
+            .raw_response
             .as_ref()
             .and_then(GetTokenUsage::token_usage)
             .unwrap_or_else(|| usage_from_raw_response(&raw_response)),
-        message_id: stream
+        message_id: collected
             .message_id
             .clone()
             .or_else(|| message_id_from_response(&raw_response)),
-        choice: stream.choice,
+        choice: collected.choice,
         raw_response,
     })
 }
@@ -625,7 +620,7 @@ pub(crate) fn stream_from_event_source<HttpClient, RequestBody>(
     event_source: GenericEventSource<HttpClient, RequestBody>,
     span: tracing::Span,
     provider_name: &'static str,
-) -> streaming::StreamingCompletionResponse<StreamingCompletionResponse>
+) -> crate::model_event::ModelEventStream<StreamingResponse>
 where
     HttpClient: HttpClientExt + Clone + 'static,
     RequestBody: Into<bytes::Bytes> + Clone + WasmCompatSend + 'static,
@@ -643,7 +638,7 @@ pub(crate) fn stream_from_event_source_with_options<HttpClient, RequestBody>(
     span: tracing::Span,
     provider_name: &'static str,
     options: ResponsesStreamOptions,
-) -> streaming::StreamingCompletionResponse<StreamingCompletionResponse>
+) -> crate::model_event::ModelEventStream<StreamingResponse>
 where
     HttpClient: HttpClientExt + Clone + 'static,
     RequestBody: Into<bytes::Bytes> + Clone + WasmCompatSend + 'static,
@@ -736,7 +731,7 @@ where
     }
     .instrument(span);
 
-    streaming::StreamingCompletionResponse::stream(Box::pin(stream))
+    crate::model_event::result_stream(Box::pin(stream))
 }
 
 /// An item message chunk from OpenAI's Responses API.
@@ -873,11 +868,10 @@ where
     Ext: crate::client::Provider + Clone + 'static,
     H: Clone + Default + std::fmt::Debug + WasmCompatSend + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: crate::completion::CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let mut request = self.create_completion_request(completion_request)?;
         request.stream = Some(true);
 
@@ -995,7 +989,10 @@ mod tests {
             .expect("client should build");
         let model = client.completion_model("gpt-5.4");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         stream
             .next()
@@ -1015,7 +1012,10 @@ mod tests {
             .expect("client should build");
         let model = client.completion_model("gpt-5.4");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         while let Some(item) = stream.next().await {
             match item {
@@ -1315,7 +1315,10 @@ mod tests {
             .expect("client should build");
         let model = client.completion_model("gpt-5.4");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         let err = stream
             .next()
@@ -1420,7 +1423,10 @@ mod tests {
             .expect("client should build");
         let model = client.completion_model("gpt-5.4");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         let mut final_usage = None;
         while let Some(item) = stream.next().await {

@@ -1,14 +1,14 @@
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
+use crate::json_utils;
 use crate::model_event::ModelEvent;
+use crate::model_event::{StreamingToolCall, ToolCallDeltaContent};
 use crate::providers::cohere::CompletionModel;
 use crate::providers::cohere::completion::{
     AssistantContent, CohereCompletionRequest, Message, ToolCall, ToolCallFunction, ToolType, Usage,
 };
-use crate::streaming::{RawStreamingToolCall, ToolCallDeltaContent};
 use crate::telemetry::SpanCombinator;
-use crate::{json_utils, streaming};
 use async_stream::stream;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -63,11 +63,11 @@ struct MessageEndDelta {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Option<Usage>,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         let tokens = self
             .usage
@@ -95,11 +95,10 @@ impl<T> CompletionModel<T>
 where
     T: HttpClientExt + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let mut request = CohereCompletionRequest::try_from((self.model.as_ref(), request))?;
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
@@ -245,7 +244,7 @@ where
                                     })
                                 });
 
-                                let raw_tool_call = RawStreamingToolCall::new(tc.0, tc.2, args)
+                                let raw_tool_call = StreamingToolCall::new(tc.0, tc.2, args)
                                     .with_internal_call_id(tc.1);
                                 yield Ok(ModelEvent::from(raw_tool_call));
 
@@ -269,7 +268,7 @@ where
             // Ensure event source is closed when stream ends
             event_source.close();
 
-            let response = StreamingCompletionResponse {
+            let response = StreamingResponse {
                 usage: final_usage.unwrap_or_default()
             };
             if let Some(usage) = response.token_usage() {
@@ -279,9 +278,7 @@ where
             yield Ok(ModelEvent::Done);
         }.instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-            stream,
-        )))
+        Ok(crate::model_event::result_stream(Box::pin(stream)))
     }
 }
 

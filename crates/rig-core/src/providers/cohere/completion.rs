@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use super::client::Client;
 use crate::completion::CompletionRequest;
-use crate::providers::cohere::streaming::StreamingCompletionResponse;
+use crate::providers::cohere::streaming::StreamingResponse;
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, Level, enabled, info_span};
 
@@ -619,96 +619,106 @@ where
     T: HttpClientExt + Clone + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
     type Client = Client<T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let request = CohereCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let request =
+                CohereCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
-        let llm_span = if tracing::Span::current().is_disabled() {
-            info_span!(
-            target: "rig::completions",
-            "chat",
-            gen_ai.operation.name = "chat",
-            gen_ai.provider.name = "cohere",
-            gen_ai.request.model = self.model,
-            gen_ai.response.id = tracing::field::Empty,
-            gen_ai.response.model = self.model,
-            gen_ai.usage.output_tokens = tracing::field::Empty,
-            gen_ai.usage.input_tokens = tracing::field::Empty,
-            gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                "Cohere completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let req_body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/v2/chat")?
-            .body(req_body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async {
-            let response = self
-                .client
-                .send::<_, bytes::Bytes>(req)
-                .await
-                .map_err(|e| http_client::Error::Instance(e.into()))?;
-
-            let status = response.status();
-            let body = response.into_body().into_future().await?.to_owned();
-
-            if status.is_success() {
-                let json_response: CompletionResponse = serde_json::from_slice(&body)?;
-                let span = tracing::Span::current();
-                span.record_token_usage(&json_response.usage);
-                span.record_response_metadata(&json_response);
-
-                if enabled!(Level::TRACE) {
-                    tracing::trace!(
-                        target: "rig::completions",
-                        "Cohere completion response: {}",
-                        serde_json::to_string_pretty(&json_response)?
-                    );
-                }
-
-                let completion: completion::CompletionResponse<CompletionResponse> =
-                    json_response.try_into()?;
-                Ok(completion)
+            let llm_span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                target: "rig::completions",
+                "chat",
+                gen_ai.operation.name = "chat",
+                gen_ai.provider.name = "cohere",
+                gen_ai.request.model = self.model,
+                gen_ai.response.id = tracing::field::Empty,
+                gen_ai.response.model = self.model,
+                gen_ai.usage.output_tokens = tracing::field::Empty,
+                gen_ai.usage.input_tokens = tracing::field::Empty,
+                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&body).to_string(),
-                ))
+                tracing::Span::current()
+            };
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    "Cohere completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let req_body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/v2/chat")?
+                .body(req_body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async {
+                let response = self
+                    .client
+                    .send::<_, bytes::Bytes>(req)
+                    .await
+                    .map_err(|e| http_client::Error::Instance(e.into()))?;
+
+                let status = response.status();
+                let body = response.into_body().into_future().await?.to_owned();
+
+                if status.is_success() {
+                    let json_response: CompletionResponse = serde_json::from_slice(&body)?;
+                    let span = tracing::Span::current();
+                    span.record_token_usage(&json_response.usage);
+                    span.record_response_metadata(&json_response);
+
+                    if enabled!(Level::TRACE) {
+                        tracing::trace!(
+                            target: "rig::completions",
+                            "Cohere completion response: {}",
+                            serde_json::to_string_pretty(&json_response)?
+                        );
+                    }
+
+                    let completion: completion::CompletionResponse<CompletionResponse> =
+                        json_response.try_into()?;
+                    Ok(completion)
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&body).to_string(),
+                    ))
+                }
+            }
+            .instrument(llm_span)
+            .await
         }
-        .instrument(llm_span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        CompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        CompletionModel::stream_events(self, request).await
     }
 }
 #[cfg(test)]

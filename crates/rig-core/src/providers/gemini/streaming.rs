@@ -14,7 +14,6 @@ use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::message::Reasoning;
 use crate::model_event::ModelEvent;
-use crate::streaming;
 use crate::telemetry::SpanCombinator;
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -55,11 +54,11 @@ pub struct StreamGenerateContentResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage_metadata: PartialUsage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         let mut usage = crate::completion::Usage::new();
         usage.total_tokens = self.usage_metadata.total_token_count as u64;
@@ -77,11 +76,10 @@ impl<T> CompletionModel<T>
 where
     T: HttpClientExt + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let request_model = resolve_request_model(&self.model, &completion_request);
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
@@ -203,7 +201,7 @@ where
                                     ..
                                 } => {
                                     yield Ok(ModelEvent::from(
-                                        streaming::RawStreamingToolCall::new(function_call.name.clone(), function_call.name.clone(), function_call.args.clone())
+                                        crate::model_event::StreamingToolCall::new(function_call.name.clone(), function_call.name.clone(), function_call.args.clone())
                                             .with_signature(thought_signature)
                                     ));
                                 },
@@ -235,7 +233,7 @@ where
             // Ensure event source is closed when stream ends
             event_source.close();
 
-            let response = StreamingCompletionResponse {
+            let response = StreamingResponse {
                 usage_metadata: final_usage.unwrap_or_default()
             };
             if let Some(usage) = response.token_usage() {
@@ -245,9 +243,7 @@ where
             yield Ok(ModelEvent::Done);
         }.instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-            stream,
-        )))
+        Ok(crate::model_event::result_stream(Box::pin(stream)))
     }
 }
 
@@ -552,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_streaming_completion_response_token_usage() {
-        let response = StreamingCompletionResponse {
+        let response = StreamingResponse {
             usage_metadata: PartialUsage {
                 total_token_count: 150,
                 cached_content_token_count: None,

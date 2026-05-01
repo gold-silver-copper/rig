@@ -9,19 +9,18 @@ use serde_json::{Map, Value};
 
 use rig_core::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use rig_core::model_event::ModelEvent;
-use rig_core::streaming;
 
 use super::Client;
 use super::GenerateContentResponse;
 use super::proto;
 
-pub type StreamingCompletionResponse = GenerateContentResponse;
+pub type StreamingResponse = GenerateContentResponse;
 
-pub(crate) async fn stream(
+pub(crate) async fn stream_events(
     client: Client,
     model: String,
     completion_request: CompletionRequest,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError> {
+) -> Result<rig_core::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
     let request = super::completion::create_grpc_request(model, completion_request)?;
 
     let mut grpc_client = client
@@ -35,8 +34,8 @@ pub(crate) async fn stream(
         .into_inner();
 
     let stream = stream! {
-        let mut last_resp: Option<StreamingCompletionResponse> = None;
-        let mut final_resp: Option<StreamingCompletionResponse> = None;
+        let mut last_resp: Option<StreamingResponse> = None;
+        let mut final_resp: Option<StreamingResponse> = None;
 
         while let Some(item) = response_stream.next().await {
             match item {
@@ -75,7 +74,7 @@ pub(crate) async fn stream(
                                             function_call.id.clone()
                                         };
 
-                                        let mut tool_call = streaming::RawStreamingToolCall::new(
+                                        let mut tool_call = rig_core::model_event::StreamingToolCall::new(
                                             tool_id,
                                             function_call.name.clone(),
                                             args_json,
@@ -116,9 +115,7 @@ pub(crate) async fn stream(
         yield Ok(ModelEvent::Done);
     };
 
-    Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-        stream,
-    )))
+    Ok(rig_core::model_event::result_stream(Box::pin(stream)))
 }
 
 fn encode_signature(bytes: &[u8]) -> Option<String> {

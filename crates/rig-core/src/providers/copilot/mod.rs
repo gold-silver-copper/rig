@@ -30,13 +30,13 @@ use crate::completion::{self, CompletionError, GetTokenUsage};
 use crate::embeddings::{self, EmbeddingError};
 use crate::http_client::{self, HttpClientExt};
 use crate::model_event::ModelEvent;
+use crate::model_event::ModelEventStream;
 use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
     CompatibleToolCallChunk,
 };
 use crate::providers::openai;
 use crate::providers::openai::responses_api::{self, CompletionRequest as ResponsesRequest};
-use crate::streaming::{self, StreamingCompletionResponse};
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use async_stream::stream;
 use futures::StreamExt;
@@ -451,8 +451,8 @@ pub enum CopilotCompletionResponse {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "api", rename_all = "snake_case")]
 pub enum CopilotStreamingResponse {
-    Chat(openai::completion::streaming::StreamingCompletionResponse),
-    Responses(responses_api::streaming::StreamingCompletionResponse),
+    Chat(openai::completion::streaming::StreamingResponse),
+    Responses(responses_api::streaming::StreamingResponse),
 }
 
 impl GetTokenUsage for CopilotStreamingResponse {
@@ -811,7 +811,7 @@ where
     async fn stream_chat(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<CopilotStreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<CopilotStreamingResponse>, CompletionError> {
         let initiator = request_initiator(&completion_request);
         let has_vision = request_has_vision(&completion_request);
         let request = self.chat_request(completion_request)?;
@@ -861,7 +861,7 @@ where
     async fn stream_responses(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<CopilotStreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<CopilotStreamingResponse>, CompletionError> {
         let initiator = request_initiator(&completion_request);
         let has_vision = request_has_vision(&completion_request);
         let mut request = self.responses_request(completion_request)?;
@@ -930,7 +930,7 @@ where
                                             yield Ok(ModelEvent::ToolCallDelta {
                                                 id: func.id.clone(),
                                                 internal_call_id,
-                                                content: streaming::ToolCallDeltaContent::Name(func.name.clone()),
+                                                content: crate::model_event::ToolCallDeltaContent::Name(func.name.clone()),
                                             });
                                         }
                                     }
@@ -940,7 +940,7 @@ where
                                                 .entry(func.id.clone())
                                                 .or_insert_with(|| nanoid::nanoid!())
                                                 .clone();
-                                            let raw_tool_call = streaming::RawStreamingToolCall::new(
+                                            let raw_tool_call = crate::model_event::StreamingToolCall::new(
                                                 func.id.clone(),
                                                 func.name.clone(),
                                                 func.arguments.clone(),
@@ -980,7 +980,7 @@ where
                                         yield Ok(ModelEvent::ToolCallDelta {
                                             id: delta.item_id.clone(),
                                             internal_call_id,
-                                            content: streaming::ToolCallDeltaContent::Delta(delta.delta.clone())
+                                            content: crate::model_event::ToolCallDeltaContent::Delta(delta.delta.clone())
                                         })
                                     }
                                     _ => continue,
@@ -1045,7 +1045,7 @@ where
                 );
 
                 let response = CopilotStreamingResponse::Responses(
-                    responses_api::streaming::StreamingCompletionResponse { usage: final_usage }
+                    responses_api::streaming::StreamingResponse { usage: final_usage }
                 );
                 if let Some(usage) = response.token_usage() {
                     yield Ok(ModelEvent::Usage { usage });
@@ -1056,7 +1056,7 @@ where
             span,
         );
 
-        Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
+        Ok(crate::model_event::result_stream(Box::pin(stream)))
     }
 }
 
@@ -1073,20 +1073,31 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<Self::Response>, CompletionError> {
-        match self.route() {
-            CompletionRoute::ChatCompletions => self.completion_chat(completion_request).await,
-            CompletionRoute::Responses => self.completion_responses(completion_request).await,
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            match self.route() {
+                CompletionRoute::ChatCompletions => self.completion_chat(completion_request).await,
+                CompletionRoute::Responses => self.completion_responses(completion_request).await,
+            }
         }
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         match self.route() {
             CompletionRoute::ChatCompletions => self.stream_chat(completion_request).await,
             CompletionRoute::Responses => self.stream_responses(completion_request).await,
@@ -1347,9 +1358,7 @@ impl CompatibleStreamProfile for CopilotChatCompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        CopilotStreamingResponse::Chat(openai::completion::streaming::StreamingCompletionResponse {
-            usage,
-        })
+        CopilotStreamingResponse::Chat(openai::completion::streaming::StreamingResponse { usage })
     }
 
     fn uses_distinct_tool_call_eviction(&self) -> bool {
@@ -1360,7 +1369,7 @@ impl CompatibleStreamProfile for CopilotChatCompatibleProfile {
 async fn send_copilot_chat_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
-) -> Result<StreamingCompletionResponse<CopilotStreamingResponse>, CompletionError>
+) -> Result<ModelEventStream<CopilotStreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {
@@ -1859,7 +1868,10 @@ mod tests {
             .expect("build client");
         let model = client.completion_model("gpt-5.3-codex");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         let err = match stream.next().await.expect("stream should yield an item") {
             ModelEvent::Error { error } => error,
@@ -1894,7 +1906,10 @@ mod tests {
             .expect("build client");
         let model = client.completion_model("gpt-4o");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         let mut saw_error = false;
         while let Some(item) = stream.next().await {

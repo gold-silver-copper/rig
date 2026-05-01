@@ -11,20 +11,18 @@ use crate::http_client::HttpClientExt;
 use crate::http_client::sse::GenericEventSource;
 use crate::json_utils;
 use crate::providers::openai::responses_api::streaming::{
-    ResponsesStreamOptions, StreamingCompletionResponse, stream_from_event_source_with_options,
+    ResponsesStreamOptions, StreamingResponse, stream_from_event_source_with_options,
 };
 use crate::providers::xai::completion::{CompletionModel, XAICompletionRequest};
-use crate::streaming;
 
 impl<T> CompletionModel<T>
 where
     T: HttpClientExt + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
         let mut request =
             XAICompletionRequest::try_from((self.model.as_str(), completion_request))?;
@@ -78,7 +76,7 @@ where
 pub(crate) async fn send_xai_streaming_request<T>(
     http_client: T,
     req: http::Request<Vec<u8>>,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {

@@ -6,8 +6,8 @@ use super::client::{Client, Usage};
 use crate::completion::GetTokenUsage;
 use crate::http_client::{self, HttpClientExt};
 use crate::model_event::ModelEvent;
+use crate::model_event::{ModelEventStream, StreamingToolCall};
 use crate::providers::internal::buffered;
-use crate::streaming::{RawStreamingToolCall, StreamingCompletionResponse};
 use crate::{
     OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
@@ -559,7 +559,7 @@ fn assistant_content_to_streaming_choices(
     match content {
         message::AssistantContent::Text(t) => Ok(vec![ModelEvent::TextDelta { text: t.text }]),
         message::AssistantContent::ToolCall(tc) => Ok(vec![ModelEvent::from(
-            RawStreamingToolCall::new(tc.id, tc.function.name, tc.function.arguments),
+            StreamingToolCall::new(tc.id, tc.function.name, tc.function.arguments),
         )]),
         message::AssistantContent::Reasoning(_) => Ok(Vec::new()),
         message::AssistantContent::Image(_) => Err(CompletionError::ResponseError(
@@ -581,75 +581,86 @@ where
         Self::new(client.clone(), model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let preamble = completion_request.preamble.clone();
-        let request =
-            MistralCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let preamble = completion_request.preamble.clone();
+            let request =
+                MistralCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "Mistral completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "mistral",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = &preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        let body = serde_json::to_vec(&request)?;
-
-        let request = self
-            .client
-            .post("v1/chat/completions")?
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send(request).await?;
-
-            if response.status().is_success() {
-                let text = http_client::text(response).await?;
-                match serde_json::from_str::<ApiResponse<CompletionResponse>>(&text)? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record_token_usage(&response);
-                        span.record_response_metadata(&response);
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
-            } else {
-                let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "Mistral completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "mistral",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = &preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
+
+            let body = serde_json::to_vec(&request)?;
+
+            let request = self
+                .client
+                .post("v1/chat/completions")?
+                .body(body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send(request).await?;
+
+                if response.status().is_success() {
+                    let text = http_client::text(response).await?;
+                    match serde_json::from_str::<ApiResponse<CompletionResponse>>(&text)? {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record_token_usage(&response);
+                            span.record_response_metadata(&response);
+                            response.try_into()
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    let text = http_client::text(response).await?;
+                    Err(CompletionError::ProviderError(text))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let resp = self.completion(request).await?;
         buffered::stream_from_completion_response(resp, assistant_content_to_streaming_choices)
     }

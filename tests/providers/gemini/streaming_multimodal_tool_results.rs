@@ -1,7 +1,7 @@
 //! Gemini streaming regression for multimodal tool results in chat history.
 
 use futures::StreamExt;
-use rig::agent::MultiTurnStreamItem;
+use rig::agent::AgentEvent;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::ToolDefinition;
 use rig::message::{
@@ -97,12 +97,14 @@ async fn streaming_history_preserves_hybrid_tool_result_image_parts() {
 
     while let Some(item) = stream.next().await {
         match item.expect("streaming prompt should succeed") {
-            MultiTurnStreamItem::FinalResponse(response) => {
+            AgentEvent::FinalResponse(response) => {
                 final_response = Some(response.response().to_owned());
                 final_history = response.history().map(|history| history.to_vec());
                 break;
             }
-            MultiTurnStreamItem::Model(_) | MultiTurnStreamItem::StreamUserItem(_) => {}
+            AgentEvent::Model(_)
+            | AgentEvent::ToolCallRequested { .. }
+            | AgentEvent::ToolResult { .. } => {}
             _ => {}
         }
     }

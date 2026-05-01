@@ -13,9 +13,9 @@ use crate::client::{
 };
 use crate::http_client::{self, HttpClientExt};
 use crate::message::{Document, DocumentSourceKind};
+use crate::model_event::ModelEventStream;
 use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
-use crate::streaming::StreamingCompletionResponse;
 use crate::{
     OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
@@ -324,7 +324,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
 
     type Client = Client<T>;
 
@@ -332,115 +332,127 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "mira",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "mira",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if !completion_request.tools.is_empty() {
-            tracing::warn!(target: "rig::completions",
-                "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
-                len = completion_request.tools.len()
-            );
-        }
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
-        }
-
-        if completion_request.additional_params.is_some() {
-            tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
-        }
-
-        let request = MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Mira completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/v1/chat/completions")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        let async_block = async move {
-            let response = self
-                .client
-                .send::<_, bytes::Bytes>(req)
-                .await
-                .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
-
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if !status.is_success() {
-                let status = status.as_u16();
-                let error_text = String::from_utf8_lossy(&response_body).to_string();
-                return Err(CompletionError::ProviderError(format!(
-                    "API error: {status} - {error_text}"
-                )));
-            }
-
-            let response: CompletionResponse = serde_json::from_slice(&response_body)?;
-
-            if tracing::enabled!(tracing::Level::TRACE) {
-                tracing::trace!(target: "rig::completions",
-                    "Mira completion response: {}",
-                    serde_json::to_string_pretty(&response)?
+            if !completion_request.tools.is_empty() {
+                tracing::warn!(target: "rig::completions",
+                    "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
+                    len = completion_request.tools.len()
                 );
             }
 
-            if let CompletionResponse::Structured {
-                id, model, usage, ..
-            } = &response
-            {
-                let span = tracing::Span::current();
-                span.record("gen_ai.response.model", model);
-                span.record("gen_ai.response.id", id);
-                if let Some(usage) = usage {
-                    span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
-                    span.record(
-                        "gen_ai.usage.output_tokens",
-                        usage.total_tokens - usage.prompt_tokens,
-                    );
-                }
+            if completion_request.tool_choice.is_some() {
+                tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
             }
 
-            response.try_into()
-        };
+            if completion_request.additional_params.is_some() {
+                tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
+            }
 
-        async_block.instrument(span).await
+            let request =
+                MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Mira completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/v1/chat/completions")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
+
+            let async_block = async move {
+                let response = self
+                    .client
+                    .send::<_, bytes::Bytes>(req)
+                    .await
+                    .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if !status.is_success() {
+                    let status = status.as_u16();
+                    let error_text = String::from_utf8_lossy(&response_body).to_string();
+                    return Err(CompletionError::ProviderError(format!(
+                        "API error: {status} - {error_text}"
+                    )));
+                }
+
+                let response: CompletionResponse = serde_json::from_slice(&response_body)?;
+
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(target: "rig::completions",
+                        "Mira completion response: {}",
+                        serde_json::to_string_pretty(&response)?
+                    );
+                }
+
+                if let CompletionResponse::Structured {
+                    id, model, usage, ..
+                } = &response
+                {
+                    let span = tracing::Span::current();
+                    span.record("gen_ai.response.model", model);
+                    span.record("gen_ai.response.id", id);
+                    if let Some(usage) = usage {
+                        span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+                        span.record(
+                            "gen_ai.usage.output_tokens",
+                            usage.total_tokens - usage.prompt_tokens,
+                        );
+                    }
+                }
+
+                response.try_into()
+            };
+
+            async_block.instrument(span).await
+        }
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",

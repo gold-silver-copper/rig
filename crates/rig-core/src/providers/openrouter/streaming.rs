@@ -13,14 +13,13 @@ use crate::providers::internal::openai_chat_completions_compatible::{
 use crate::providers::openrouter::{
     OpenRouterRequestParams, OpenrouterCompletionRequest, ReasoningDetails,
 };
-use crate::streaming;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Usage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -125,11 +124,10 @@ impl<T> super::CompletionModel<T>
 where
     T: HttpClientExt + Clone + std::fmt::Debug + Default + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let request_model = completion_request
             .model
             .clone()
@@ -188,7 +186,7 @@ struct OpenRouterCompatibleProfile;
 impl CompatibleStreamProfile for OpenRouterCompatibleProfile {
     type Usage = Usage;
     type Detail = ReasoningDetails;
-    type FinalResponse = StreamingCompletionResponse;
+    type FinalResponse = StreamingResponse;
 
     fn normalize_chunk(
         &self,
@@ -226,13 +224,13 @@ impl CompatibleStreamProfile for OpenRouterCompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        StreamingCompletionResponse { usage }
+        StreamingResponse { usage }
     }
 
     fn decorate_tool_call(
         &self,
         detail: &Self::Detail,
-        tool_calls: &mut std::collections::HashMap<usize, crate::streaming::RawStreamingToolCall>,
+        tool_calls: &mut std::collections::HashMap<usize, crate::model_event::StreamingToolCall>,
     ) {
         if let ReasoningDetails::Encrypted { id, data, .. } = detail
             && let Some(id) = id
@@ -250,7 +248,7 @@ impl CompatibleStreamProfile for OpenRouterCompatibleProfile {
 pub async fn send_compatible_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {

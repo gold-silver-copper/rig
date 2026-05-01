@@ -15,8 +15,7 @@ use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::json_utils::merge_inplace;
 use crate::message::{Reasoning, ReasoningContent};
-use crate::model_event::ModelEvent;
-use crate::streaming::{self, RawStreamingToolCall, ToolCallDeltaContent};
+use crate::model_event::{ModelEvent, StreamingToolCall, ToolCallDeltaContent};
 use crate::telemetry::SpanCombinator;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 
@@ -115,11 +114,11 @@ struct ThinkingState {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: PartialUsage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         let mut usage = crate::completion::Usage::new();
         usage.input_tokens = self.usage.input_tokens.unwrap_or(0) as u64;
@@ -140,11 +139,10 @@ where
     T: HttpClientExt + Clone + Default + 'static,
     Ext: AnthropicCompatibleProvider + Clone + WasmCompatSend + WasmCompatSync + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         mut completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let request_model = completion_request
             .model
             .clone()
@@ -363,7 +361,7 @@ where
             // Ensure event source is closed when stream ends
             sse_stream.close();
 
-            let response = StreamingCompletionResponse {
+            let response = StreamingResponse {
                 usage: final_usage.unwrap_or_default()
             };
             if let Some(usage) = response.token_usage() {
@@ -373,7 +371,7 @@ where
             yield Ok(ModelEvent::Done);
         }.instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(stream))
+        Ok(crate::model_event::result_stream(stream))
     }
 }
 
@@ -397,7 +395,7 @@ fn handle_event(
     event: &StreamingEvent,
     current_tool_call: &mut Option<ToolCallState>,
     current_thinking: &mut Option<ThinkingState>,
-) -> Option<Result<ModelEvent<StreamingCompletionResponse>, CompletionError>> {
+) -> Option<Result<ModelEvent<StreamingResponse>, CompletionError>> {
     match event {
         StreamingEvent::ContentBlockDelta { delta, .. } => match delta {
             ContentDelta::TextDelta { text } => {
@@ -497,7 +495,7 @@ fn handle_event(
                 match serde_json::from_str(json_str) {
                     Ok(json_value) => {
                         let raw_tool_call =
-                            RawStreamingToolCall::new(tool_call.id, tool_call.name, json_value)
+                            StreamingToolCall::new(tool_call.id, tool_call.name, json_value)
                                 .with_internal_call_id(tool_call.internal_call_id);
                         Some(Ok(ModelEvent::from(raw_tool_call)))
                     }

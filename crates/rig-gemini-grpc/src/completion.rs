@@ -40,41 +40,50 @@ impl CompletionModel {
 
 impl completion::CompletionModel for CompletionModel {
     type Response = GenerateContentResponse;
-    type StreamingResponse = super::streaming::StreamingCompletionResponse;
+    type StreamingResponse = super::streaming::StreamingResponse;
     type Client = super::Client;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<GenerateContentResponse>, CompletionError> {
-        let request = create_grpc_request(self.model.clone(), completion_request)?;
+    ) -> Result<rig_core::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            rig_core::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let request = create_grpc_request(self.model.clone(), completion_request)?;
 
-        let mut grpc_client = self
-            .client
-            .grpc_client()
-            .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+            let mut grpc_client = self
+                .client
+                .grpc_client()
+                .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
 
-        let response = grpc_client
-            .generate_content(request)
-            .await
-            .map_err(|e| CompletionError::ProviderError(e.to_string()))?
-            .into_inner();
+            let response = grpc_client
+                .generate_content(request)
+                .await
+                .map_err(|e| CompletionError::ProviderError(e.to_string()))?
+                .into_inner();
 
-        response.try_into()
+            response.try_into()
+        }
+        .await;
+        let response = response_result?;
+
+        Ok(rig_core::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        rig_core::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        super::streaming::stream(self.client.clone(), self.model.clone(), request).await
+    ) -> Result<rig_core::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        super::streaming::stream_events(self.client.clone(), self.model.clone(), request).await
     }
 }
 

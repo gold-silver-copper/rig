@@ -17,8 +17,7 @@ use crate::completion::{CompletionError, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::json_utils;
-use crate::model_event::ModelEvent;
-use crate::streaming::{self, RawStreamingToolCall, ToolCallDeltaContent};
+use crate::model_event::{ModelEvent, StreamingToolCall, ToolCallDeltaContent};
 use crate::wasm_compat::WasmCompatSend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,7 +149,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
 
     fn should_evict(
         &self,
-        existing: &RawStreamingToolCall,
+        existing: &StreamingToolCall,
         incoming: &CompatibleToolCallChunk,
     ) -> bool {
         self.uses_distinct_tool_call_eviction()
@@ -160,7 +159,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
     fn decorate_tool_call(
         &self,
         _detail: &Self::Detail,
-        _tool_calls: &mut HashMap<usize, RawStreamingToolCall>,
+        _tool_calls: &mut HashMap<usize, StreamingToolCall>,
     ) {
     }
 
@@ -170,7 +169,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
 
     fn should_emit_completed_tool_call_immediately(
         &self,
-        _tool_call: &RawStreamingToolCall,
+        _tool_call: &StreamingToolCall,
         incoming: &CompatibleToolCallChunk,
     ) -> bool {
         self.emits_complete_single_chunk_tool_calls() && incoming.is_complete_single_chunk()
@@ -178,7 +177,7 @@ pub(crate) trait CompatibleStreamProfile: WasmCompatSend {
 }
 
 pub(crate) fn should_evict_distinct_named_tool_call(
-    existing: &RawStreamingToolCall,
+    existing: &StreamingToolCall,
     incoming: &CompatibleToolCallChunk,
 ) -> bool {
     if let Some(new_id) = &incoming.id
@@ -199,7 +198,7 @@ pub(crate) async fn send_compatible_streaming_request<T, P>(
     http_client: T,
     req: Request<Vec<u8>>,
     profile: P,
-) -> Result<streaming::StreamingCompletionResponse<P::FinalResponse>, CompletionError>
+) -> Result<crate::model_event::ModelEventStream<P::FinalResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
     P: CompatibleStreamProfile + 'static,
@@ -209,7 +208,7 @@ where
     let mut event_source = GenericEventSource::new(http_client, req);
 
     let stream = stream! {
-        let mut tool_calls: HashMap<usize, RawStreamingToolCall> = HashMap::new();
+        let mut tool_calls: HashMap<usize, StreamingToolCall> = HashMap::new();
         let mut final_usage = None;
         let mut terminated_with_error = false;
 
@@ -260,7 +259,7 @@ where
 
                         let existing_tool_call = tool_calls
                             .entry(incoming.index)
-                            .or_insert_with(RawStreamingToolCall::empty);
+                            .or_insert_with(StreamingToolCall::empty);
 
                         if let Some(id) = incoming.id.as_ref()
                             && !id.is_empty()
@@ -371,9 +370,7 @@ where
     }
     .instrument(instrument_span);
 
-    Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-        stream,
-    )))
+    Ok(crate::model_event::result_stream(Box::pin(stream)))
 }
 
 fn record_usage<T>(span: &tracing::Span, usage: &T)
@@ -418,7 +415,7 @@ fn record_response_metadata(
     }
 }
 
-fn append_tool_call_arguments(tool_call: &mut RawStreamingToolCall, chunk: &str) {
+fn append_tool_call_arguments(tool_call: &mut StreamingToolCall, chunk: &str) {
     let current_args = match &tool_call.arguments {
         serde_json::Value::Null => String::new(),
         serde_json::Value::String(existing) => {
@@ -448,8 +445,8 @@ fn append_tool_call_arguments(tool_call: &mut RawStreamingToolCall, chunk: &str)
 }
 
 pub(crate) fn finalize_completed_streaming_tool_call(
-    mut tool_call: RawStreamingToolCall,
-) -> RawStreamingToolCall {
+    mut tool_call: StreamingToolCall,
+) -> StreamingToolCall {
     if tool_call.arguments.is_null() {
         tool_call.arguments = serde_json::Value::Object(serde_json::Map::new());
     }
@@ -457,7 +454,7 @@ pub(crate) fn finalize_completed_streaming_tool_call(
     tool_call
 }
 
-fn finalize_pending_tool_call(mut tool_call: RawStreamingToolCall) -> Option<RawStreamingToolCall> {
+fn finalize_pending_tool_call(mut tool_call: StreamingToolCall) -> Option<StreamingToolCall> {
     // Canonical cleanup for OpenAI Chat Completions-compatible providers:
     // a pending tool call with an established name but no streamed arguments is
     // treated as a valid parameterless invocation and normalized to `{}`.
@@ -489,8 +486,8 @@ enum DroppedToolCallContext {
 }
 
 fn drain_finalized_tool_calls(
-    tool_calls: &mut HashMap<usize, RawStreamingToolCall>,
-) -> (Vec<RawStreamingToolCall>, usize) {
+    tool_calls: &mut HashMap<usize, StreamingToolCall>,
+) -> (Vec<StreamingToolCall>, usize) {
     let mut completed_tool_calls = Vec::new();
     let mut dropped_tool_calls = 0;
 
@@ -506,9 +503,9 @@ fn drain_finalized_tool_calls(
 }
 
 fn take_finalized_tool_calls(
-    tool_calls: &mut HashMap<usize, RawStreamingToolCall>,
+    tool_calls: &mut HashMap<usize, StreamingToolCall>,
     context: DroppedToolCallContext,
-) -> Vec<RawStreamingToolCall> {
+) -> Vec<StreamingToolCall> {
     let (completed_tool_calls, dropped_tool_calls) = drain_finalized_tool_calls(tool_calls);
 
     if dropped_tool_calls > 0 {
@@ -533,7 +530,6 @@ fn take_finalized_tool_calls(
 pub(crate) mod test_support {
     use crate::completion::GetTokenUsage;
     use crate::model_event::ModelEvent;
-    use crate::streaming;
     use crate::wasm_compat::WasmCompatSend;
     use bytes::Bytes;
     use futures::StreamExt;
@@ -565,7 +561,7 @@ pub(crate) mod test_support {
     }
 
     pub(crate) async fn assert_zero_arg_tool_call_is_emitted<R>(
-        mut stream: streaming::StreamingCompletionResponse<R>,
+        mut stream: crate::model_event::ModelEventStream<R>,
         expected_id: &str,
         expected_name: &str,
         expect_final_response: bool,
@@ -611,8 +607,7 @@ mod tests {
     };
     use crate::completion::{CompletionError, GetTokenUsage};
     use crate::http_client::mock::MockStreamingClient;
-    use crate::model_event::ModelEvent;
-    use crate::streaming::RawStreamingToolCall;
+    use crate::model_event::{ModelEvent, StreamingToolCall, ToolCallDeltaContent};
     use futures::StreamExt;
 
     #[derive(Clone, Default)]
@@ -795,7 +790,7 @@ mod tests {
 
     #[test]
     fn eof_cleanup_preserves_parameterless_tool_calls() {
-        let tool_call = RawStreamingToolCall::new(
+        let tool_call = StreamingToolCall::new(
             "call_123".to_owned(),
             "ping".to_owned(),
             serde_json::Value::Null,
@@ -811,7 +806,7 @@ mod tests {
 
     #[test]
     fn eof_cleanup_preserves_empty_argument_chunks_as_empty_object() {
-        let tool_call = RawStreamingToolCall::new(
+        let tool_call = StreamingToolCall::new(
             "call_123".to_owned(),
             "ping".to_owned(),
             serde_json::Value::String(String::new()),
@@ -825,14 +820,14 @@ mod tests {
 
     #[test]
     fn eof_cleanup_drops_nameless_pending_entries() {
-        let tool_call = RawStreamingToolCall::empty();
+        let tool_call = StreamingToolCall::empty();
 
         assert!(finalize_pending_tool_call(tool_call).is_none());
     }
 
     #[test]
     fn eof_cleanup_drops_partial_argument_payloads() {
-        let tool_call = RawStreamingToolCall::new(
+        let tool_call = StreamingToolCall::new(
             "call_123".to_owned(),
             "ping".to_owned(),
             serde_json::Value::String("{\"x\":".to_owned()),
@@ -843,7 +838,7 @@ mod tests {
 
     #[test]
     fn null_placeholder_is_replaced_by_following_json_fragments() {
-        let mut tool_call = RawStreamingToolCall::new(
+        let mut tool_call = StreamingToolCall::new(
             "call_123".to_owned(),
             "web_search".to_owned(),
             serde_json::Value::String("null".to_owned()),
@@ -885,10 +880,7 @@ mod tests {
         {
             ModelEvent::ToolCallDelta { id, content, .. } => {
                 assert_eq!(id, "call_123");
-                assert_eq!(
-                    content,
-                    crate::streaming::ToolCallDeltaContent::Name("ping".to_owned())
-                );
+                assert_eq!(content, ToolCallDeltaContent::Name("ping".to_owned()));
             }
             other => panic!("expected tool call delta, got {other:?}"),
         }

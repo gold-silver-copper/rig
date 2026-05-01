@@ -11,7 +11,6 @@ use crate::providers::internal::openai_chat_completions_compatible::{
     CompatibleToolCallChunk,
 };
 use crate::providers::openai::completion::{GenericCompletionModel, OpenAIRequestParams, Usage};
-use crate::streaming;
 
 // ================================================================
 // OpenAI Completion Streaming API
@@ -76,11 +75,11 @@ struct StreamingCompletionChunk {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Usage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -91,11 +90,10 @@ where
     crate::client::Client<Ext, H>: HttpClientExt + Clone + 'static,
     Ext: crate::client::Provider + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let request = super::CompletionRequest::try_from(OpenAIRequestParams {
             model: self.model.clone(),
             request: completion_request,
@@ -157,7 +155,7 @@ struct OpenAICompatibleProfile;
 impl CompatibleStreamProfile for OpenAICompatibleProfile {
     type Usage = Usage;
     type Detail = ();
-    type FinalResponse = StreamingCompletionResponse;
+    type FinalResponse = StreamingResponse;
 
     fn normalize_chunk(
         &self,
@@ -195,7 +193,7 @@ impl CompatibleStreamProfile for OpenAICompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        StreamingCompletionResponse { usage }
+        StreamingResponse { usage }
     }
 
     fn uses_distinct_tool_call_eviction(&self) -> bool {
@@ -206,7 +204,7 @@ impl CompatibleStreamProfile for OpenAICompatibleProfile {
 pub async fn send_compatible_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {

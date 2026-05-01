@@ -7,7 +7,7 @@ use rig::completion::{
     CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Message, Prompt, Usage,
 };
 use rig::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
-use rig::streaming::{StreamingCompletionResponse, StreamingResult};
+use rig::model_event::ModelEventStream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -29,32 +29,40 @@ impl CompletionModel for SimpleTextModel {
         Self
     }
 
-    async fn completion(
+    async fn events(
         &self,
         _request: CompletionRequest,
-    ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-        Ok(CompletionResponse {
-            choice: OneOrMany::one(AssistantContent::Text(Text {
-                text: "hello from mock".to_string(),
-            })),
-            usage: Usage {
-                input_tokens: 10,
-                output_tokens: 5,
-                total_tokens: 15,
-                cached_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-            },
-            raw_response: (),
-            message_id: Some("msg_mock_1".to_string()),
-        })
+    ) -> Result<rig::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            rig::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            Ok(CompletionResponse {
+                choice: OneOrMany::one(AssistantContent::Text(Text {
+                    text: "hello from mock".to_string(),
+                })),
+                usage: Usage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    total_tokens: 15,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                },
+                raw_response: (),
+                message_id: Some("msg_mock_1".to_string()),
+            })
+        }
+        .await;
+        let response = response_result?;
+
+        Ok(rig::model_event::events_from_completion_response(response))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         _request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        let stream: StreamingResult<()> = Box::pin(futures::stream::empty());
-        Ok(StreamingCompletionResponse::stream(stream))
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
+        Ok(Box::pin(futures::stream::empty()))
     }
 }
 
@@ -83,57 +91,65 @@ impl CompletionModel for ToolThenTextModel {
         Self::new()
     }
 
-    async fn completion(
+    async fn events(
         &self,
         _request: CompletionRequest,
-    ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-        let turn = self.turn.fetch_add(1, Ordering::SeqCst);
+    ) -> Result<rig::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            rig::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let turn = self.turn.fetch_add(1, Ordering::SeqCst);
 
-        if turn == 0 {
-            // First turn: return a tool call
-            Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                    "tc_1".to_string(),
-                    ToolFunction::new(
-                        "calculator".to_string(),
-                        serde_json::json!({"op": "add", "a": 2, "b": 3}),
-                    ),
-                ))),
-                usage: Usage {
-                    input_tokens: 15,
-                    output_tokens: 8,
-                    total_tokens: 23,
-                    cached_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                },
-                raw_response: (),
-                message_id: Some("msg_tool".to_string()),
-            })
-        } else {
-            // Second turn: return a text response
-            Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::Text(Text {
-                    text: "The answer is 5".to_string(),
-                })),
-                usage: Usage {
-                    input_tokens: 20,
-                    output_tokens: 4,
-                    total_tokens: 24,
-                    cached_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                },
-                raw_response: (),
-                message_id: Some("msg_text".to_string()),
-            })
+            if turn == 0 {
+                // First turn: return a tool call
+                Ok(CompletionResponse {
+                    choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                        "tc_1".to_string(),
+                        ToolFunction::new(
+                            "calculator".to_string(),
+                            serde_json::json!({"op": "add", "a": 2, "b": 3}),
+                        ),
+                    ))),
+                    usage: Usage {
+                        input_tokens: 15,
+                        output_tokens: 8,
+                        total_tokens: 23,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    },
+                    raw_response: (),
+                    message_id: Some("msg_tool".to_string()),
+                })
+            } else {
+                // Second turn: return a text response
+                Ok(CompletionResponse {
+                    choice: OneOrMany::one(AssistantContent::Text(Text {
+                        text: "The answer is 5".to_string(),
+                    })),
+                    usage: Usage {
+                        input_tokens: 20,
+                        output_tokens: 4,
+                        total_tokens: 24,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    },
+                    raw_response: (),
+                    message_id: Some("msg_text".to_string()),
+                })
+            }
         }
+        .await;
+        let response = response_result?;
+
+        Ok(rig::model_event::events_from_completion_response(response))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         _request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        let stream: StreamingResult<()> = Box::pin(futures::stream::empty());
-        Ok(StreamingCompletionResponse::stream(stream))
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
+        Ok(Box::pin(futures::stream::empty()))
     }
 }
 
@@ -152,27 +168,35 @@ impl CompletionModel for AlwaysToolCallModel {
         Self
     }
 
-    async fn completion(
+    async fn events(
         &self,
         _request: CompletionRequest,
-    ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-        Ok(CompletionResponse {
-            choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                "tc_loop".to_string(),
-                ToolFunction::new("infinite_tool".to_string(), serde_json::json!({"x": 1})),
-            ))),
-            usage: Usage::new(),
-            raw_response: (),
-            message_id: None,
-        })
+    ) -> Result<rig::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            rig::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            Ok(CompletionResponse {
+                choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                    "tc_loop".to_string(),
+                    ToolFunction::new("infinite_tool".to_string(), serde_json::json!({"x": 1})),
+                ))),
+                usage: Usage::new(),
+                raw_response: (),
+                message_id: None,
+            })
+        }
+        .await;
+        let response = response_result?;
+
+        Ok(rig::model_event::events_from_completion_response(response))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         _request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        let stream: StreamingResult<()> = Box::pin(futures::stream::empty());
-        Ok(StreamingCompletionResponse::stream(stream))
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
+        Ok(Box::pin(futures::stream::empty()))
     }
 }
 

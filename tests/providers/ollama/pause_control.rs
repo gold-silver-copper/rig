@@ -5,11 +5,10 @@ use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::CompletionModel;
 use rig::model_event::ModelEvent;
 use rig::providers::ollama;
-use tokio::time::{Duration, sleep};
 
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]
-async fn streaming_pause_and_resume() {
+async fn streaming_event_stream_processes_chunks() {
     let model = ollama::Client::from_env()
         .expect("client should build")
         .completion_model("gemma3:4b");
@@ -18,10 +17,12 @@ async fn streaming_pause_and_resume() {
         .preamble("You are a helpful AI assistant. Provide concise explanations.".to_string())
         .temperature(0.7)
         .build();
-    let mut stream = model.stream(request).await.expect("stream should start");
+    let mut stream = model
+        .stream_events(request)
+        .await
+        .expect("stream should start");
 
     let mut chunk_count = 0usize;
-    let mut paused_once = false;
     while let Some(chunk) = stream.next().await {
         match chunk {
             ModelEvent::TextDelta { text } => {
@@ -32,16 +33,8 @@ async fn streaming_pause_and_resume() {
             ModelEvent::Error { error } => panic!("stream chunk should succeed: {error}"),
             _ => {}
         }
-
-        if !paused_once && chunk_count > 0 {
-            stream.pause();
-            sleep(Duration::from_millis(50)).await;
-            stream.resume();
-            paused_once = true;
-        }
     }
 
-    assert!(paused_once, "expected to exercise pause/resume");
     assert!(
         chunk_count > 0,
         "expected to process at least one stream chunk"

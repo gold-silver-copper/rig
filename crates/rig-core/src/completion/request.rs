@@ -66,7 +66,6 @@
 use super::message::{AssistantContent, DocumentMediaType};
 use crate::message::ToolChoice;
 use crate::model_event::ModelEventStream;
-use crate::streaming::StreamingCompletionResponse;
 use crate::tool::server::ToolServerError;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use crate::{OneOrMany, http_client};
@@ -481,39 +480,28 @@ pub trait CompletionModel: Clone + WasmCompatSend + WasmCompatSync {
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self;
 
-    /// Generates a completion response for the given completion request.
+    /// Collects normalized model events into a completion response.
     fn completion(
         &self,
         request: CompletionRequest,
     ) -> impl std::future::Future<
         Output = Result<CompletionResponse<Self::Response>, CompletionError>,
-    > + WasmCompatSend;
-
-    fn stream(
-        &self,
-        request: CompletionRequest,
-    ) -> impl std::future::Future<
-        Output = Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>,
-    > + WasmCompatSend;
+    > + WasmCompatSend {
+        let model = self.clone();
+        async move {
+            let events = model.events(request).await?;
+            crate::model_event::collect(events).await
+        }
+    }
 
     /// Generates normalized model events for the given completion request.
     ///
-    /// This is the canonical completion representation. The default adapter
-    /// converts the model's non-streaming completion response into events so
-    /// existing providers can migrate incrementally.
+    /// This is the canonical completion representation.
     fn events(
         &self,
         request: CompletionRequest,
     ) -> impl std::future::Future<Output = Result<ModelEventStream<Self::Response>, CompletionError>>
-    + WasmCompatSend {
-        let model = self.clone();
-        async move {
-            let response = model.completion(request).await?;
-            Ok(crate::model_event::events_from_completion_response(
-                response,
-            ))
-        }
-    }
+    + WasmCompatSend;
 
     /// Generates normalized model events from the provider's streaming path.
     fn stream_events(
@@ -521,13 +509,7 @@ pub trait CompletionModel: Clone + WasmCompatSend + WasmCompatSync {
         request: CompletionRequest,
     ) -> impl std::future::Future<
         Output = Result<ModelEventStream<Self::StreamingResponse>, CompletionError>,
-    > + WasmCompatSend {
-        let model = self.clone();
-        async move {
-            let response = model.stream(request).await?;
-            Ok(crate::model_event::events_from_streaming_response(response))
-        }
-    }
+    > + WasmCompatSend;
 
     /// Generates a completion request builder for the given `prompt`.
     fn completion_request(&self, prompt: impl Into<Message>) -> CompletionRequestBuilder<Self> {
@@ -936,18 +918,6 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
         model.events(self.build()).await
     }
 
-    /// Stream the completion request
-    pub async fn stream<'a>(
-        self,
-    ) -> Result<StreamingCompletionResponse<M::StreamingResponse>, CompletionError>
-    where
-        <M as CompletionModel>::StreamingResponse: 'a,
-        Self: 'a,
-    {
-        let model = self.model.clone();
-        model.stream(self.build()).await
-    }
-
     /// Stream the completion request as normalized model events.
     pub async fn stream_events<'a>(
         self,
@@ -965,7 +935,7 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
 mod tests {
 
     use super::*;
-    use crate::streaming::StreamingCompletionResponse;
+    use crate::model_event::ModelEventStream;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone)]
@@ -989,19 +959,30 @@ mod tests {
             Self
         }
 
-        async fn completion(
+        async fn events(
             &self,
             _request: CompletionRequest,
-        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            Err(CompletionError::ProviderError(
-                "dummy completion model".to_string(),
+        ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+            let response_result: Result<
+                crate::completion::CompletionResponse<Self::Response>,
+                CompletionError,
+            > = async {
+                Err(CompletionError::ProviderError(
+                    "dummy completion model".to_string(),
+                ))
+            }
+            .await;
+            let response = response_result?;
+
+            Ok(crate::model_event::events_from_completion_response(
+                response,
             ))
         }
 
-        async fn stream(
+        async fn stream_events(
             &self,
             _request: CompletionRequest,
-        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+        ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
             Err(CompletionError::ProviderError(
                 "dummy completion model".to_string(),
             ))

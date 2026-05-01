@@ -30,7 +30,7 @@ use crate::message::{self, MimeType, Reasoning};
 use crate::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, FunctionCallingMode, ToolConfig,
 };
-use crate::providers::gemini::streaming::StreamingCompletionResponse;
+use crate::providers::gemini::streaming::StreamingResponse;
 use crate::telemetry::SpanCombinator;
 use crate::{
     OneOrMany,
@@ -78,114 +78,123 @@ where
     T: HttpClientExt + Clone + 'static,
 {
     type Response = GenerateContentResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
     type Client = super::Client<T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<GenerateContentResponse>, CompletionError> {
-        let request_model = resolve_request_model(&self.model, &completion_request);
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "generate_content",
-                gen_ai.operation.name = "generate_content",
-                gen_ai.provider.name = "gcp.gemini",
-                gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        let request = create_request_body(completion_request)?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "Gemini completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let path = completion_endpoint(&request_model);
-
-        let request = self
-            .client
-            .post(path.as_str())?
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send::<_, Vec<u8>>(request).await?;
-
-            if response.status().is_success() {
-                let response_body = response
-                    .into_body()
-                    .await
-                    .map_err(CompletionError::HttpError)?;
-
-                let response_text = String::from_utf8_lossy(&response_body).to_string();
-
-                let response: GenerateContentResponse = serde_json::from_slice(&response_body)
-                    .map_err(|err| {
-                        tracing::error!(
-                            error = %err,
-                            body = %response_text,
-                            "Failed to deserialize Gemini completion response"
-                        );
-                        CompletionError::JsonError(err)
-                    })?;
-
-                let span = tracing::Span::current();
-                span.record_response_metadata(&response);
-                span.record_token_usage(&response.usage_metadata);
-
-                if enabled!(Level::TRACE) {
-                    tracing::trace!(
-                        target: "rig::completions",
-                        "Gemini completion response: {}",
-                        serde_json::to_string_pretty(&response)?
-                    );
-                }
-
-                response.try_into()
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let request_model = resolve_request_model(&self.model, &completion_request);
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "generate_content",
+                    gen_ai.operation.name = "generate_content",
+                    gen_ai.provider.name = "gcp.gemini",
+                    gen_ai.request.model = &request_model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                let text = String::from_utf8_lossy(
-                    &response
+                tracing::Span::current()
+            };
+
+            let request = create_request_body(completion_request)?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "Gemini completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let path = completion_endpoint(&request_model);
+
+            let request = self
+                .client
+                .post(path.as_str())?
+                .body(body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send::<_, Vec<u8>>(request).await?;
+
+                if response.status().is_success() {
+                    let response_body = response
                         .into_body()
                         .await
-                        .map_err(CompletionError::HttpError)?,
-                )
-                .into();
+                        .map_err(CompletionError::HttpError)?;
 
-                Err(CompletionError::ProviderError(text))
+                    let response_text = String::from_utf8_lossy(&response_body).to_string();
+
+                    let response: GenerateContentResponse = serde_json::from_slice(&response_body)
+                        .map_err(|err| {
+                            tracing::error!(
+                                error = %err,
+                                body = %response_text,
+                                "Failed to deserialize Gemini completion response"
+                            );
+                            CompletionError::JsonError(err)
+                        })?;
+
+                    let span = tracing::Span::current();
+                    span.record_response_metadata(&response);
+                    span.record_token_usage(&response.usage_metadata);
+
+                    if enabled!(Level::TRACE) {
+                        tracing::trace!(
+                            target: "rig::completions",
+                            "Gemini completion response: {}",
+                            serde_json::to_string_pretty(&response)?
+                        );
+                    }
+
+                    response.try_into()
+                } else {
+                    let text = String::from_utf8_lossy(
+                        &response
+                            .into_body()
+                            .await
+                            .map_err(CompletionError::HttpError)?,
+                    )
+                    .into();
+
+                    Err(CompletionError::ProviderError(text))
+                }
             }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        CompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        CompletionModel::stream_events(self, request).await
     }
 }
 

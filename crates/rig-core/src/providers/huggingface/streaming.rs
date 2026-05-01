@@ -3,19 +3,17 @@ use crate::completion::{CompletionError, CompletionRequest};
 use crate::http_client::HttpClientExt;
 use crate::json_utils::{self};
 use crate::providers::huggingface::completion::HuggingfaceCompletionRequest;
-use crate::providers::openai::{StreamingCompletionResponse, send_compatible_streaming_request};
-use crate::streaming;
+use crate::providers::openai::{StreamingResponse, send_compatible_streaming_request};
 use tracing::{Instrument, info_span};
 
 impl<T> CompletionModel<T>
 where
     T: HttpClientExt + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let request_model = completion_request
             .model
             .clone()

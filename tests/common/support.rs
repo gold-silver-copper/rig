@@ -3,11 +3,10 @@
 
 use futures::StreamExt;
 use rig::{
-    agent::{MultiTurnStreamItem, StreamingError, StreamingResult},
+    agent::{AgentEvent, StreamingError, StreamingResult},
     completion::{AssistantContent, GetTokenUsage, ToolDefinition},
     embeddings::Embedding,
-    model_event::ModelEvent,
-    streaming::{StreamedUserContent, StreamingCompletionResponse},
+    model_event::{ModelEvent, ModelEventStream},
     tool::Tool,
     wasm_compat::WasmCompatSend,
 };
@@ -403,7 +402,7 @@ pub(crate) async fn collect_stream_final_response<R>(
     let mut final_response = None;
 
     while let Some(item) = stream.next().await {
-        if let MultiTurnStreamItem::FinalResponse(response) = item? {
+        if let AgentEvent::FinalResponse(response) = item? {
             final_response = Some(response.response().to_owned());
         }
     }
@@ -412,7 +411,7 @@ pub(crate) async fn collect_stream_final_response<R>(
 }
 
 pub(crate) async fn assert_stream_contains_zero_arg_tool_call_named<R>(
-    mut stream: StreamingCompletionResponse<R>,
+    mut stream: ModelEventStream<R>,
     expected_name: &str,
     expect_final_response: bool,
 ) where
@@ -508,7 +507,7 @@ pub(crate) async fn collect_stream_observation<R>(
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(MultiTurnStreamItem::Model(event)) => match event {
+            Ok(AgentEvent::Model(event)) => match event {
                 ModelEvent::TextDelta { text } => {
                     observation.all_streamed_text.push_str(&text);
                     observation.final_turn_text.push_str(&text);
@@ -544,12 +543,12 @@ pub(crate) async fn collect_stream_observation<R>(
                 | ModelEvent::ProviderMetadata { .. }
                 | ModelEvent::Done => {}
             },
-            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult { .. })) => {
+            Ok(AgentEvent::ToolResult { .. }) => {
                 observation.tool_results += 1;
                 observation.final_turn_text.clear();
                 observation.events.push("tool_result");
             }
-            Ok(MultiTurnStreamItem::FinalResponse(response)) => {
+            Ok(AgentEvent::FinalResponse(response)) => {
                 observation.final_response_text = Some(response.response().to_owned());
                 observation.got_final_response = true;
                 observation.events.push("final_response");
@@ -566,7 +565,7 @@ pub(crate) async fn collect_stream_observation<R>(
 }
 
 pub(crate) async fn collect_raw_stream_observation<R>(
-    mut stream: StreamingCompletionResponse<R>,
+    mut stream: ModelEventStream<R>,
 ) -> RawStreamObservation
 where
     R: Clone + Unpin + GetTokenUsage + WasmCompatSend + 'static,

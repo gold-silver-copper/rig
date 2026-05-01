@@ -5,13 +5,10 @@ use crate::{
 };
 use async_stream::stream;
 use aws_sdk_bedrockruntime::types as aws_bedrock;
-use rig_core::completion::GetTokenUsage;
 use rig_core::message::Reasoning;
-use rig_core::model_event::ModelEvent;
-use rig_core::streaming::StreamingCompletionResponse;
 use rig_core::{
-    completion::CompletionError,
-    streaming::{RawStreamingToolCall, ToolCallDeltaContent},
+    completion::{CompletionError, GetTokenUsage},
+    model_event::{ModelEvent, ModelEventStream, StreamingToolCall, ToolCallDeltaContent},
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,10 +72,10 @@ fn finalize_reasoning(state: ReasoningState) -> Option<ModelEvent<BedrockStreami
 }
 
 impl CompletionModel {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: rig_core::completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<BedrockStreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<BedrockStreamingResponse>, CompletionError> {
         let request_model = resolve_request_model(&self.model, &completion_request);
         let request = AwsCompletionRequest {
             inner: completion_request,
@@ -201,7 +198,7 @@ impl CompletionModel {
                                         serde_json::from_str(tool_call.input_json.as_str())?
                                     };
                                     yield Ok(ModelEvent::from(
-                                        RawStreamingToolCall::new(tool_call.id, tool_call.name, tool_input)
+                                        StreamingToolCall::new(tool_call.id, tool_call.name, tool_input)
                                             .with_internal_call_id(tool_call.internal_call_id)
                                     ));
                                 } else {
@@ -238,7 +235,7 @@ impl CompletionModel {
             }
         });
 
-        Ok(StreamingCompletionResponse::stream(stream))
+        Ok(rig_core::model_event::result_stream(stream))
     }
 }
 

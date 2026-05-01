@@ -206,7 +206,10 @@ async fn streaming_interaction() {
         .completion_request("Write a 3-line poem about rust and rivers.")
         .temperature(0.4)
         .build();
-    let mut stream = model.stream(request).await.expect("stream should start");
+    let mut stream = model
+        .stream_events(request)
+        .await
+        .expect("stream should start");
 
     let mut text = String::new();
     let mut saw_usage = false;

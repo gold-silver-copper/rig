@@ -4,7 +4,7 @@
 
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
-use rig::agent::{MultiTurnStreamItem, StreamingResult};
+use rig::agent::{AgentEvent, StreamingResult};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::message::Message;
 use rig::providers::openai;
@@ -17,7 +17,7 @@ async fn collect_stream_final_response<R>(stream: &mut StreamingResult<R>) -> Re
     let mut final_response = None;
 
     while let Some(item) = stream.next().await {
-        if let MultiTurnStreamItem::FinalResponse(response) = item? {
+        if let AgentEvent::FinalResponse(response) = item? {
             final_response = Some(response.response().to_owned());
         }
     }

@@ -13,7 +13,7 @@ use super::openai::{AssistantContent, send_compatible_streaming_request};
 use crate::client::{self, Capabilities, Capable, DebugExt, Nothing, Provider, ProviderBuilder};
 use crate::client::{BearerAuth, ProviderClient};
 use crate::http_client::{self, HttpClientExt};
-use crate::streaming::StreamingCompletionResponse;
+use crate::model_event::ModelEventStream;
 
 use crate::providers::openai;
 use crate::{
@@ -339,7 +339,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
 
     type Client = Client<T>;
 
@@ -347,81 +347,93 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "hyperbolic",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-        let request =
-            HyperbolicCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Hyperbolic completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/v1/chat/completions")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        let async_block = async move {
-            let response = self.client.send::<_, bytes::Bytes>(req).await?;
-
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)? {
-                    ApiResponse::Ok(response) => {
-                        if tracing::enabled!(tracing::Level::TRACE) {
-                            tracing::trace!(target: "rig::completions",
-                                "Hyperbolic completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "hyperbolic",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
-            }
-        };
+                tracing::Span::current()
+            };
 
-        async_block.instrument(span).await
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+            let request =
+                HyperbolicCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Hyperbolic completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/v1/chat/completions")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
+
+            let async_block = async move {
+                let response = self.client.send::<_, bytes::Bytes>(req).await?;
+
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)?
+                    {
+                        ApiResponse::Ok(response) => {
+                            if tracing::enabled!(tracing::Level::TRACE) {
+                                tracing::trace!(target: "rig::completions",
+                                    "Hyperbolic completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+
+                            response.try_into()
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            };
+
+            async_block.instrument(span).await
+        }
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",

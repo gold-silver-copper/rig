@@ -52,7 +52,6 @@ use crate::{
     embeddings::{self, EmbeddingError},
     json_utils, message,
     message::{ImageDetail, Text},
-    streaming,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
 use async_stream::try_stream;
@@ -540,7 +539,7 @@ impl<T> CompletionModel<T> {
 // ---------- CompletionModel Implementation ----------
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub done_reason: Option<String>,
     pub total_duration: Option<u64>,
     pub load_duration: Option<u64>,
@@ -550,7 +549,7 @@ pub struct StreamingCompletionResponse {
     pub eval_duration: Option<u64>,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         let mut usage = crate::completion::Usage::new();
         let input_tokens = self.prompt_eval_count.unwrap_or_default();
@@ -568,7 +567,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = Client<T>;
 
@@ -576,89 +575,101 @@ where
         Self::new(client.clone(), model.into().as_str())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<Self::Response>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "ollama",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "ollama",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-        let request = OllamaCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Ollama completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("api/chat")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        let async_block = async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if !status.is_success() {
-                return Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ));
-            }
-
-            let response: CompletionResponse = serde_json::from_slice(&response_body)?;
-            let span = tracing::Span::current();
-            span.record("gen_ai.response.model", &response.model);
-            span.record(
-                "gen_ai.usage.input_tokens",
-                response.prompt_eval_count.unwrap_or_default(),
-            );
-            span.record(
-                "gen_ai.usage.output_tokens",
-                response.eval_count.unwrap_or_default(),
-            );
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+            let request =
+                OllamaCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
 
             if tracing::enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
-                    "Ollama completion response: {}",
-                    serde_json::to_string_pretty(&response)?
+                    "Ollama completion request: {}",
+                    serde_json::to_string_pretty(&request)?
                 );
             }
 
-            let response: completion::CompletionResponse<CompletionResponse> =
-                response.try_into()?;
+            let body = serde_json::to_vec(&request)?;
 
-            Ok(response)
-        };
+            let req = self
+                .client
+                .post("api/chat")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
 
-        tracing::Instrument::instrument(async_block, span).await
+            let async_block = async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if !status.is_success() {
+                    return Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ));
+                }
+
+                let response: CompletionResponse = serde_json::from_slice(&response_body)?;
+                let span = tracing::Span::current();
+                span.record("gen_ai.response.model", &response.model);
+                span.record(
+                    "gen_ai.usage.input_tokens",
+                    response.prompt_eval_count.unwrap_or_default(),
+                );
+                span.record(
+                    "gen_ai.usage.output_tokens",
+                    response.eval_count.unwrap_or_default(),
+                );
+
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(target: "rig::completions",
+                        "Ollama completion response: {}",
+                        serde_json::to_string_pretty(&response)?
+                    );
+                }
+
+                let response: completion::CompletionResponse<CompletionResponse> =
+                    response.try_into()?;
+
+                Ok(response)
+            };
+
+            tracing::Instrument::instrument(async_block, span).await
+        }
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
     {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
@@ -743,7 +754,7 @@ where
                         for tool_call in tool_calls {
                             tool_calls_final.push(tool_call.clone());
                             yield ModelEvent::from(
-                                crate::streaming::RawStreamingToolCall::new(String::new(), tool_call.function.name, tool_call.function.arguments)
+                                crate::model_event::StreamingToolCall::new(String::new(), tool_call.function.name, tool_call.function.arguments)
                             );
                         }
                     }
@@ -761,7 +772,7 @@ where
                         if let Ok(serialized_message) = serde_json::to_string(&vec![message]) {
                             span.record("gen_ai.output.messages", serialized_message);
                         }
-                        let final_response = StreamingCompletionResponse {
+                        let final_response = StreamingResponse {
                             total_duration: response.total_duration,
                             load_duration: response.load_duration,
                             prompt_eval_count: response.prompt_eval_count,
@@ -783,9 +794,7 @@ where
             }
         }.instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-            stream,
-        )))
+        Ok(crate::model_event::result_stream(Box::pin(stream)))
     }
 }
 

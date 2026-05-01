@@ -17,8 +17,8 @@ use crate::client::{
 };
 use crate::http_client::{self, HttpClientExt};
 use crate::message::MessageError;
+use crate::model_event::ModelEventStream;
 use crate::providers::openai::send_compatible_streaming_request;
-use crate::streaming::StreamingCompletionResponse;
 use crate::{
     OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
@@ -529,7 +529,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
 
     type Client = Client<T>;
 
@@ -537,91 +537,102 @@ where
         Self::new(client.clone(), model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "galadriel",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        let request =
-            GaladrielCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Galadriel completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/chat/completions")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        async move {
-            let response = self.client.send(req).await?;
-
-            if response.status().is_success() {
-                let t = http_client::text(response).await?;
-
-                if enabled!(tracing::Level::TRACE) {
-                    tracing::trace!(target: "rig::completions",
-                        "Galadriel completion response: {}",
-                        serde_json::to_string_pretty(&t)?
-                    );
-                }
-
-                match serde_json::from_str::<ApiResponse<CompletionResponse>>(&t)? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record("gen_ai.response.id", response.id.clone());
-                        span.record("gen_ai.response.model", response.model.clone());
-                        if let Some(ref usage) = response.usage {
-                            span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
-                            span.record(
-                                "gen_ai.usage.output_tokens",
-                                usage.total_tokens - usage.prompt_tokens,
-                            );
-                        }
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "galadriel",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                let text = http_client::text(response).await?;
+                tracing::Span::current()
+            };
 
-                Err(CompletionError::ProviderError(text))
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+
+            let request =
+                GaladrielCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+
+            if enabled!(tracing::Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Galadriel completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/chat/completions")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
+
+            async move {
+                let response = self.client.send(req).await?;
+
+                if response.status().is_success() {
+                    let t = http_client::text(response).await?;
+
+                    if enabled!(tracing::Level::TRACE) {
+                        tracing::trace!(target: "rig::completions",
+                            "Galadriel completion response: {}",
+                            serde_json::to_string_pretty(&t)?
+                        );
+                    }
+
+                    match serde_json::from_str::<ApiResponse<CompletionResponse>>(&t)? {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record("gen_ai.response.id", response.id.clone());
+                            span.record("gen_ai.response.model", response.model.clone());
+                            if let Some(ref usage) = response.usage {
+                                span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+                                span.record(
+                                    "gen_ai.usage.output_tokens",
+                                    usage.total_tokens - usage.prompt_tokens,
+                                );
+                            }
+                            response.try_into()
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    let text = http_client::text(response).await?;
+
+                    Err(CompletionError::ProviderError(text))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
         let mut request =
             GaladrielCompletionRequest::try_from((self.model.as_ref(), completion_request))?;

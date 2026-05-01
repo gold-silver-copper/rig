@@ -1,6 +1,6 @@
 use super::{
     client::{ApiErrorResponse, ApiResponse, Client, Usage},
-    streaming::StreamingCompletionResponse,
+    streaming::StreamingResponse,
 };
 use crate::message::{
     self, AudioMediaType, DocumentMediaType, DocumentSourceKind, ImageDetail, MimeType,
@@ -1692,7 +1692,7 @@ where
     T: HttpClientExt + Clone + std::fmt::Debug + Default + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = Client<T>;
 
@@ -1700,100 +1700,111 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let request_model = completion_request
-            .model
-            .clone()
-            .unwrap_or_else(|| self.model.clone());
-        let preamble = completion_request.preamble.clone();
-        let request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
-            model: request_model.as_ref(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-        })?;
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let request_model = completion_request
+                .model
+                .clone()
+                .unwrap_or_else(|| self.model.clone());
+            let preamble = completion_request.preamble.clone();
+            let request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
+                model: request_model.as_ref(),
+                request: completion_request,
+                strict_tools: self.strict_tools,
+            })?;
 
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "OpenRouter completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "OpenRouter completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
 
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "openrouter",
-                gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "openrouter",
+                    gen_ai.request.model = &request_model,
+                    gen_ai.system_instructions = preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
 
-        let body = serde_json::to_vec(&request)?;
+            let body = serde_json::to_vec(&request)?;
 
-        let req = self
-            .client
-            .post("/chat/completions")?
-            .body(body)
-            .map_err(|x| CompletionError::HttpError(x.into()))?;
+            let req = self
+                .client
+                .post("/chat/completions")?
+                .body(body)
+                .map_err(|x| CompletionError::HttpError(x.into()))?;
 
-        async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
+            async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
 
-            if status.is_success() {
-                let parsed: ApiResponse<CompletionResponse> =
-                    serde_json::from_slice(&response_body).map_err(|e| {
+                if status.is_success() {
+                    let parsed: ApiResponse<CompletionResponse> = serde_json::from_slice(
+                        &response_body,
+                    )
+                    .map_err(|e| {
                         CompletionError::ResponseError(format!(
                             "Failed to parse OpenRouter completion response: {}, response body: {}",
                             e,
                             String::from_utf8_lossy(&response_body)
                         ))
                     })?;
-                match parsed {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record_token_usage(&response.usage);
-                        span.record("gen_ai.response.id", &response.id);
-                        span.record("gen_ai.response.model", &response.model);
+                    match parsed {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record_token_usage(&response.usage);
+                            span.record("gen_ai.response.id", &response.id);
+                            span.record("gen_ai.response.model", &response.model);
 
-                        tracing::debug!(target: "rig::completions",
+                            tracing::debug!(target: "rig::completions",
                             "OpenRouter response: {response:?}");
-                        response.try_into()
+                            response.try_into()
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
                 }
-            } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
             }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        CompletionModel::stream(self, completion_request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        CompletionModel::stream_events(self, completion_request).await
     }
 }
 

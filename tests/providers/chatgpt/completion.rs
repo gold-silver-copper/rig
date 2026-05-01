@@ -3,7 +3,6 @@
 use futures::StreamExt;
 use rig::client::CompletionClient;
 use rig::completion::CompletionModel;
-use rig::message::AssistantContent;
 use rig::message::Message;
 use rig::model_event::ModelEvent;
 use rig::streaming::StreamingPrompt;
@@ -12,16 +11,6 @@ use crate::chatgpt::{LIVE_MODEL, live_builder, live_client};
 use crate::support::{
     assert_contains_any_case_insensitive, assert_nonempty_response, collect_stream_final_response,
 };
-
-fn aggregated_text(choice: &rig::OneOrMany<AssistantContent>) -> String {
-    choice
-        .iter()
-        .filter_map(|content| match content {
-            AssistantContent::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .collect()
-}
 
 #[tokio::test]
 #[ignore = "requires ChatGPT credentials or existing OAuth cache"]
@@ -52,7 +41,7 @@ async fn system_messages_are_lifted_into_instructions() {
         .message(Message::system("Always answer with the single word maple."))
         .build();
     let mut stream = model
-        .stream(request)
+        .stream_events(request)
         .await
         .expect("system-message stream should succeed");
 
@@ -65,9 +54,6 @@ async fn system_messages_are_lifted_into_instructions() {
             }
             _ => {}
         }
-    }
-    if text.trim().is_empty() {
-        text = aggregated_text(&stream.choice);
     }
     assert_nonempty_response(&text);
     assert_contains_any_case_insensitive(&text, &["maple"]);

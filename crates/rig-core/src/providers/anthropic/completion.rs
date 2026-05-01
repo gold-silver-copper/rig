@@ -1,7 +1,7 @@
 //! Anthropic completion api implementation
 
 use crate::completion::CompletionRequest;
-use crate::providers::anthropic::streaming::StreamingCompletionResponse;
+use crate::providers::anthropic::streaming::StreamingResponse;
 use crate::{
     OneOrMany,
     client::Provider,
@@ -1367,131 +1367,140 @@ where
     Ext: AnthropicCompatibleProvider + Clone + WasmCompatSend + WasmCompatSync + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
     type Client = crate::client::Client<Ext, T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         mut completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let request_model = completion_request
-            .model
-            .clone()
-            .unwrap_or_else(|| self.model.clone());
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = Ext::PROVIDER_NAME,
-                gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_creation.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        // Check if max_tokens is set, required for Anthropic
-        if completion_request.max_tokens.is_none() {
-            if let Some(tokens) = self.default_max_tokens {
-                completion_request.max_tokens = Some(tokens);
-            } else {
-                return Err(CompletionError::RequestError(
-                    "`max_tokens` must be set for Anthropic".into(),
-                ));
-            }
-        }
-
-        let request = AnthropicCompletionRequest::try_from(AnthropicRequestParams {
-            model: &request_model,
-            request: completion_request,
-            prompt_caching: self.prompt_caching,
-            automatic_caching: self.automatic_caching,
-            automatic_caching_ttl: self.automatic_caching_ttl.clone(),
-        })?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "Anthropic completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        async move {
-            let request: Vec<u8> = serde_json::to_vec(&request)?;
-
-            let req = self
-                .client
-                .post("/v1/messages")?
-                .body(request)
-                .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-            let response = self
-                .client
-                .send::<_, Bytes>(req)
-                .await
-                .map_err(CompletionError::HttpError)?;
-
-            if response.status().is_success() {
-                match serde_json::from_slice::<ApiResponse<CompletionResponse>>(
-                    response
-                        .into_body()
-                        .await
-                        .map_err(CompletionError::HttpError)?
-                        .to_vec()
-                        .as_slice(),
-                )? {
-                    ApiResponse::Message(completion) => {
-                        let span = tracing::Span::current();
-                        span.record_response_metadata(&completion);
-                        span.record_token_usage(&completion.usage);
-                        if enabled!(Level::TRACE) {
-                            tracing::trace!(
-                                target: "rig::completions",
-                                "Anthropic completion response: {}",
-                                serde_json::to_string_pretty(&completion)?
-                            );
-                        }
-                        completion.try_into()
-                    }
-                    ApiResponse::Error(ApiErrorResponse { message }) => {
-                        Err(CompletionError::ResponseError(message))
-                    }
-                }
-            } else {
-                let text: String = String::from_utf8_lossy(
-                    &response
-                        .into_body()
-                        .await
-                        .map_err(CompletionError::HttpError)?,
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let request_model = completion_request
+                .model
+                .clone()
+                .unwrap_or_else(|| self.model.clone());
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = Ext::PROVIDER_NAME,
+                    gen_ai.request.model = &request_model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_creation.input_tokens = tracing::field::Empty,
                 )
-                .into();
-                Err(CompletionError::ProviderError(text))
+            } else {
+                tracing::Span::current()
+            };
+
+            // Check if max_tokens is set, required for Anthropic
+            if completion_request.max_tokens.is_none() {
+                if let Some(tokens) = self.default_max_tokens {
+                    completion_request.max_tokens = Some(tokens);
+                } else {
+                    return Err(CompletionError::RequestError(
+                        "`max_tokens` must be set for Anthropic".into(),
+                    ));
+                }
             }
+
+            let request = AnthropicCompletionRequest::try_from(AnthropicRequestParams {
+                model: &request_model,
+                request: completion_request,
+                prompt_caching: self.prompt_caching,
+                automatic_caching: self.automatic_caching,
+                automatic_caching_ttl: self.automatic_caching_ttl.clone(),
+            })?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "Anthropic completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            async move {
+                let request: Vec<u8> = serde_json::to_vec(&request)?;
+
+                let req = self
+                    .client
+                    .post("/v1/messages")?
+                    .body(request)
+                    .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+                let response = self
+                    .client
+                    .send::<_, Bytes>(req)
+                    .await
+                    .map_err(CompletionError::HttpError)?;
+
+                if response.status().is_success() {
+                    match serde_json::from_slice::<ApiResponse<CompletionResponse>>(
+                        response
+                            .into_body()
+                            .await
+                            .map_err(CompletionError::HttpError)?
+                            .to_vec()
+                            .as_slice(),
+                    )? {
+                        ApiResponse::Message(completion) => {
+                            let span = tracing::Span::current();
+                            span.record_response_metadata(&completion);
+                            span.record_token_usage(&completion.usage);
+                            if enabled!(Level::TRACE) {
+                                tracing::trace!(
+                                    target: "rig::completions",
+                                    "Anthropic completion response: {}",
+                                    serde_json::to_string_pretty(&completion)?
+                                );
+                            }
+                            completion.try_into()
+                        }
+                        ApiResponse::Error(ApiErrorResponse { message }) => {
+                            Err(CompletionError::ResponseError(message))
+                        }
+                    }
+                } else {
+                    let text: String = String::from_utf8_lossy(
+                        &response
+                            .into_body()
+                            .await
+                            .map_err(CompletionError::HttpError)?,
+                    )
+                    .into();
+                    Err(CompletionError::ProviderError(text))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        GenericCompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        GenericCompletionModel::stream_events(self, request).await
     }
 }
 

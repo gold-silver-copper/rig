@@ -8,12 +8,12 @@ use std::{collections::HashMap, pin::Pin};
 
 use async_stream::stream;
 use futures::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     OneOrMany,
-    completion::{CompletionError, CompletionResponse, GetTokenUsage, Usage},
+    completion::{CompletionError, CompletionResponse, Usage},
     message::{AssistantContent, Reasoning, ReasoningContent, ToolCall, ToolFunction},
-    streaming::{RawStreamingToolCall, StreamingCompletionResponse, ToolCallDeltaContent},
     wasm_compat::WasmCompatSend,
 };
 
@@ -24,6 +24,101 @@ pub type ModelEventStream<R> = Pin<Box<dyn Stream<Item = ModelEvent<R>> + Send>>
 /// A boxed stream of normalized model events.
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub type ModelEventStream<R> = Pin<Box<dyn Stream<Item = ModelEvent<R>>>>;
+
+/// The content of a streamed tool call delta.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub enum ToolCallDeltaContent {
+    /// A full or partial function/tool name.
+    Name(String),
+    /// A partial function/tool argument payload.
+    Delta(String),
+}
+
+/// A complete tool call assembled from provider stream events.
+#[derive(Debug, Clone)]
+pub struct StreamingToolCall {
+    /// Provider-supplied tool call ID.
+    pub id: String,
+    /// Rig-generated unique identifier for correlating tool call deltas/results.
+    pub internal_call_id: String,
+    /// Provider-supplied call ID, when the provider distinguishes it from item ID.
+    pub call_id: Option<String>,
+    /// Tool/function name.
+    pub name: String,
+    /// Tool/function arguments.
+    pub arguments: serde_json::Value,
+    /// Provider signature for the tool call, when present.
+    pub signature: Option<String>,
+    /// Additional provider-specific tool call fields.
+    pub additional_params: Option<serde_json::Value>,
+}
+
+impl StreamingToolCall {
+    /// Creates an empty pending tool call accumulator.
+    pub fn empty() -> Self {
+        Self {
+            id: String::new(),
+            internal_call_id: nanoid::nanoid!(),
+            call_id: None,
+            name: String::new(),
+            arguments: serde_json::Value::Null,
+            signature: None,
+            additional_params: None,
+        }
+    }
+
+    /// Creates a complete streaming tool call.
+    pub fn new(id: String, name: String, arguments: serde_json::Value) -> Self {
+        Self {
+            id,
+            internal_call_id: nanoid::nanoid!(),
+            call_id: None,
+            name,
+            arguments,
+            signature: None,
+            additional_params: None,
+        }
+    }
+
+    /// Sets the internal call ID.
+    pub fn with_internal_call_id(mut self, internal_call_id: String) -> Self {
+        self.internal_call_id = internal_call_id;
+        self
+    }
+
+    /// Sets the provider call ID.
+    pub fn with_call_id(mut self, call_id: String) -> Self {
+        self.call_id = Some(call_id);
+        self
+    }
+
+    /// Sets the provider signature.
+    pub fn with_signature(mut self, signature: Option<String>) -> Self {
+        self.signature = signature;
+        self
+    }
+
+    /// Sets additional provider-specific parameters.
+    pub fn with_additional_params(mut self, additional_params: Option<serde_json::Value>) -> Self {
+        self.additional_params = additional_params;
+        self
+    }
+}
+
+impl From<StreamingToolCall> for ToolCall {
+    fn from(tool_call: StreamingToolCall) -> Self {
+        ToolCall {
+            id: tool_call.id,
+            call_id: tool_call.call_id,
+            function: ToolFunction {
+                name: tool_call.name,
+                arguments: tool_call.arguments,
+            },
+            signature: tool_call.signature,
+            additional_params: tool_call.additional_params,
+        }
+    }
+}
 
 /// A normalized provider/model output event.
 #[derive(Debug)]
@@ -74,27 +169,6 @@ impl<R> ModelEvent<R> {
         match self {
             Self::Error { error } => Some(error),
             _ => None,
-        }
-    }
-}
-
-/// Converts streaming items into normalized model events.
-pub trait IntoModelEvents<R> {
-    /// Converts one stream item into zero or more normalized model events.
-    fn into_model_events(self) -> Vec<ModelEvent<R>>;
-}
-
-impl<R> IntoModelEvents<R> for ModelEvent<R> {
-    fn into_model_events(self) -> Vec<ModelEvent<R>> {
-        vec![self]
-    }
-}
-
-impl<R> IntoModelEvents<R> for Result<ModelEvent<R>, CompletionError> {
-    fn into_model_events(self) -> Vec<ModelEvent<R>> {
-        match self {
-            Ok(event) => vec![event],
-            Err(error) => vec![ModelEvent::Error { error }],
         }
     }
 }
@@ -367,6 +441,18 @@ pub async fn collect<R>(
     })
 }
 
+/// Converts a stream of fallible model events into the canonical infallible event stream.
+pub fn result_stream<R, S>(stream: S) -> ModelEventStream<R>
+where
+    R: WasmCompatSend + 'static,
+    S: Stream<Item = Result<ModelEvent<R>, CompletionError>> + WasmCompatSend + 'static,
+{
+    Box::pin(stream.map(|event| match event {
+        Ok(event) => event,
+        Err(error) => ModelEvent::Error { error },
+    }))
+}
+
 /// Converts a collected completion response back into model events.
 pub fn events_from_completion_response<R>(response: CompletionResponse<R>) -> ModelEventStream<R>
 where
@@ -397,24 +483,6 @@ where
     })
 }
 
-/// Converts an existing streaming completion response into model events.
-pub fn events_from_streaming_response<R>(
-    response: StreamingCompletionResponse<R>,
-) -> ModelEventStream<R>
-where
-    R: Clone + Unpin + GetTokenUsage + WasmCompatSend + 'static,
-{
-    Box::pin(stream! {
-        let mut inner = response.inner;
-
-        while let Some(item) = inner.next().await {
-            yield item;
-        }
-
-        yield ModelEvent::Done;
-    })
-}
-
 fn events_from_assistant_content<R>(content: AssistantContent) -> Vec<ModelEvent<R>> {
     match content {
         AssistantContent::Text(text) => vec![ModelEvent::TextDelta { text: text.text }],
@@ -436,10 +504,10 @@ fn events_from_assistant_content<R>(content: AssistantContent) -> Vec<ModelEvent
     }
 }
 
-impl<R> From<RawStreamingToolCall> for ModelEvent<R> {
-    fn from(raw_tool_call: RawStreamingToolCall) -> Self {
-        let internal_call_id = raw_tool_call.internal_call_id.clone();
-        let tool_call: ToolCall = raw_tool_call.into();
+impl<R> From<StreamingToolCall> for ModelEvent<R> {
+    fn from(streaming_tool_call: StreamingToolCall) -> Self {
+        let internal_call_id = streaming_tool_call.internal_call_id.clone();
+        let tool_call: ToolCall = streaming_tool_call.into();
         Self::ToolCallDone {
             tool_call,
             internal_call_id: Some(internal_call_id),

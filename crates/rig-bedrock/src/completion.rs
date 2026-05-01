@@ -9,7 +9,7 @@ use crate::{
 };
 
 use rig_core::completion::{self, CompletionError, CompletionRequest};
-use rig_core::streaming::StreamingCompletionResponse;
+use rig_core::model_event::ModelEventStream;
 use rig_core::telemetry::SpanCombinator;
 use tracing::Instrument;
 
@@ -219,77 +219,88 @@ impl completion::CompletionModel for CompletionModel {
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<AwsConverseOutput>, CompletionError> {
-        let request_model = resolve_request_model(&self.model, &completion_request);
+    ) -> Result<rig_core::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            rig_core::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let request_model = resolve_request_model(&self.model, &completion_request);
 
-        let span = if tracing::Span::current().is_disabled() {
-            tracing::info_span!(
-                target: "rig_core::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "aws_bedrock",
-                gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_creation.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
+            let span = if tracing::Span::current().is_disabled() {
+                tracing::info_span!(
+                    target: "rig_core::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "aws_bedrock",
+                    gen_ai.request.model = &request_model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_creation.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
 
-        let request = AwsCompletionRequest {
-            inner: completion_request,
-            prompt_caching: self.prompt_caching,
-        };
+            let request = AwsCompletionRequest {
+                inner: completion_request,
+                prompt_caching: self.prompt_caching,
+            };
 
-        let mut converse_builder = self
-            .client
-            .get_inner()
+            let mut converse_builder = self
+                .client
+                .get_inner()
+                .await
+                .converse()
+                .model_id(request_model.clone());
+
+            let tool_config = request.tools_config()?;
+            let messages = request.messages()?;
+            converse_builder = converse_builder
+                .set_additional_model_request_fields(request.additional_params())
+                .set_inference_config(request.inference_config())
+                .set_tool_config(tool_config)
+                .set_system(request.system_prompt()?)
+                .set_messages(Some(messages));
+
+            async move {
+                let response = converse_builder.send().await.map_err(|sdk_error| {
+                    Into::<CompletionError>::into(AwsSdkConverseError(sdk_error))
+                })?;
+
+                let response: InternalConverseOutput = response.try_into().map_err(|x| {
+                    CompletionError::ProviderError(format!("Type conversion error: {x}"))
+                })?;
+
+                let aws_output = AwsConverseOutput(response);
+
+                let span = tracing::Span::current();
+                span.record_response_metadata(&aws_output);
+                span.record_token_usage(&aws_output);
+
+                aws_output.try_into()
+            }
+            .instrument(span)
             .await
-            .converse()
-            .model_id(request_model.clone());
-
-        let tool_config = request.tools_config()?;
-        let messages = request.messages()?;
-        converse_builder = converse_builder
-            .set_additional_model_request_fields(request.additional_params())
-            .set_inference_config(request.inference_config())
-            .set_tool_config(tool_config)
-            .set_system(request.system_prompt()?)
-            .set_messages(Some(messages));
-
-        async move {
-            let response = converse_builder.send().await.map_err(|sdk_error| {
-                Into::<CompletionError>::into(AwsSdkConverseError(sdk_error))
-            })?;
-
-            let response: InternalConverseOutput = response.try_into().map_err(|x| {
-                CompletionError::ProviderError(format!("Type conversion error: {x}"))
-            })?;
-
-            let aws_output = AwsConverseOutput(response);
-
-            let span = tracing::Span::current();
-            span.record_response_metadata(&aws_output);
-            span.record_token_usage(&aws_output);
-
-            aws_output.try_into()
         }
-        .instrument(span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(rig_core::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        CompletionModel::stream(self, request).await
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
+        CompletionModel::stream_events(self, request).await
     }
 }

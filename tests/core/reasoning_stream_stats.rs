@@ -1,10 +1,9 @@
 use futures::stream;
 use rig::OneOrMany;
-use rig::agent::MultiTurnStreamItem;
+use rig::agent::{AgentEvent, FinalResponse};
 use rig::completion::Usage;
 use rig::message::{ToolCall, ToolFunction, ToolResult, ToolResultContent};
 use rig::model_event::ModelEvent;
-use rig::streaming::StreamedUserContent;
 
 use crate::reasoning::collect_stream_stats;
 
@@ -25,23 +24,24 @@ async fn collect_stream_stats_tracks_only_final_turn_text() {
     };
 
     let items = vec![
-        Ok(MultiTurnStreamItem::Model(ModelEvent::<()>::TextDelta {
+        Ok(AgentEvent::Model(ModelEvent::<()>::TextDelta {
             text: "Sure! Let me check the weather right away!".to_string(),
         })),
-        Ok(MultiTurnStreamItem::Model(ModelEvent::ToolCallDone {
+        Ok(AgentEvent::Model(ModelEvent::ToolCallDone {
             tool_call,
             internal_call_id: Some(internal_call_id.clone()),
         })),
-        Ok(MultiTurnStreamItem::StreamUserItem(
-            StreamedUserContent::tool_result(tool_result, internal_call_id),
-        )),
-        Ok(MultiTurnStreamItem::Model(ModelEvent::<()>::TextDelta {
+        Ok(AgentEvent::ToolResult {
+            tool_result,
+            internal_call_id,
+        }),
+        Ok(AgentEvent::Model(ModelEvent::<()>::TextDelta {
             text: "It's 72F and sunny in Tokyo.".to_string(),
         })),
-        Ok(MultiTurnStreamItem::final_response(
+        Ok(AgentEvent::FinalResponse(FinalResponse::new(
             "It's 72F and sunny in Tokyo.",
             Usage::new(),
-        )),
+        ))),
     ];
 
     let stats = collect_stream_stats(stream::iter(items), "test").await;

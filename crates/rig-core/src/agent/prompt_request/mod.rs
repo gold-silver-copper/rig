@@ -855,7 +855,7 @@ mod tests {
             CompletionResponse, Message, Prompt, Usage,
         },
         message::UserContent,
-        streaming::StreamingCompletionResponse,
+        model_event::ModelEventStream,
     };
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -959,42 +959,53 @@ mod tests {
             Self::default()
         }
 
-        async fn completion(
+        async fn events(
             &self,
             request: CompletionRequest,
-        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-            let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
+        ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+            let response_result: Result<
+                crate::completion::CompletionResponse<Self::Response>,
+                CompletionError,
+            > = async {
+                let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
 
-            let choice = if turn == 0 {
-                OneOrMany::one(AssistantContent::tool_call_with_call_id(
-                    "tool_call_1",
-                    "call_1".to_string(),
-                    "missing_tool",
-                    json!({"input": "value"}),
-                ))
-            } else {
-                validate_follow_up_tool_history(&request);
-                OneOrMany::one(AssistantContent::text(""))
-            };
+                let choice = if turn == 0 {
+                    OneOrMany::one(AssistantContent::tool_call_with_call_id(
+                        "tool_call_1",
+                        "call_1".to_string(),
+                        "missing_tool",
+                        json!({"input": "value"}),
+                    ))
+                } else {
+                    validate_follow_up_tool_history(&request);
+                    OneOrMany::one(AssistantContent::text(""))
+                };
 
-            Ok(CompletionResponse {
-                choice,
-                usage: Usage {
-                    input_tokens: 1,
-                    output_tokens: 1,
-                    total_tokens: 2,
-                    cached_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                },
-                raw_response: (),
-                message_id: None,
-            })
+                Ok(CompletionResponse {
+                    choice,
+                    usage: Usage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    },
+                    raw_response: (),
+                    message_id: None,
+                })
+            }
+            .await;
+            let response = response_result?;
+
+            Ok(crate::model_event::events_from_completion_response(
+                response,
+            ))
         }
 
-        async fn stream(
+        async fn stream_events(
             &self,
             _request: CompletionRequest,
-        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+        ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
             Err(CompletionError::ProviderError(
                 "stream is unused in this non-streaming test".to_string(),
             ))

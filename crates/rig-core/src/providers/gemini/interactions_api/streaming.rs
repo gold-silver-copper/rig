@@ -17,13 +17,12 @@ use crate::http_client::HttpClientExt;
 use crate::http_client::Request;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::model_event::ModelEvent;
-use crate::streaming;
 use crate::telemetry::SpanCombinator;
 use serde_json::{Map, Value};
 
 /// Final metadata yielded by an Interactions streaming response.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Option<InteractionUsage>,
     pub interaction: Option<Interaction>,
 }
@@ -36,7 +35,7 @@ pub type InteractionEventStream =
 pub type InteractionEventStream =
     Pin<Box<dyn Stream<Item = Result<InteractionSseEvent, CompletionError>>>>;
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.as_ref().and_then(|usage| usage.token_usage())
     }
@@ -46,11 +45,10 @@ impl<T> InteractionsCompletionModel<T>
 where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -159,7 +157,7 @@ where
 
             event_source.close();
 
-            let response = StreamingCompletionResponse {
+            let response = StreamingResponse {
                 usage: final_usage.or_else(|| final_interaction.as_ref().and_then(|i| i.usage.clone())),
                 interaction: final_interaction,
             };
@@ -171,9 +169,7 @@ where
         }
         .instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-            stream,
-        )))
+        Ok(crate::model_event::result_stream(Box::pin(stream)))
     }
 }
 
@@ -221,7 +217,7 @@ where
     Box::pin(stream)
 }
 
-fn content_start_to_choice(content: Content) -> Option<ModelEvent<StreamingCompletionResponse>> {
+fn content_start_to_choice(content: Content) -> Option<ModelEvent<StreamingResponse>> {
     match content {
         Content::Text(TextContent { text, .. }) => {
             if text.is_empty() {
@@ -238,7 +234,7 @@ fn content_start_to_choice(content: Content) -> Option<ModelEvent<StreamingCompl
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
             Some(ModelEvent::from(
-                streaming::RawStreamingToolCall::new(
+                crate::model_event::StreamingToolCall::new(
                     name.clone(),
                     name,
                     arguments.unwrap_or(Value::Object(Map::new())),
@@ -250,7 +246,7 @@ fn content_start_to_choice(content: Content) -> Option<ModelEvent<StreamingCompl
     }
 }
 
-fn content_delta_to_choice(delta: ContentDelta) -> Option<ModelEvent<StreamingCompletionResponse>> {
+fn content_delta_to_choice(delta: ContentDelta) -> Option<ModelEvent<StreamingResponse>> {
     match delta {
         ContentDelta::Text(TextDelta {
             text: Some(text), ..
@@ -263,7 +259,7 @@ fn content_delta_to_choice(delta: ContentDelta) -> Option<ModelEvent<StreamingCo
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
             Some(ModelEvent::from(
-                streaming::RawStreamingToolCall::new(
+                crate::model_event::StreamingToolCall::new(
                     name.clone(),
                     name,
                     arguments.unwrap_or(Value::Object(Map::new())),

@@ -365,101 +365,110 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = openai::CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
     type Client = Client<T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<openai::CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "llamafile",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        let request =
-            LlamafileCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Llamafile completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-        let req = self
-            .client
-            .post("v1/chat/completions")?
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
-                    &response_body,
-                )? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record("gen_ai.response.id", response.id.clone());
-                        span.record("gen_ai.response.model", response.model.clone());
-                        if let Some(ref usage) = response.usage {
-                            span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
-                            span.record(
-                                "gen_ai.usage.output_tokens",
-                                usage.total_tokens - usage.prompt_tokens,
-                            );
-                        }
-
-                        if tracing::enabled!(Level::TRACE) {
-                            tracing::trace!(target: "rig::completions",
-                                "Llamafile completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        let response_result: Result<
+            crate::completion::CompletionResponse<Self::Response>,
+            CompletionError,
+        > = async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "llamafile",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
+                tracing::Span::current()
+            };
+
+            let request =
+                LlamafileCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+
+            if tracing::enabled!(Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Llamafile completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let body = serde_json::to_vec(&request)?;
+            let req = self
+                .client
+                .post("v1/chat/completions")?
+                .body(body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
+                        &response_body,
+                    )? {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record("gen_ai.response.id", response.id.clone());
+                            span.record("gen_ai.response.model", response.model.clone());
+                            if let Some(ref usage) = response.usage {
+                                span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+                                span.record(
+                                    "gen_ai.usage.output_tokens",
+                                    usage.total_tokens - usage.prompt_tokens,
+                                );
+                            }
+
+                            if tracing::enabled!(Level::TRACE) {
+                                tracing::trace!(target: "rig::completions",
+                                    "Llamafile completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+
+                            response.try_into()
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
-        .await
+        .await;
+        let response = response_result?;
+
+        Ok(crate::model_event::events_from_completion_response(
+            response,
+        ))
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -533,12 +542,12 @@ struct StreamingCompletionChunk {
 
 /// Final streaming response containing usage information.
 #[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     /// Token usage from the streaming response.
     pub usage: openai::Usage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -550,7 +559,7 @@ struct LlamafileCompatibleProfile;
 impl CompatibleStreamProfile for LlamafileCompatibleProfile {
     type Usage = openai::Usage;
     type Detail = ();
-    type FinalResponse = StreamingCompletionResponse;
+    type FinalResponse = StreamingResponse;
 
     fn normalize_chunk(
         &self,
@@ -593,7 +602,7 @@ impl CompatibleStreamProfile for LlamafileCompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        StreamingCompletionResponse { usage }
+        StreamingResponse { usage }
     }
 
     fn uses_distinct_tool_call_eviction(&self) -> bool {
@@ -609,10 +618,7 @@ async fn send_streaming_request<T>(
     client: T,
     req: http::Request<Vec<u8>>,
     span: tracing::Span,
-) -> Result<
-    crate::streaming::StreamingCompletionResponse<StreamingCompletionResponse>,
-    CompletionError,
->
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {
