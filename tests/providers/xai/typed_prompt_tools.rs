@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{ToolDefinition, TypedPrompt};
 use rig::providers::xai;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 
 use crate::support::assert_weather_tool_roundtrip_response;
 
@@ -35,7 +35,7 @@ impl WeatherTool {
     }
 }
 
-impl Tool for WeatherTool {
+impl LocalRmcpTool for WeatherTool {
     const NAME: &'static str = "weather";
 
     type Error = std::io::Error;
@@ -85,7 +85,7 @@ async fn prompt_typed_with_tool_call_roundtrip() -> Result<()> {
              DO NOT wrap the JSON in markdown or add explanatory text. \
              DO NOT modify the weather description from the tool result.",
         )
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .build();
 
     let response: WeatherResponse = agent

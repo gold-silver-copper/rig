@@ -15,7 +15,7 @@ use rig::prelude::*;
 use rig::{
     completion::{Prompt, ToolDefinition},
     providers,
-    tool::Tool,
+    tool::server::LocalRmcpTool,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,7 +35,7 @@ struct MathError;
 
 #[derive(Deserialize, Serialize)]
 struct Adder;
-impl Tool for Adder {
+impl LocalRmcpTool for Adder {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -72,7 +72,7 @@ impl Tool for Adder {
 #[derive(Deserialize, Serialize)]
 struct Subtract;
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -147,8 +147,8 @@ async fn main() -> Result<(), anyhow::Error> {
         .agent(providers::openai::GPT_4O)
         .preamble("You are a calculator here to help the user perform arithmetic operations. Use the tools provided to answer the user's question.")
         .max_tokens(1024)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     // Prompt the agent and print the response

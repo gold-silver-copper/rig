@@ -72,7 +72,7 @@ use crate::{OneOrMany, http_client};
 use crate::{
     json_utils,
     message::{Message, UserContent},
-    tool::ToolSetError,
+    tool::ToolError,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -123,7 +123,7 @@ pub enum PromptError {
 
     /// There was an error while using a tool
     #[error("ToolCallError: {0}")]
-    ToolError(#[from] ToolSetError),
+    ToolError(#[from] ToolError),
 
     /// There was an issue while executing a tool on a tool server
     #[error("ToolServerError: {0}")]
@@ -210,6 +210,18 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+}
+
+impl From<&::rmcp::model::Tool> for ToolDefinition {
+    fn from(tool: &::rmcp::model::Tool) -> Self {
+        crate::tool::tool_to_function_schema(tool)
+    }
+}
+
+impl From<::rmcp::model::Tool> for ToolDefinition {
+    fn from(tool: ::rmcp::model::Tool) -> Self {
+        Self::from(&tool)
+    }
 }
 
 /// Provider-native tool definition.
@@ -516,7 +528,7 @@ pub struct CompletionRequest {
     /// The documents to be sent to the completion model provider
     pub documents: Vec<Document>,
     /// The tools to be sent to the completion model provider
-    pub tools: Vec<ToolDefinition>,
+    pub tools: Vec<::rmcp::model::Tool>,
     /// The temperature to be sent to the completion model provider
     pub temperature: Option<f64>,
     /// The max tokens to be sent to the completion model provider
@@ -672,7 +684,7 @@ pub struct CompletionRequestBuilder<M: CompletionModel> {
     preamble: Option<String>,
     chat_history: Vec<Message>,
     documents: Vec<Document>,
-    tools: Vec<ToolDefinition>,
+    tools: Vec<::rmcp::model::Tool>,
     provider_tools: Vec<ProviderToolDefinition>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
@@ -751,17 +763,26 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
             .fold(self, |builder, doc| builder.document(doc))
     }
 
-    /// Adds a tool to the completion request.
-    pub fn tool(mut self, tool: ToolDefinition) -> Self {
+    /// Adds an rmcp tool to the completion request.
+    pub fn rmcp_tool(mut self, tool: ::rmcp::model::Tool) -> Self {
         self.tools.push(tool);
         self
     }
 
-    /// Adds a list of tools to the completion request.
-    pub fn tools(self, tools: Vec<ToolDefinition>) -> Self {
+    /// Adds a local rmcp tool definition to the completion request.
+    pub async fn local_rmcp_tool<T>(self, tool: T) -> Self
+    where
+        T: crate::tool::server::LocalRmcpTool,
+    {
+        let definition = tool.definition(String::new()).await;
+        self.rmcp_tool(definition.into())
+    }
+
+    /// Adds a list of rmcp tools to the completion request.
+    pub fn rmcp_tools(self, tools: Vec<::rmcp::model::Tool>) -> Self {
         tools
             .into_iter()
-            .fold(self, |builder, tool| builder.tool(tool))
+            .fold(self, |builder, tool| builder.rmcp_tool(tool))
     }
 
     /// Adds a provider-hosted tool to the completion request.
@@ -912,7 +933,13 @@ mod tests {
 
     use super::*;
     use crate::streaming::StreamingCompletionResponse;
+    use crate::tool::ToolError;
+    use crate::tool::server::LocalRmcpTool;
     use serde::{Deserialize, Serialize};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     #[derive(Clone)]
     struct DummyModel;
@@ -952,6 +979,51 @@ mod tests {
                 "dummy completion model".to_string(),
             ))
         }
+    }
+
+    #[derive(Clone)]
+    struct AsyncDefinitionTool {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl LocalRmcpTool for AsyncDefinitionTool {
+        const NAME: &'static str = "async_definition";
+
+        type Error = ToolError;
+        type Args = serde_json::Value;
+        type Output = String;
+
+        async fn definition(&self, _prompt: String) -> ToolDefinition {
+            tokio::task::yield_now().await;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "Async definition".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                }),
+            }
+        }
+
+        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok("ok".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn local_rmcp_tool_builder_resolves_definition_async() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let request = CompletionRequestBuilder::new(DummyModel, "hello")
+            .local_rmcp_tool(AsyncDefinitionTool {
+                calls: calls.clone(),
+            })
+            .await
+            .build();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, "async_definition");
     }
 
     #[test]

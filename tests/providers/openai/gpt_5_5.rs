@@ -79,8 +79,8 @@ async fn responses_tools_smoke() {
     let agent = client
         .agent(openai::GPT_5_5)
         .preamble(TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let response = agent
@@ -98,8 +98,8 @@ async fn responses_streaming_tools_smoke() {
     let agent = client
         .agent(openai::GPT_5_5)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent
@@ -225,7 +225,7 @@ async fn responses_reasoning_tool_roundtrip_smoke() {
         .agent(openai::GPT_5_5)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(gpt_5_5_reasoning_params())
         .build();
 
@@ -246,7 +246,7 @@ async fn responses_reasoning_streaming_tool_roundtrip_smoke() {
         .agent(openai::GPT_5_5)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(gpt_5_5_reasoning_params())
         .build();
 
@@ -306,8 +306,8 @@ async fn chat_completions_tools_smoke() {
     let agent = client
         .agent(openai::GPT_5_5)
         .preamble(TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let response = agent
@@ -327,8 +327,8 @@ async fn chat_completions_streaming_tools_smoke() {
     let agent = client
         .agent(openai::GPT_5_5)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;

@@ -6,7 +6,7 @@
     clippy::unreachable
 )]
 
-use rig_core::tool::Tool;
+use rig_core::tool::server::LocalRmcpTool;
 use rig_derive::rig_tool;
 
 #[rig_tool(
@@ -31,9 +31,9 @@ async fn calculator(x: i32, y: i32, operation: String) -> Result<i32, rig_core::
                 Ok(x / y)
             }
         }
-        _ => Err(rig_core::tool::ToolError::ToolCallError(
-            format!("Unknown operation: {operation}").into(),
-        )),
+        _ => Err(rig_core::tool::ToolError::ToolCallError(format!(
+            "Unknown operation: {operation}"
+        ))),
     }
 }
 
@@ -59,9 +59,9 @@ fn sync_calculator(x: i32, y: i32, operation: String) -> Result<i32, rig_core::t
                 Ok(x / y)
             }
         }
-        _ => Err(rig_core::tool::ToolError::ToolCallError(
-            format!("Unknown operation: {operation}").into(),
-        )),
+        _ => Err(rig_core::tool::ToolError::ToolCallError(format!(
+            "Unknown operation: {operation}"
+        ))),
     }
 }
 
@@ -117,7 +117,7 @@ async fn test_calculator_tool() {
 
     for (input, expected) in test_cases {
         let result = calculator.call(input).await.unwrap();
-        assert_eq!(result, serde_json::json!(expected));
+        assert_eq!(result, expected);
     }
 
     // Test division by zero
@@ -149,5 +149,5 @@ async fn test_calculator_tool() {
         .await
         .unwrap();
 
-    assert_eq!(result, serde_json::json!(8));
+    assert_eq!(result, 8);
 }

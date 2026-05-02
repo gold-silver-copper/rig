@@ -398,6 +398,7 @@ impl TryFrom<(&str, CompletionRequest)> for MistralCompletionRequest {
                 .tools
                 .clone()
                 .into_iter()
+                .map(crate::completion::ToolDefinition::from)
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,

@@ -895,6 +895,7 @@ impl TryFrom<(String, crate::completion::CompletionRequest)> for CompletionReque
         let mut tools: Vec<ResponsesToolDefinition> = req
             .tools
             .into_iter()
+            .map(crate::completion::ToolDefinition::from)
             .map(ResponsesToolDefinition::from)
             .collect();
         tools.append(&mut additional_tools);

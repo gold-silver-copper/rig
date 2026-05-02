@@ -464,18 +464,13 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
     let params_struct_name = format_ident!("{}Parameters", struct_name);
     let static_name = format_ident!("{}", fn_name_str.to_uppercase());
 
-    // Generate the call implementation based on whether the function is async
-    let call_impl = if is_async {
+    let call_body = if is_async {
         quote! {
-            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-                #fn_name(#(args.#param_names,)*).await
-            }
+            #fn_name(#(args.#param_names,)*).await
         }
     } else {
         quote! {
-            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-                #fn_name(#(args.#param_names,)*)
-            }
+            #fn_name(#(args.#param_names,)*)
         }
     };
 
@@ -488,19 +483,15 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
 
         #input_fn
 
-        #[derive(Default)]
+        #[derive(Clone, Default)]
         #vis struct #struct_name;
 
-        impl #rig_core::tool::Tool for #struct_name {
+        impl #rig_core::tool::server::LocalRmcpTool for #struct_name {
             const NAME: &'static str = #tool_name;
 
             type Args = #params_struct_name;
             type Output = #output_type;
             type Error = #error_type;
-
-            fn name(&self) -> String {
-                #tool_name.to_string()
-            }
 
             async fn definition(&self, _prompt: String) -> #rig_core::completion::ToolDefinition {
                 let parameters = serde_json::json!({
@@ -523,7 +514,9 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
                 }
             }
 
-            #call_impl
+            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+                #call_body
+            }
         }
 
         #vis static #static_name: #struct_name = #struct_name;

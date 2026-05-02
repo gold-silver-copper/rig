@@ -348,6 +348,7 @@ pub(crate) fn create_request_body(
             completion_request
                 .tools
                 .into_iter()
+                .map(crate::completion::ToolDefinition::from)
                 .map(Tool::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
         );

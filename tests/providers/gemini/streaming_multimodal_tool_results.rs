@@ -12,7 +12,7 @@ use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
 use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use serde_json::json;
 
 use crate::support::assert_nonempty_response;
@@ -32,7 +32,7 @@ struct HybridImageTool;
 #[error("hybrid image tool error")]
 struct HybridImageToolError;
 
-impl Tool for HybridImageTool {
+impl LocalRmcpTool for HybridImageTool {
     const NAME: &'static str = "render_reference_image";
     type Error = HybridImageToolError;
     type Args = serde_json::Value;
@@ -79,7 +79,7 @@ async fn streaming_history_preserves_hybrid_tool_result_image_parts() {
              answering. After the tool result arrives, do not call any more tools. Answer in one \
              short sentence.",
         )
-        .tool(HybridImageTool)
+        .local_rmcp_tool(HybridImageTool)
         .additional_params(streaming_tool_params())
         .build();
 

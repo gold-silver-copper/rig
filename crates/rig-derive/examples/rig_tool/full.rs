@@ -1,7 +1,7 @@
 use rig_core::client::{CompletionClient, ProviderClient};
 use rig_core::completion::Prompt;
 use rig_core::providers;
-use rig_core::tool::Tool;
+use rig_core::tool::server::LocalRmcpTool;
 use rig_derive::rig_tool;
 
 // Example with full attributes including parameter descriptions
@@ -19,9 +19,9 @@ fn string_processor(text: String, operation: String) -> Result<String, rig_core:
         "lowercase" => text.to_lowercase(),
         "reverse" => text.chars().rev().collect(),
         _ => {
-            return Err(rig_core::tool::ToolError::ToolCallError(
-                format!("Unknown operation: {operation}").into(),
-            ));
+            return Err(rig_core::tool::ToolError::ToolCallError(format!(
+                "Unknown operation: {operation}"
+            )));
         }
     };
 
@@ -36,7 +36,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .agent(providers::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
-        .tool(StringProcessor)
+        .local_rmcp_tool(StringProcessor)
         .build();
 
     println!("Tool definition:");

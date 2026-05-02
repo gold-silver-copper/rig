@@ -310,6 +310,17 @@ fn is_empty_assistant_turn(choice: &OneOrMany<AssistantContent>) -> bool {
         )
 }
 
+fn tool_result_content_to_text(content: &OneOrMany<ToolResultContent>) -> String {
+    content
+        .iter()
+        .map(|content| match content {
+            ToolResultContent::Text(text) => text.text.clone(),
+            ToolResultContent::Image(_) => "[Image]".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl<M, P> PromptRequest<Extended, M, P>
 where
     M: CompletionModel,
@@ -587,14 +598,37 @@ where
                                     }
                                 }
                             }
-                            let output = match tool_server_handle.call_tool(tool_name, &args).await
-                            {
-                                Ok(res) => res,
-                                Err(e) => {
-                                    tracing::warn!("Error while executing tool: {e}");
-                                    e.to_string()
-                                }
-                            };
+                            let (output_text, output_content) =
+                                match serde_json::from_str::<::rmcp::model::JsonObject>(&args) {
+                                    Ok(arguments) => {
+                                        let params =
+                                            ::rmcp::model::CallToolRequestParams::new(
+                                                tool_name.to_string(),
+                                            )
+                                            .with_arguments(arguments);
+                                        match tool_server_handle.call_tool_content(params).await {
+                                            Ok(res) => (tool_result_content_to_text(&res), res),
+                                            Err(e) => {
+                                                tracing::warn!("Error while executing tool: {e}");
+                                                let text = e.to_string();
+                                                (
+                                                    text.clone(),
+                                                    ToolResultContent::from_tool_output(text),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let message = format!(
+                                            "ToolCallError: invalid arguments for tool '{tool_name}': {e}"
+                                        );
+                                        tracing::warn!("{message}");
+                                        (
+                                            message.clone(),
+                                            ToolResultContent::from_tool_output(message),
+                                        )
+                                    }
+                                };
                             if let Some(hook) = hook2
                                 && let HookAction::Terminate { reason } = hook
                                     .on_tool_result(
@@ -602,7 +636,7 @@ where
                                         tool_call.call_id.clone(),
                                         &internal_call_id,
                                         &args,
-                                        &output.to_string(),
+                                        &output_text,
                                     )
                                     .await
                             {
@@ -612,20 +646,20 @@ where
                                 ));
                             }
 
-                            tool_span.record("gen_ai.tool.call.result", &output);
+                            tool_span.record("gen_ai.tool.call.result", &output_text);
                             tracing::info!(
-                                "executed tool {tool_name} with args {args}. result: {output}"
+                                "executed tool {tool_name} with args {args}. result: {output_text}"
                             );
                             if let Some(call_id) = tool_call.call_id.clone() {
                                 Ok(UserContent::tool_result_with_call_id(
                                     tool_call.id.clone(),
                                     call_id,
-                                    ToolResultContent::from_tool_output(output),
+                                    output_content,
                                 ))
                             } else {
                                 Ok(UserContent::tool_result(
                                     tool_call.id.clone(),
-                                    ToolResultContent::from_tool_output(output),
+                                    output_content,
                                 ))
                             }
                         } else {
@@ -854,7 +888,7 @@ mod tests {
             AssistantContent, CompletionError, CompletionModel, CompletionRequest,
             CompletionResponse, Message, Prompt, Usage,
         },
-        message::UserContent,
+        message::{ToolResultContent, UserContent},
         streaming::StreamingCompletionResponse,
     };
     use serde::{Deserialize, Serialize};
@@ -1067,5 +1101,103 @@ mod tests {
                 ))
         )));
         assert_eq!(turn_counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[derive(Clone, Default)]
+    struct InvalidToolArgsMockModel {
+        turn_counter: Arc<AtomicUsize>,
+    }
+
+    #[allow(refining_impl_trait)]
+    impl CompletionModel for InvalidToolArgsMockModel {
+        type Response = ();
+        type StreamingResponse = ();
+        type Client = ();
+
+        fn make(_: &Self::Client, _: impl Into<String>) -> Self {
+            Self::default()
+        }
+
+        async fn completion(
+            &self,
+            request: CompletionRequest,
+        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+            let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
+            let choice = if turn == 0 {
+                OneOrMany::one(AssistantContent::tool_call(
+                    "tool_call_invalid_args",
+                    "should_not_call",
+                    json!("not an object"),
+                ))
+            } else {
+                let history = request.chat_history.iter().cloned().collect::<Vec<_>>();
+                assert!(matches!(
+                    history.get(2),
+                    Some(Message::User { content })
+                        if matches!(
+                            content.first(),
+                            UserContent::ToolResult(tool_result)
+                                if tool_result.content.iter().any(|content| matches!(
+                                    content,
+                                    ToolResultContent::Text(text)
+                                        if text.text.contains("invalid arguments for tool 'should_not_call'")
+                                ))
+                        )
+                ));
+                OneOrMany::one(AssistantContent::text("done"))
+            };
+
+            Ok(CompletionResponse {
+                choice,
+                usage: Usage::new(),
+                raw_response: (),
+                message_id: None,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+            Err(CompletionError::ProviderError(
+                "stream is unused in this non-streaming test".to_string(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_request_reports_invalid_tool_arguments_without_dispatching() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = calls.clone();
+        let agent = AgentBuilder::new(InvalidToolArgsMockModel::default())
+            .rmcp_tool(
+                crate::tool::tool_from_schema(
+                    "should_not_call",
+                    "Should not be invoked",
+                    json!({
+                        "type": "object",
+                        "properties": {},
+                    }),
+                ),
+                move |_params| {
+                    let handler_calls = handler_calls.clone();
+                    async move {
+                        handler_calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(::rmcp::model::CallToolResult::success(vec![
+                            ::rmcp::model::Content::text("called"),
+                        ]))
+                    }
+                },
+            )
+            .build();
+
+        let response = agent
+            .prompt("call with invalid args")
+            .max_turns(3)
+            .await
+            .expect("invalid arguments should be returned as a tool result");
+
+        assert_eq!(response, "done");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

@@ -595,7 +595,12 @@ impl TryFrom<(&str, CompletionRequest)> for CohereCompletionRequest {
             messages: full_history,
             documents: req.documents,
             temperature: req.temperature,
-            tools: req.tools.into_iter().map(Tool::from).collect::<Vec<_>>(),
+            tools: req
+                .tools
+                .into_iter()
+                .map(crate::completion::ToolDefinition::from)
+                .map(Tool::from)
+                .collect::<Vec<_>>(),
             tool_choice,
             additional_params: req.additional_params,
         })

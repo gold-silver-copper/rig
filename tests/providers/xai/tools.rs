@@ -15,8 +15,8 @@ async fn tools_smoke() {
     let agent = client
         .agent(xai::completion::GROK_3_MINI)
         .preamble(TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let response = agent

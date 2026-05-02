@@ -31,8 +31,8 @@ async fn streaming_tools_smoke() {
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .additional_params(streaming_tool_params())
         .build();
 
@@ -51,7 +51,8 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let model = client.completion_model(gemini::completion::GEMINI_2_5_FLASH);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
-        .tool(zero_arg_tool_definition("ping"))
+        .local_rmcp_tool(zero_arg_tool_definition("ping"))
+        .await
         .tool_choice(ToolChoice::Required)
         .additional_params(streaming_tool_params())
         .build();
@@ -67,8 +68,8 @@ async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() {
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
-        .tool(AlphaSignal)
-        .tool(BetaSignal)
+        .local_rmcp_tool(AlphaSignal)
+        .local_rmcp_tool(BetaSignal)
         .additional_params(streaming_tool_params())
         .build();
 
@@ -92,7 +93,7 @@ async fn streaming_tools_emit_tool_call_before_later_text() {
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
-        .tool(AlphaSignal)
+        .local_rmcp_tool(AlphaSignal)
         .additional_params(streaming_tool_params())
         .build();
 
@@ -120,8 +121,8 @@ async fn example_streaming_with_tools() {
              Use the tools provided to answer the user's question.",
         )
         .max_tokens(1024)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .additional_params(streaming_tool_params())
         .build();
 

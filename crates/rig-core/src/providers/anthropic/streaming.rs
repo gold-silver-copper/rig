@@ -251,6 +251,7 @@ where
         let mut tools = completion_request
             .tools
             .into_iter()
+            .map(crate::completion::ToolDefinition::from)
             .map(|tool| ToolDefinition {
                 name: tool.name,
                 description: Some(tool.description),

@@ -126,14 +126,14 @@ pub(crate) async fn build_completion_request<M: CompletionModel>(
 
             completion_request
                 .documents(fetched_context)
-                .tools(tooldefs)
+                .rmcp_tools(tooldefs)
         }
         None => {
             let tooldefs = tool_server_handle.get_tool_defs(None).await.map_err(|_| {
                 CompletionError::RequestError("Failed to get tool definitions".into())
             })?;
 
-            completion_request.tools(tooldefs)
+            completion_request.rmcp_tools(tooldefs)
         }
     };
 

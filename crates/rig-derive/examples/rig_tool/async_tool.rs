@@ -1,7 +1,7 @@
 use rig_core::client::{CompletionClient, ProviderClient};
 use rig_core::completion::Prompt;
 use rig_core::providers;
-use rig_core::tool::{Tool, ToolError};
+use rig_core::tool::{ToolError, server::LocalRmcpTool};
 use rig_derive::rig_tool;
 use std::time::Duration;
 
@@ -32,7 +32,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .agent(providers::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
-        .tool(AsyncOperation)
+        .local_rmcp_tool(AsyncOperation)
         .build();
 
     println!("Tool definition:");

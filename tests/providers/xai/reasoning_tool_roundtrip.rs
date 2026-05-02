@@ -22,7 +22,7 @@ async fn streaming() {
         .agent(xai::GROK_3_MINI)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .build();
 
     let stream = agent
@@ -43,7 +43,7 @@ async fn nonstreaming() {
         .agent(xai::GROK_3_MINI)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .build();
 
     let result = agent

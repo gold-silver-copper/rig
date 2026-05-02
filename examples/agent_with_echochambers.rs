@@ -5,7 +5,7 @@ use rig::{
     completion::ToolDefinition,
     integrations::cli_chatbot::ChatBotBuilder,
     providers::openai::{self, Client},
-    tool::Tool,
+    tool::server::LocalRmcpTool,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -47,7 +47,7 @@ struct SendMessage {
     api_key: String,
 }
 
-impl Tool for SendMessage {
+impl LocalRmcpTool for SendMessage {
     const NAME: &'static str = "send_message";
     type Error = EchoChamberError;
     type Args = SendMessageArgs;
@@ -133,7 +133,7 @@ impl Tool for SendMessage {
 #[derive(Deserialize, Serialize)]
 struct GetHistory;
 
-impl Tool for GetHistory {
+impl LocalRmcpTool for GetHistory {
     const NAME: &'static str = "get_history";
     type Error = EchoChamberError;
     type Args = GetHistoryArgs;
@@ -181,7 +181,7 @@ impl Tool for GetHistory {
 #[derive(Deserialize, Serialize)]
 struct GetRoomMetrics;
 
-impl Tool for GetRoomMetrics {
+impl LocalRmcpTool for GetRoomMetrics {
     const NAME: &'static str = "get_room_metrics";
     type Error = EchoChamberError;
     type Args = GetMetricsArgs;
@@ -223,7 +223,7 @@ impl Tool for GetRoomMetrics {
 // GetAgentMetrics Tool
 #[derive(Deserialize, Serialize)]
 struct GetAgentMetrics;
-impl Tool for GetAgentMetrics {
+impl LocalRmcpTool for GetAgentMetrics {
     const NAME: &'static str = "get_agent_metrics";
     type Error = EchoChamberError;
     type Args = GetMetricsArgs;
@@ -263,7 +263,7 @@ impl Tool for GetAgentMetrics {
 // GetMetricsHistory Tool
 #[derive(Deserialize, Serialize)]
 struct GetMetricsHistory;
-impl Tool for GetMetricsHistory {
+impl LocalRmcpTool for GetMetricsHistory {
     const NAME: &'static str = "get_metrics_history";
     type Error = EchoChamberError;
     type Args = GetMetricsArgs;
@@ -352,11 +352,11 @@ async fn main() -> Result<(), anyhow::Error> {
             Important: ALWAYS include both username and model in the sender information when sending messages.
             If the user specifies a username or model, use those. Otherwise, use 'Rig_Assistant' and 'gpt-4' as defaults."
         )
-        .tool(SendMessage { api_key: echochambers_api_key })
-        .tool(GetHistory)
-        .tool(GetRoomMetrics)
-        .tool(GetAgentMetrics)
-        .tool(GetMetricsHistory)
+        .local_rmcp_tool(SendMessage { api_key: echochambers_api_key })
+        .local_rmcp_tool(GetHistory)
+        .local_rmcp_tool(GetRoomMetrics)
+        .local_rmcp_tool(GetAgentMetrics)
+        .local_rmcp_tool(GetMetricsHistory)
         .build();
 
     // Build a CLI chatbot from the agent, with multi-turn enabled

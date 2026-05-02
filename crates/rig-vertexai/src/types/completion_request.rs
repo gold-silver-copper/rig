@@ -56,10 +56,11 @@ impl VertexCompletionRequest {
             .tools
             .iter()
             .map(|tool_def| {
+                let tool_def = rig_core::completion::ToolDefinition::from(tool_def);
                 vertexai::model::FunctionDeclaration::new()
-                    .set_name(tool_def.name.clone())
-                    .set_description(tool_def.description.clone())
-                    .set_parameters_json_schema(tool_def.parameters.clone())
+                    .set_name(tool_def.name)
+                    .set_description(tool_def.description)
+                    .set_parameters_json_schema(tool_def.parameters)
             })
             .collect();
 
@@ -148,14 +149,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: Some(ToolChoice::Auto),
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -179,14 +183,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: Some(ToolChoice::Required),
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -210,14 +217,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: Some(ToolChoice::None),
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -243,14 +253,17 @@ mod tests {
             tool_choice: Some(ToolChoice::Specific {
                 function_names: vec!["test_tool".to_string()],
             }),
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -333,18 +346,21 @@ mod tests {
         // Test that ToolDefinition converts to FunctionDeclaration
         let request = CompletionRequest {
             model: None,
-            tools: vec![ToolDefinition {
-                name: "add".to_string(),
-                description: "Add two numbers".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "x": {"type": "number"},
-                        "y": {"type": "number"}
-                    },
-                    "required": ["x", "y"]
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "add".to_string(),
+                    description: "Add two numbers".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        },
+                        "required": ["x", "y"]
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -369,14 +385,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: None, // Not set
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -400,14 +419,17 @@ mod tests {
         // Test that tools with empty parameters work correctly
         let request = CompletionRequest {
             model: None,
-            tools: vec![ToolDefinition {
-                name: "document_list".to_string(),
-                description: "Lists all documents".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "document_list".to_string(),
+                    description: "Lists all documents".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -430,24 +452,27 @@ mod tests {
         // Test that tools with complex parameters work correctly
         let request = CompletionRequest {
             model: None,
-            tools: vec![ToolDefinition {
-                name: "get_weather".to_string(),
-                description: "Get weather for a location".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "City name"
+            tools: vec![
+                ToolDefinition {
+                    name: "get_weather".to_string(),
+                    description: "Get weather for a location".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "City name"
+                            },
+                            "units": {
+                                "type": "string",
+                                "enum": ["celsius", "fahrenheit"]
+                            }
                         },
-                        "units": {
-                            "type": "string",
-                            "enum": ["celsius", "fahrenheit"]
-                        }
-                    },
-                    "required": ["location"]
-                }),
-            }],
+                        "required": ["location"]
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 

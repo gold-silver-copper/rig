@@ -12,7 +12,10 @@ use rig::completion::{self, CompletionError, CompletionModel, PromptError, ToolD
 use rig::message::{AssistantContent, Message, Text, ToolResultContent, UserContent};
 use rig::providers::gemini;
 use rig::streaming::{StreamedAssistantContent, StreamingCompletion};
-use rig::tool::{Tool, ToolError, ToolSetError};
+use rig::tool::{
+    ToolError,
+    server::{LocalRmcpTool, ToolServerError},
+};
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use thiserror::Error;
@@ -28,8 +31,8 @@ enum StreamingError {
     Completion(#[from] CompletionError),
     #[error("PromptError: {0}")]
     Prompt(#[from] Box<PromptError>),
-    #[error("ToolSetError: {0}")]
-    Tool(#[from] ToolSetError),
+    #[error("ToolError: {0}")]
+    Tool(#[from] ToolError),
 }
 
 type StreamingResult = Pin<Box<dyn Stream<Item = Result<Text, StreamingError>> + Send>>;
@@ -46,10 +49,10 @@ async fn manual_multi_turn_streaming_loop() {
     let agent = client
         .agent(gemini::completion::GEMINI_2_5_FLASH)
         .preamble("You must use tools to answer arithmetic prompts.")
-        .tool(Add::new(add_calls.clone()))
-        .tool(Subtract::new(subtract_calls.clone()))
-        .tool(Multiply::new(multiply_calls.clone()))
-        .tool(Divide::new(divide_calls.clone()))
+        .local_rmcp_tool(Add::new(add_calls.clone()))
+        .local_rmcp_tool(Subtract::new(subtract_calls.clone()))
+        .local_rmcp_tool(Multiply::new(multiply_calls.clone()))
+        .local_rmcp_tool(Divide::new(divide_calls.clone()))
         .build();
 
     let mut stream = multi_turn_prompt(agent, MULTI_TURN_STREAMING_PROMPT, Vec::new()).await;
@@ -117,15 +120,18 @@ where
                     Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
                         let tool_result = agent
                             .tool_server_handle
-                            .call_tool(
-                                &tool_call.function.name,
-                                &tool_call.function.arguments.to_string(),
+                            .call_tool_text(
+                                ::rmcp::model::CallToolRequestParams::new(
+                                    tool_call.function.name.clone(),
+                                )
+                                .with_arguments(
+                                    serde_json::from_value(tool_call.function.arguments.clone())
+                                        .unwrap_or_default(),
+                                ),
                             )
                             .await
                             .map_err(|error| {
-                                StreamingError::Tool(ToolSetError::ToolCallError(
-                                    ToolError::ToolCallError(error.into()),
-                                ))
+                                StreamingError::Tool(ToolError::ToolCallError(error.to_string()))
                             })?;
 
                         tool_calls.push(AssistantContent::ToolCall(tool_call.clone()));
@@ -206,7 +212,7 @@ impl Add {
     }
 }
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -237,7 +243,7 @@ impl Subtract {
     }
 }
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -268,7 +274,7 @@ impl Multiply {
     }
 }
 
-impl Tool for Multiply {
+impl LocalRmcpTool for Multiply {
     const NAME: &'static str = "multiply";
     type Error = MathError;
     type Args = OperationArgs;
@@ -299,7 +305,7 @@ impl Divide {
     }
 }
 
-impl Tool for Divide {
+impl LocalRmcpTool for Divide {
     const NAME: &'static str = "divide";
     type Error = MathError;
     type Args = OperationArgs;

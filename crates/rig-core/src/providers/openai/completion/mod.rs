@@ -1177,7 +1177,7 @@ impl TryFrom<OpenAIRequestParams> for CompletionRequest {
         let tools: Vec<ToolDefinition> = tools
             .into_iter()
             .map(|tool| {
-                let def = ToolDefinition::from(tool);
+                let def = ToolDefinition::from(crate::completion::ToolDefinition::from(tool));
                 if strict_tools { def.with_strict() } else { def }
             })
             .collect();
@@ -1721,17 +1721,17 @@ mod tests {
                 "Hello, whats the weather in London?",
             )),
             documents: vec![],
-            tools: vec![completion::ToolDefinition {
-                name: "weather".to_string(),
-                description: "Get the weather".to_string(),
-                parameters: serde_json::json!({
+            tools: vec![crate::tool::tool_from_schema(
+                "weather",
+                "Get the weather",
+                serde_json::json!({
                     "type": "object",
                     "properties": {
                         "city": { "type": "string" }
                     },
                     "required": ["city"]
                 }),
-            }],
+            )],
             temperature: None,
             max_tokens: None,
             tool_choice: None,
@@ -1789,17 +1789,17 @@ mod tests {
             ])
             .expect("history should be non-empty"),
             documents: vec![],
-            tools: vec![completion::ToolDefinition {
-                name: "weather".to_string(),
-                description: "Get the weather".to_string(),
-                parameters: serde_json::json!({
+            tools: vec![crate::tool::tool_from_schema(
+                "weather",
+                "Get the weather",
+                serde_json::json!({
                     "type": "object",
                     "properties": {
                         "city": { "type": "string" }
                     },
                     "required": ["city"]
                 }),
-            }],
+            )],
             temperature: None,
             max_tokens: None,
             tool_choice: None,

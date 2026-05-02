@@ -1,31 +1,287 @@
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
+use ::rmcp::model::{CallToolRequestParams, CallToolResult, Content, Tool};
 use tokio::sync::RwLock;
 
 use crate::{
-    completion::{CompletionError, ToolDefinition},
-    tool::{Tool, ToolDyn, ToolSet, ToolSetError},
+    OneOrMany,
+    completion::CompletionError,
+    message::ToolResultContent,
+    tool::{ToolError, call_tool_result_to_content, call_tool_result_to_text},
     vector_store::{VectorSearchRequest, VectorStoreError, VectorStoreIndexDyn, request::Filter},
+    wasm_compat::{WasmBoxedFuture, WasmCompatSend, WasmCompatSync},
 };
 
-/// Shared state behind a `ToolServerHandle`.
-struct ToolServerState {
-    /// Static tool names that persist until explicitly removed.
-    static_tool_names: Vec<String>,
-    /// Dynamic tools fetched from vector stores on each prompt.
-    dynamic_tools: Vec<(usize, Arc<dyn VectorStoreIndexDyn + Send + Sync>)>,
-    /// The toolset where tools are registered and executed.
-    toolset: ToolSet,
+pub trait RmcpToolProvider: WasmCompatSend + WasmCompatSync {
+    fn list_tools<'a>(&'a self) -> WasmBoxedFuture<'a, Result<Vec<Tool>, ToolServerError>>;
+
+    fn call_tool<'a>(
+        &'a self,
+        params: CallToolRequestParams,
+    ) -> WasmBoxedFuture<'a, Result<CallToolResult, ToolServerError>>;
 }
 
-/// Builder for constructing a [`ToolServerHandle`].
-///
-/// Accumulates tools and configuration, then produces a shared handle via
-/// [`run()`](ToolServer::run).
+pub trait LocalRmcpTool: WasmCompatSend + WasmCompatSync + 'static {
+    const NAME: &'static str;
+
+    type Error: std::error::Error + WasmCompatSend + WasmCompatSync + 'static;
+    type Args: serde::de::DeserializeOwned + WasmCompatSend;
+    type Output: serde::Serialize + WasmCompatSend;
+
+    fn name(&self) -> String {
+        Self::NAME.to_string()
+    }
+
+    fn definition(
+        &self,
+        prompt: String,
+    ) -> impl Future<Output = crate::completion::ToolDefinition> + WasmCompatSend;
+
+    fn call(
+        &self,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + WasmCompatSend;
+}
+
+impl LocalRmcpTool for Tool {
+    const NAME: &'static str = "";
+
+    type Error = ToolError;
+    type Args = serde_json::Value;
+    type Output = CallToolResult;
+
+    fn name(&self) -> String {
+        self.name.to_string()
+    }
+
+    async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+        crate::completion::ToolDefinition::from(self)
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok(error_result(format!(
+            "No local handler is registered for rmcp tool '{}'",
+            self.name
+        )))
+    }
+}
+
+impl LocalRmcpTool for crate::completion::ToolDefinition {
+    const NAME: &'static str = "";
+
+    type Error = ToolError;
+    type Args = serde_json::Value;
+    type Output = CallToolResult;
+
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+        self.clone()
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok(error_result(format!(
+            "No local handler is registered for rmcp tool '{}'",
+            self.name
+        )))
+    }
+}
+
+#[derive(Clone)]
+struct RegisteredTool {
+    definition: Arc<dyn RmcpToolDefinitionProvider>,
+    provider: Arc<dyn RmcpToolProvider>,
+    owner: ToolOwner,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToolOwner {
+    Local,
+    Remote(u64),
+}
+
+fn next_remote_owner_id() -> u64 {
+    static NEXT_REMOTE_OWNER_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_REMOTE_OWNER_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+trait RmcpToolDefinitionProvider: WasmCompatSend + WasmCompatSync {
+    fn definition<'a>(
+        &'a self,
+        prompt: String,
+    ) -> WasmBoxedFuture<'a, Result<Tool, ToolServerError>>;
+}
+
+struct StaticToolDefinitionProvider {
+    definition: Tool,
+}
+
+impl RmcpToolDefinitionProvider for StaticToolDefinitionProvider {
+    fn definition<'a>(
+        &'a self,
+        _prompt: String,
+    ) -> WasmBoxedFuture<'a, Result<Tool, ToolServerError>> {
+        Box::pin(async move { Ok(self.definition.clone()) })
+    }
+}
+
+struct LocalToolDefinitionProvider<T> {
+    tool: Arc<T>,
+}
+
+impl<T> RmcpToolDefinitionProvider for LocalToolDefinitionProvider<T>
+where
+    T: LocalRmcpTool,
+{
+    fn definition<'a>(
+        &'a self,
+        prompt: String,
+    ) -> WasmBoxedFuture<'a, Result<Tool, ToolServerError>> {
+        Box::pin(async move { Ok(self.tool.definition(prompt).await.into()) })
+    }
+}
+
+struct ClosureToolProvider<F> {
+    definition: Tool,
+    handler: F,
+}
+
+impl<F, Fut> RmcpToolProvider for ClosureToolProvider<F>
+where
+    F: Fn(CallToolRequestParams) -> Fut + WasmCompatSend + WasmCompatSync,
+    Fut: Future<Output = Result<CallToolResult, ToolServerError>> + WasmCompatSend + 'static,
+{
+    fn list_tools<'a>(&'a self) -> WasmBoxedFuture<'a, Result<Vec<Tool>, ToolServerError>> {
+        Box::pin(async move { Ok(vec![self.definition.clone()]) })
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        params: CallToolRequestParams,
+    ) -> WasmBoxedFuture<'a, Result<CallToolResult, ToolServerError>> {
+        Box::pin((self.handler)(params))
+    }
+}
+
+struct LocalToolProvider<T> {
+    tool: Arc<T>,
+}
+
+impl<T> RmcpToolProvider for LocalToolProvider<T>
+where
+    T: LocalRmcpTool,
+{
+    fn list_tools<'a>(&'a self) -> WasmBoxedFuture<'a, Result<Vec<Tool>, ToolServerError>> {
+        Box::pin(async move {
+            let definition = self.tool.definition(String::new()).await;
+            Ok(vec![definition.into()])
+        })
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        params: CallToolRequestParams,
+    ) -> WasmBoxedFuture<'a, Result<CallToolResult, ToolServerError>> {
+        Box::pin(async move {
+            let args =
+                serde_json::from_value::<T::Args>(params.arguments.unwrap_or_default().into())?;
+            let output = self
+                .tool
+                .call(args)
+                .await
+                .map_err(|e| ToolServerError::from(e.to_string()))?;
+            let value = serde_json::to_value(output)?;
+            Ok(CallToolResult::structured(value))
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct RemoteToolProvider {
+    sink: ::rmcp::service::ServerSink,
+    owner_id: u64,
+}
+
+impl RemoteToolProvider {
+    pub fn new(sink: ::rmcp::service::ServerSink) -> Self {
+        Self::with_owner(sink, next_remote_owner_id())
+    }
+
+    fn with_owner(sink: ::rmcp::service::ServerSink, owner_id: u64) -> Self {
+        Self { sink, owner_id }
+    }
+
+    fn owner(&self) -> ToolOwner {
+        ToolOwner::Remote(self.owner_id)
+    }
+}
+
+impl RmcpToolProvider for RemoteToolProvider {
+    fn list_tools<'a>(&'a self) -> WasmBoxedFuture<'a, Result<Vec<Tool>, ToolServerError>> {
+        Box::pin(async move {
+            let result = self.sink.list_tools(Default::default()).await?;
+            Ok(result.tools)
+        })
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        params: CallToolRequestParams,
+    ) -> WasmBoxedFuture<'a, Result<CallToolResult, ToolServerError>> {
+        Box::pin(async move { self.sink.call_tool(params).await.map_err(Into::into) })
+    }
+}
+
+struct ToolServerState {
+    static_tool_names: Vec<String>,
+    dynamic_tools: Vec<(usize, Arc<dyn VectorStoreIndexDyn + Send + Sync>)>,
+    tools: HashMap<String, RegisteredTool>,
+}
+
 pub struct ToolServer {
     static_tool_names: Vec<String>,
     dynamic_tools: Vec<(usize, Arc<dyn VectorStoreIndexDyn + Send + Sync>)>,
-    toolset: ToolSet,
+    tools: HashMap<String, RegisteredTool>,
+}
+
+fn static_registered_tool(
+    tool: Tool,
+    provider: Arc<dyn RmcpToolProvider>,
+    owner: ToolOwner,
+) -> RegisteredTool {
+    RegisteredTool {
+        definition: Arc::new(StaticToolDefinitionProvider {
+            definition: tool.clone(),
+        }),
+        provider,
+        owner,
+    }
+}
+
+fn local_registered_tool<T>(tool: Arc<T>, provider: Arc<dyn RmcpToolProvider>) -> RegisteredTool
+where
+    T: LocalRmcpTool,
+{
+    RegisteredTool {
+        definition: Arc::new(LocalToolDefinitionProvider { tool }),
+        provider,
+        owner: ToolOwner::Local,
+    }
+}
+
+fn push_unique_tool_name(names: &mut Vec<String>, name: String) {
+    if !names.contains(&name) {
+        names.push(name);
+    }
 }
 
 impl Default for ToolServer {
@@ -39,7 +295,7 @@ impl ToolServer {
         Self {
             static_tool_names: Vec::new(),
             dynamic_tools: Vec::new(),
-            toolset: ToolSet::default(),
+            tools: HashMap::new(),
         }
     }
 
@@ -48,8 +304,8 @@ impl ToolServer {
         self
     }
 
-    pub(crate) fn add_tools(mut self, tools: ToolSet) -> Self {
-        self.toolset = tools;
+    pub(crate) fn add_registry(mut self, registry: RmcpToolRegistry) -> Self {
+        self.tools.extend(registry.tools);
         self
     }
 
@@ -61,121 +317,296 @@ impl ToolServer {
         self
     }
 
-    /// Add a static tool to the agent
-    pub fn tool(mut self, tool: impl Tool + 'static) -> Self {
-        let toolname = tool.name();
-        self.toolset.add_tool(tool);
-        self.static_tool_names.push(toolname);
+    pub fn rmcp_tool<F, Fut>(mut self, tool: Tool, handler: F) -> Self
+    where
+        F: Fn(CallToolRequestParams) -> Fut + WasmCompatSend + WasmCompatSync + 'static,
+        Fut: Future<Output = Result<CallToolResult, ToolServerError>> + WasmCompatSend + 'static,
+    {
+        let name = tool.name.to_string();
+        let provider = Arc::new(ClosureToolProvider {
+            definition: tool.clone(),
+            handler,
+        });
+        self.tools.insert(
+            name.clone(),
+            static_registered_tool(tool, provider, ToolOwner::Local),
+        );
+        self.static_tool_names.push(name);
         self
     }
 
-    /// Add an MCP tool (from `rmcp`) to the agent
-    #[cfg_attr(docsrs, doc(cfg(feature = "rmcp")))]
-    #[cfg(feature = "rmcp")]
-    pub fn rmcp_tool(mut self, tool: rmcp::model::Tool, client: rmcp::service::ServerSink) -> Self {
-        use crate::tool::rmcp::McpTool;
-        let toolname = tool.name.clone();
-        self.toolset
-            .add_tool(McpTool::from_mcp_server(tool, client));
-        self.static_tool_names.push(toolname.to_string());
+    pub fn local_rmcp_tool<T>(mut self, tool: T) -> Self
+    where
+        T: LocalRmcpTool,
+    {
+        let name = tool.name();
+        let tool = Arc::new(tool);
+        let provider = Arc::new(LocalToolProvider { tool: tool.clone() });
+        self.tools
+            .insert(name.clone(), local_registered_tool(tool, provider));
+        self.static_tool_names.push(name);
         self
     }
 
-    /// Add some dynamic tools to the agent. On each prompt, `sample` tools from the
-    /// dynamic toolset will be inserted in the request.
+    pub fn remote_rmcp_tools(
+        mut self,
+        tools: Vec<Tool>,
+        sink: ::rmcp::service::ServerSink,
+    ) -> Self {
+        let provider = Arc::new(RemoteToolProvider::new(sink));
+        let owner = provider.owner();
+        for tool in tools {
+            let name = tool.name.to_string();
+            self.tools.insert(
+                name.clone(),
+                static_registered_tool(tool, provider.clone(), owner),
+            );
+            self.static_tool_names.push(name);
+        }
+        self
+    }
+
     pub fn dynamic_tools(
         mut self,
         sample: usize,
         dynamic_tools: impl VectorStoreIndexDyn + Send + Sync + 'static,
-        toolset: ToolSet,
+        registry: RmcpToolRegistry,
     ) -> Self {
         self.dynamic_tools.push((sample, Arc::new(dynamic_tools)));
-        self.toolset.add_tools(toolset);
+        self.tools.extend(registry.tools);
         self
     }
 
-    /// Consume the builder and return a shared [`ToolServerHandle`].
     pub fn run(self) -> ToolServerHandle {
         ToolServerHandle(Arc::new(RwLock::new(ToolServerState {
             static_tool_names: self.static_tool_names,
             dynamic_tools: self.dynamic_tools,
-            toolset: self.toolset,
+            tools: self.tools,
         })))
     }
 }
 
-/// A cheaply-cloneable handle to the shared tool server state.
-///
-/// All operations acquire locks directly on the underlying state.
-/// Multiple handles (e.g. across agents) can share the same state
-/// without channel-based message routing.
-#[derive(Clone)]
-pub struct ToolServerHandle(Arc<RwLock<ToolServerState>>);
+#[derive(Default)]
+pub struct RmcpToolRegistry {
+    tools: HashMap<String, RegisteredTool>,
+}
 
-impl ToolServerHandle {
-    /// Register a new static tool.
-    pub async fn add_tool(&self, tool: impl ToolDyn + 'static) -> Result<(), ToolServerError> {
-        let mut state = self.0.write().await;
-        state.static_tool_names.push(tool.name());
-        state.toolset.add_tool_boxed(Box::new(tool));
-        Ok(())
+impl RmcpToolRegistry {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Merge an entire toolset into the server.
-    pub async fn append_toolset(&self, toolset: ToolSet) -> Result<(), ToolServerError> {
-        let mut state = self.0.write().await;
-        state.toolset.add_tools(toolset);
-        Ok(())
+    pub fn add_tool<F, Fut>(&mut self, tool: Tool, handler: F)
+    where
+        F: Fn(CallToolRequestParams) -> Fut + WasmCompatSend + WasmCompatSync + 'static,
+        Fut: Future<Output = Result<CallToolResult, ToolServerError>> + WasmCompatSend + 'static,
+    {
+        let name = tool.name.to_string();
+        let provider = Arc::new(ClosureToolProvider {
+            definition: tool.clone(),
+            handler,
+        });
+        self.tools.insert(
+            name,
+            static_registered_tool(tool, provider, ToolOwner::Local),
+        );
     }
 
-    /// Remove a tool by name from both the toolset and the static list.
-    pub async fn remove_tool(&self, tool_name: &str) -> Result<(), ToolServerError> {
-        let mut state = self.0.write().await;
-        state.static_tool_names.retain(|x| *x != tool_name);
-        state.toolset.delete_tool(tool_name);
-        Ok(())
+    pub fn add_local_tool<T>(&mut self, tool: T)
+    where
+        T: LocalRmcpTool,
+    {
+        let name = tool.name();
+        let tool = Arc::new(tool);
+        let provider = Arc::new(LocalToolProvider { tool: tool.clone() });
+        self.tools
+            .insert(name, local_registered_tool(tool, provider));
     }
 
-    /// Look up and execute a tool by name.
-    ///
-    /// The tool handle is cloned under a brief read lock so that
-    /// long-running tool executions never block writers.
-    pub async fn call_tool(&self, tool_name: &str, args: &str) -> Result<String, ToolServerError> {
-        let tool = {
-            let state = self.0.read().await;
-            state.toolset.get(tool_name).cloned()
-        };
-
-        match tool {
-            Some(tool) => {
-                tracing::debug!(target: "rig",
-                    "Calling tool {tool_name} with args:\n{}",
-                    serde_json::to_string_pretty(&args).unwrap_or_default()
-                );
-                tool.call(args.to_string())
-                    .await
-                    .map_err(|e| ToolSetError::ToolCallError(e).into())
-            }
-            None => Err(ToolServerError::ToolsetError(
-                ToolSetError::ToolNotFoundError(tool_name.to_string()),
-            )),
+    pub fn add_remote_tools(&mut self, tools: Vec<Tool>, sink: ::rmcp::service::ServerSink) {
+        let provider = Arc::new(RemoteToolProvider::new(sink));
+        let owner = provider.owner();
+        for tool in tools {
+            self.tools.insert(
+                tool.name.to_string(),
+                static_registered_tool(tool, provider.clone(), owner),
+            );
         }
     }
 
-    /// Retrieve tool definitions, optionally using a prompt to select
-    /// dynamic tools from configured vector stores.
+    pub fn extend(&mut self, registry: RmcpToolRegistry) {
+        self.tools.extend(registry.tools);
+    }
+}
+
+#[derive(Clone)]
+pub struct ToolServerHandle(Arc<RwLock<ToolServerState>>);
+
+#[derive(Clone, Debug, Default)]
+pub struct RemoteToolRegistration {
+    owner_id: u64,
+    tool_names: Vec<String>,
+}
+
+impl ToolServerHandle {
+    pub async fn add_rmcp_tool<F, Fut>(&self, tool: Tool, handler: F) -> Result<(), ToolServerError>
+    where
+        F: Fn(CallToolRequestParams) -> Fut + WasmCompatSend + WasmCompatSync + 'static,
+        Fut: Future<Output = Result<CallToolResult, ToolServerError>> + WasmCompatSend + 'static,
+    {
+        let mut registry = RmcpToolRegistry::new();
+        registry.add_tool(tool, handler);
+        self.append_registry(registry).await
+    }
+
+    pub async fn add_local_rmcp_tool<T>(&self, tool: T) -> Result<(), ToolServerError>
+    where
+        T: LocalRmcpTool,
+    {
+        let mut registry = RmcpToolRegistry::new();
+        registry.add_local_tool(tool);
+        self.append_registry(registry).await
+    }
+
+    pub async fn append_registry(&self, registry: RmcpToolRegistry) -> Result<(), ToolServerError> {
+        let mut state = self.0.write().await;
+        for name in registry.tools.keys() {
+            push_unique_tool_name(&mut state.static_tool_names, name.clone());
+        }
+        state.tools.extend(registry.tools);
+        Ok(())
+    }
+
+    pub async fn set_remote_tools(
+        &self,
+        tools: Vec<Tool>,
+        sink: ::rmcp::service::ServerSink,
+    ) -> Result<(), ToolServerError> {
+        self.replace_remote_tools(None, tools, sink)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn replace_remote_tools(
+        &self,
+        previous: Option<RemoteToolRegistration>,
+        tools: Vec<Tool>,
+        sink: ::rmcp::service::ServerSink,
+    ) -> Result<RemoteToolRegistration, ToolServerError> {
+        let owner_id = previous
+            .as_ref()
+            .map(|previous| previous.owner_id)
+            .unwrap_or_else(next_remote_owner_id);
+        let previous_tool_names = previous
+            .map(|previous| previous.tool_names)
+            .unwrap_or_default();
+        let provider = Arc::new(RemoteToolProvider::with_owner(sink, owner_id));
+        let owner = provider.owner();
+        let tool_names = self
+            .replace_remote_tools_with_provider(previous_tool_names, tools, provider, owner)
+            .await?;
+        Ok(RemoteToolRegistration {
+            owner_id,
+            tool_names,
+        })
+    }
+
+    async fn replace_remote_tools_with_provider(
+        &self,
+        previous_tool_names: Vec<String>,
+        tools: Vec<Tool>,
+        provider: Arc<dyn RmcpToolProvider>,
+        owner: ToolOwner,
+    ) -> Result<Vec<String>, ToolServerError> {
+        let mut state = self.0.write().await;
+        for name in previous_tool_names {
+            let still_owned_by_caller = state
+                .tools
+                .get(&name)
+                .is_some_and(|tool| tool.owner == owner);
+            if still_owned_by_caller {
+                state.static_tool_names.retain(|x| x != &name);
+                state.tools.remove(&name);
+            }
+        }
+
+        let mut current_tool_names = Vec::new();
+        for tool in tools {
+            let name = tool.name.to_string();
+            push_unique_tool_name(&mut state.static_tool_names, name.clone());
+            push_unique_tool_name(&mut current_tool_names, name.clone());
+            state
+                .tools
+                .insert(name, static_registered_tool(tool, provider.clone(), owner));
+        }
+        Ok(current_tool_names)
+    }
+
+    pub async fn remove_tool(&self, tool_name: &str) -> Result<(), ToolServerError> {
+        let mut state = self.0.write().await;
+        state.static_tool_names.retain(|x| x != tool_name);
+        state.tools.remove(tool_name);
+        Ok(())
+    }
+
+    pub async fn call_tool(
+        &self,
+        params: CallToolRequestParams,
+    ) -> Result<CallToolResult, ToolServerError> {
+        let tool_name = params.name.to_string();
+        let provider = {
+            let state = self.0.read().await;
+            state
+                .tools
+                .get(&tool_name)
+                .map(|tool| tool.provider.clone())
+        };
+
+        match provider {
+            Some(provider) => provider.call_tool(params).await,
+            None => Err(ToolServerError::ToolsetError(ToolError::ToolNotFoundError(
+                tool_name,
+            ))),
+        }
+    }
+
+    pub async fn call_tool_text(
+        &self,
+        params: CallToolRequestParams,
+    ) -> Result<String, ToolServerError> {
+        let result = self.call_tool(params).await?;
+        if result.is_error == Some(true) {
+            return Err(ToolServerError::ToolResultError(call_tool_result_to_text(
+                &result,
+            )?));
+        }
+        Ok(call_tool_result_to_text(&result)?)
+    }
+
+    pub async fn call_tool_content(
+        &self,
+        params: CallToolRequestParams,
+    ) -> Result<OneOrMany<ToolResultContent>, ToolServerError> {
+        let result = self.call_tool(params).await?;
+        if result.is_error == Some(true) {
+            return Err(ToolServerError::ToolResultError(call_tool_result_to_text(
+                &result,
+            )?));
+        }
+        Ok(call_tool_result_to_content(&result)?)
+    }
+
     pub async fn get_tool_defs(
         &self,
         prompt: Option<String>,
-    ) -> Result<Vec<ToolDefinition>, ToolServerError> {
-        // Snapshot the metadata we need under a brief read lock
+    ) -> Result<Vec<Tool>, ToolServerError> {
         let (static_tool_names, dynamic_tools) = {
             let state = self.0.read().await;
             (state.static_tool_names.clone(), state.dynamic_tools.clone())
         };
 
-        let mut tools = if let Some(ref text) = prompt {
-            // Create a future for each dynamic tool index
+        let mut tool_names = Vec::new();
+        if let Some(ref text) = prompt {
             let search_futures = dynamic_tools.iter().map(|(num_sample, index)| {
                 let text = text.clone();
                 let num_sample = *num_sample;
@@ -199,485 +630,494 @@ impl ToolServerHandle {
                 }
             });
 
-            // Execute searches concurrently and collect/flatten the IDs
-            let dynamic_tool_ids: Vec<String> = futures::future::try_join_all(search_futures)
-                .await
-                .map_err(|e| {
-                    ToolServerError::DefinitionError(CompletionError::RequestError(Box::new(e)))
-                })?
-                .into_iter()
-                .flatten()
-                .collect();
-
-            let dynamic_tool_handles: Vec<_> = {
-                let state = self.0.read().await;
-                dynamic_tool_ids
-                    .iter()
-                    .filter_map(|doc| {
-                        let handle = state.toolset.get(doc).cloned();
-                        if handle.is_none() {
-                            tracing::warn!("Tool implementation not found in toolset: {}", doc);
-                        }
-                        handle
-                    })
-                    .collect()
-            };
-
-            let mut tools = Vec::new();
-            for tool in dynamic_tool_handles {
-                tools.push(tool.definition(text.clone()).await);
-            }
-            tools
-        } else {
-            Vec::new()
-        };
-
-        let static_tool_handles: Vec<_> = {
-            let state = self.0.read().await;
-            static_tool_names
-                .iter()
-                .filter_map(|toolname| {
-                    let handle = state.toolset.get(toolname).cloned();
-                    if handle.is_none() {
-                        tracing::warn!("Tool implementation not found in toolset: {}", toolname);
-                    }
-                    handle
-                })
-                .collect()
-        };
-
-        for tool in static_tool_handles {
-            tools.push(tool.definition(String::new()).await);
+            tool_names.extend(
+                futures::future::try_join_all(search_futures)
+                    .await
+                    .map_err(|e| {
+                        ToolServerError::DefinitionError(CompletionError::RequestError(Box::new(e)))
+                    })?
+                    .into_iter()
+                    .flatten(),
+            );
         }
 
-        Ok(tools)
+        tool_names.extend(static_tool_names);
+
+        let definition_providers = {
+            let state = self.0.read().await;
+            tool_names
+                .iter()
+                .filter_map(|name| {
+                    let tool = state.tools.get(name);
+                    if tool.is_none() {
+                        tracing::warn!("Tool implementation not found in registry: {}", name);
+                    }
+                    tool.map(|tool| tool.definition.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let prompt = prompt.unwrap_or_default();
+        let definitions = definition_providers.into_iter().map(|provider| {
+            let prompt = prompt.clone();
+            async move { provider.definition(prompt).await }
+        });
+        futures::future::try_join_all(definitions).await
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolServerError {
-    #[error("Toolset error: {0}")]
-    ToolsetError(#[from] ToolSetError),
-    #[error("Failed to retrieve tool definitions: {0}")]
-    DefinitionError(CompletionError),
+    #[error("Tool error: {0}")]
+    ToolsetError(#[from] ToolError),
+
+    #[error("Definition error: {0}")]
+    DefinitionError(#[from] CompletionError),
+
+    #[error("Remote MCP tool error: {0}")]
+    RemoteMcp(#[from] ::rmcp::ServiceError),
+
+    #[error("MCP tool returned error: {0}")]
+    ToolResultError(String),
+}
+
+impl From<String> for ToolServerError {
+    fn from(error: String) -> Self {
+        ToolError::ToolCallError(error).into()
+    }
+}
+
+impl From<&str> for ToolServerError {
+    fn from(error: &str) -> Self {
+        error.to_string().into()
+    }
+}
+
+impl From<serde_json::Error> for ToolServerError {
+    fn from(error: serde_json::Error) -> Self {
+        ToolError::JsonError(error).into()
+    }
+}
+
+pub fn error_result(message: impl Into<String>) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(message.into())])
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
-
-    use serde::{Deserialize, Serialize};
-    use serde_json::json;
-
-    use crate::{
-        completion::ToolDefinition,
-        tool::{Tool, ToolSet, server::ToolServer},
-        vector_store::{
-            VectorStoreError, VectorStoreIndex,
-            request::{Filter, VectorSearchRequest},
-        },
-        wasm_compat::WasmCompatSend,
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
     };
 
-    #[derive(Deserialize)]
-    struct OperationArgs {
-        x: i32,
-        y: i32,
-    }
+    use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, thiserror::Error)]
-    #[error("Math error")]
-    struct MathError;
-
-    #[derive(Deserialize, Serialize)]
-    struct Adder;
-    impl Tool for Adder {
-        const NAME: &'static str = "add";
-        type Error = MathError;
-        type Args = OperationArgs;
-        type Output = i32;
-
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: "add".to_string(),
-                description: "Add x and y together".to_string(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "x": {
-                            "type": "number",
-                            "description": "The first number to add"
-                        },
-                        "y": {
-                            "type": "number",
-                            "description": "The second number to add"
-                        }
-                    },
-                    "required": ["x", "y"],
-                }),
-            }
-        }
-
-        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-            println!("[tool-call] Adding {} and {}", args.x, args.y);
-            let result = args.x + args.y;
-            Ok(result)
-        }
-    }
-
-    #[derive(Deserialize, Serialize)]
-    struct Subtractor;
-    impl Tool for Subtractor {
-        const NAME: &'static str = "subtract";
-        type Error = MathError;
-        type Args = OperationArgs;
-        type Output = i32;
-
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: "subtract".to_string(),
-                description: "Subtract y from x".to_string(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "x": {
-                            "type": "number",
-                            "description": "The number to subtract from"
-                        },
-                        "y": {
-                            "type": "number",
-                            "description": "The number to subtract"
-                        }
-                    },
-                    "required": ["x", "y"],
-                }),
-            }
-        }
-
-        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-            let result = args.x - args.y;
-            Ok(result)
-        }
-    }
-
-    /// A mock vector store index that returns a predefined list of tool IDs.
-    struct MockToolIndex {
-        tool_ids: Vec<String>,
-    }
-
-    impl VectorStoreIndex for MockToolIndex {
-        type Filter = Filter<serde_json::Value>;
-
-        async fn top_n<T: for<'a> Deserialize<'a> + WasmCompatSend>(
-            &self,
-            _req: VectorSearchRequest,
-        ) -> Result<Vec<(f64, String, T)>, VectorStoreError> {
-            // Not used by get_tool_definitions, but required by trait
-            Ok(vec![])
-        }
-
-        async fn top_n_ids(
-            &self,
-            _req: VectorSearchRequest,
-        ) -> Result<Vec<(f64, String)>, VectorStoreError> {
-            Ok(self
-                .tool_ids
-                .iter()
-                .enumerate()
-                .map(|(i, id)| (1.0 - (i as f64 * 0.1), id.clone()))
-                .collect())
-        }
-    }
+    use super::*;
 
     #[tokio::test]
-    pub async fn test_toolserver() {
-        let server = ToolServer::new();
-
-        let handle = server.run();
-
-        handle.add_tool(Adder).await.unwrap();
-        let res = handle.get_tool_defs(None).await.unwrap();
-
-        assert_eq!(res.len(), 1);
-
-        let json_args_as_string =
-            serde_json::to_string(&serde_json::json!({"x": 2, "y": 5})).unwrap();
-        let res = handle.call_tool("add", &json_args_as_string).await.unwrap();
-        assert_eq!(res, "7");
-
-        handle.remove_tool("add").await.unwrap();
-        let res = handle.get_tool_defs(None).await.unwrap();
-
-        assert_eq!(res.len(), 0);
-    }
-
-    #[tokio::test]
-    pub async fn test_toolserver_dynamic_tools() {
-        // Create a toolset with both tools
-        let mut toolset = ToolSet::default();
-        toolset.add_tool(Adder);
-        toolset.add_tool(Subtractor);
-
-        // Create a mock index that will return "subtract" as the dynamic tool
-        let mock_index = MockToolIndex {
-            tool_ids: vec!["subtract".to_string()],
-        };
-
-        // Build server with static tool "add" and dynamic tools from the mock index
-        let server = ToolServer::new().tool(Adder).dynamic_tools(
-            1,
-            mock_index,
-            ToolSet::from_tools(vec![Subtractor]),
+    async fn add_rmcp_tool_advertises_runtime_tool_definition() {
+        let handle = ToolServer::new().run();
+        let tool = crate::tool::tool_from_schema(
+            "runtime_tool",
+            "Runtime registered tool",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
         );
 
-        let handle = server.run();
-
-        // Test with None prompt - should only return static tools
-        let res = handle.get_tool_defs(None).await.unwrap();
-        assert_eq!(res.len(), 1);
-        assert_eq!(res[0].name, "add");
-
-        // Test with Some prompt - should return both static and dynamic tools
-        let res = handle
-            .get_tool_defs(Some("calculate difference".to_string()))
+        handle
+            .add_rmcp_tool(tool, |_params| async {
+                Ok(CallToolResult::success(vec![Content::text("ok")]))
+            })
             .await
-            .unwrap();
-        assert_eq!(res.len(), 2);
+            .expect("tool should register");
 
-        // Check that both tools are present (order may vary)
-        let tool_names: Vec<&str> = res.iter().map(|t| t.name.as_str()).collect();
-        assert!(tool_names.contains(&"add"));
-        assert!(tool_names.contains(&"subtract"));
-    }
-
-    #[tokio::test]
-    pub async fn test_toolserver_dynamic_tools_missing_implementation() {
-        // Create a mock index that returns a tool ID that doesn't exist in the toolset
-        let mock_index = MockToolIndex {
-            tool_ids: vec!["nonexistent_tool".to_string()],
-        };
-
-        // Build server with only static tool, but dynamic index references missing tool
-        let server = ToolServer::new()
-            .tool(Adder)
-            .dynamic_tools(1, mock_index, ToolSet::default());
-
-        let handle = server.run();
-
-        // Test with Some prompt - should only return static tool since dynamic tool is missing
-        let res = handle
-            .get_tool_defs(Some("some query".to_string()))
+        let defs = handle
+            .get_tool_defs(None)
             .await
-            .unwrap();
-        assert_eq!(res.len(), 1);
-        assert_eq!(res[0].name, "add");
+            .expect("tool definitions should load");
+        let names = defs
+            .iter()
+            .map(|tool| tool.name.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["runtime_tool"]);
     }
 
-    /// A tool that waits at a barrier to test concurrency of tool execution.
-    #[derive(Clone)]
-    struct BarrierTool {
-        barrier: Arc<tokio::sync::Barrier>,
+    #[derive(Clone, Serialize, Deserialize)]
+    struct EchoTool;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct EchoArgs {
+        message: String,
     }
 
-    #[derive(Debug, thiserror::Error)]
-    #[error("Barrier error")]
-    struct BarrierError;
+    impl LocalRmcpTool for EchoTool {
+        const NAME: &'static str = "echo";
 
-    impl Tool for BarrierTool {
-        const NAME: &'static str = "barrier_tool";
-        type Error = BarrierError;
-        type Args = serde_json::Value;
+        type Error = ToolError;
+        type Args = EchoArgs;
         type Output = String;
 
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: "barrier_tool".to_string(),
-                description: "Waits at a barrier to test concurrency".to_string(),
-                parameters: serde_json::json!({"type": "object", "properties": {}}),
+        async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+            crate::completion::ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "Echo a message".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string" }
+                    },
+                    "required": ["message"]
+                }),
             }
         }
 
-        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-            // Wait for all concurrent invocations to reach this point
-            self.barrier.wait().await;
-            Ok("done".to_string())
+        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok(args.message)
         }
     }
 
     #[tokio::test]
-    pub async fn test_toolserver_concurrent_tool_execution() {
-        let num_calls = 3;
-        let barrier = Arc::new(tokio::sync::Barrier::new(num_calls));
+    async fn add_local_rmcp_tool_advertises_runtime_tool_definition() {
+        let handle = ToolServer::new().run();
 
-        let server = ToolServer::new().tool(BarrierTool {
-            barrier: barrier.clone(),
-        });
-        let handle = server.run();
+        handle
+            .add_local_rmcp_tool(EchoTool)
+            .await
+            .expect("tool should register");
 
-        // Make concurrent calls
-        let futures: Vec<_> = (0..num_calls)
-            .map(|_| handle.call_tool("barrier_tool", "{}"))
-            .collect();
+        let defs = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "echo");
 
-        // If execution is sequential, the first call will block at the barrier forever.
-        // We use a 1-second timeout to fail fast instead of hanging the test runner.
-        let result =
-            tokio::time::timeout(Duration::from_secs(1), futures::future::join_all(futures)).await;
+        let result = handle
+            .call_tool_text(
+                CallToolRequestParams::new("echo").with_arguments(
+                    serde_json::json!({ "message": "hello" })
+                        .as_object()
+                        .cloned()
+                        .expect("object"),
+                ),
+            )
+            .await
+            .expect("tool call should succeed");
+        assert_eq!(result, "hello");
+    }
 
-        assert!(
-            result.is_ok(),
-            "Tool execution deadlocked! Tools are executing sequentially instead of concurrently."
-        );
+    #[derive(Clone, Serialize, Deserialize)]
+    struct PromptAwareTool;
 
-        // All calls should succeed
-        for res in result.unwrap() {
-            assert!(res.is_ok(), "Tool call failed: {:?}", res);
-            assert_eq!(res.unwrap(), "done");
+    impl LocalRmcpTool for PromptAwareTool {
+        const NAME: &'static str = "prompt_aware";
+
+        type Error = ToolError;
+        type Args = EchoArgs;
+        type Output = String;
+
+        async fn definition(&self, prompt: String) -> crate::completion::ToolDefinition {
+            crate::completion::ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: format!("Definition for prompt: {prompt}"),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string" }
+                    },
+                    "required": ["message"]
+                }),
+            }
+        }
+
+        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok(args.message)
         }
     }
 
-    /// A tool that can be controlled to test concurrent writes to the ToolServer.
+    #[tokio::test]
+    async fn local_rmcp_tool_definition_uses_request_prompt() {
+        let handle = ToolServer::new().local_rmcp_tool(PromptAwareTool).run();
+
+        let defs = handle
+            .get_tool_defs(Some("current user request".to_string()))
+            .await
+            .expect("tool definitions should load");
+
+        assert_eq!(defs.len(), 1);
+        assert_eq!(
+            defs[0].description.as_deref(),
+            Some("Definition for prompt: current user request")
+        );
+    }
+
     #[derive(Clone)]
-    struct ControlledTool {
-        started: Arc<tokio::sync::Notify>,
-        allow_finish: Arc<tokio::sync::Notify>,
+    struct CountingDefinitionTool {
+        calls: Arc<AtomicUsize>,
     }
 
-    #[derive(Debug, thiserror::Error)]
-    #[error("Controlled error")]
-    struct ControlledError;
+    impl LocalRmcpTool for CountingDefinitionTool {
+        const NAME: &'static str = "counting_definition";
 
-    impl Tool for ControlledTool {
-        const NAME: &'static str = "controlled";
-        type Error = ControlledError;
-        type Args = serde_json::Value;
-        type Output = i32;
+        type Error = ToolError;
+        type Args = EchoArgs;
+        type Output = String;
 
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: "controlled".to_string(),
-                description: "Test tool".to_string(),
-                parameters: serde_json::json!({"type": "object", "properties": {}}),
+        async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            crate::completion::ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "Count definition calls".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string" }
+                    },
+                    "required": ["message"]
+                }),
             }
         }
 
-        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-            // 1. Signal that we are inside the call (lock should be dropped by now)
-            self.started.notify_one();
-            // 2. Wait indefinitely until the test allows us to finish
-            self.allow_finish.notified().await;
-            Ok(42)
+        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok(args.message)
         }
     }
 
     #[tokio::test]
-    pub async fn test_toolserver_write_while_tool_running() {
-        let started = Arc::new(tokio::sync::Notify::new());
-        let allow_finish = Arc::new(tokio::sync::Notify::new());
+    async fn local_rmcp_tool_registration_does_not_resolve_definition() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handle = ToolServer::new()
+            .local_rmcp_tool(CountingDefinitionTool {
+                calls: calls.clone(),
+            })
+            .run();
 
-        // Build server with the controlled tool that waits at a barrier during execution
-        let tool = ControlledTool {
-            started: started.clone(),
-            allow_finish: allow_finish.clone(),
-        };
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
 
-        let server = ToolServer::new().tool(tool);
-        let handle = server.run();
+        let defs = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load");
 
-        // Start tool call in background
-        let handle_clone = handle.clone();
-        let call_task =
-            tokio::spawn(async move { handle_clone.call_tool("controlled", "{}").await });
-
-        // Wait until we are strictly inside `call()`
-        started.notified().await;
-
-        // Try to write to the state (add a tool) while the tool call is mid-execution.
-        // If the read lock is incorrectly held across tool execution, this will deadlock.
-        let add_result = tokio::time::timeout(Duration::from_secs(1), handle.add_tool(Adder)).await;
-
-        assert!(
-            add_result.is_ok(),
-            "Writing to ToolServer deadlocked! The read lock is being held across tool execution."
-        );
-        assert!(add_result.unwrap().is_ok());
-
-        // Allow the background tool to finish and clean up
-        allow_finish.notify_one();
-        let call_result = call_task.await.unwrap();
-        assert_eq!(call_result.unwrap(), "42");
-    }
-
-    /// A mock vector store index that waits at a barrier to enforce parallel execution
-    struct BarrierMockIndex {
-        barrier: Arc<tokio::sync::Barrier>,
-        tool_id: String,
-    }
-
-    impl VectorStoreIndex for BarrierMockIndex {
-        type Filter = Filter<serde_json::Value>;
-
-        async fn top_n<T: for<'a> Deserialize<'a> + WasmCompatSend>(
-            &self,
-            _req: VectorSearchRequest,
-        ) -> Result<Vec<(f64, String, T)>, VectorStoreError> {
-            Ok(vec![])
-        }
-
-        async fn top_n_ids(
-            &self,
-            _req: VectorSearchRequest,
-        ) -> Result<Vec<(f64, String)>, VectorStoreError> {
-            // Wait for all indices to reach this point simultaneously
-            self.barrier.wait().await;
-            Ok(vec![(1.0, self.tool_id.clone())])
-        }
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "counting_definition");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    pub async fn test_toolserver_parallel_dynamic_tool_fetching() {
-        // We expect exactly 2 parallel searches to hit the barrier at the same time
-        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    async fn call_tool_text_returns_error_for_mcp_error_result() {
+        let handle = ToolServer::new()
+            .rmcp_tool(
+                crate::tool::tool_from_schema(
+                    "failing_tool",
+                    "Fails",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {},
+                    }),
+                ),
+                |_params| async { Ok(error_result("remote failure")) },
+            )
+            .run();
 
-        let index1 = BarrierMockIndex {
-            barrier: barrier.clone(),
-            tool_id: "add".to_string(),
-        };
+        let error = handle
+            .call_tool_text(CallToolRequestParams::new("failing_tool"))
+            .await
+            .expect_err("MCP error results should be returned as errors");
 
-        let index2 = BarrierMockIndex {
-            barrier: barrier.clone(),
-            tool_id: "subtract".to_string(),
-        };
+        assert!(matches!(
+            error,
+            ToolServerError::ToolResultError(message) if message == "remote failure"
+        ));
+    }
 
-        // Put both tools in the toolset so they resolve correctly
-        let mut toolset = ToolSet::default();
-        toolset.add_tool(Adder);
-        toolset.add_tool(Subtractor);
-
-        let server = ToolServer::new()
-            .dynamic_tools(1, index1, ToolSet::default())
-            .dynamic_tools(1, index2, toolset);
-
-        let handle = server.run();
-
-        // This will trigger a search across both indices.
-        // If fetched sequentially, the first index will wait at the barrier forever.
-        let get_defs = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            handle.get_tool_defs(Some("do math".to_string())),
+    fn test_tool(name: &str) -> Tool {
+        crate::tool::tool_from_schema(
+            name.to_string(),
+            format!("{name} description"),
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
         )
-        .await;
+    }
 
-        assert!(
-            get_defs.is_ok(),
-            "Dynamic tools were fetched sequentially! The first query deadlocked waiting for the second query to start."
+    #[tokio::test]
+    async fn set_remote_tools_replaces_previous_remote_tools() {
+        let handle = ToolServer::new().local_rmcp_tool(EchoTool).run();
+        let provider = Arc::new(ClosureToolProvider {
+            definition: test_tool("remote_provider"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("ok")])) },
+        });
+
+        let managed = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("remote_a"), test_tool("remote_b")],
+                provider.clone(),
+                ToolOwner::Remote(1),
+            )
+            .await
+            .expect("initial remote tools should register");
+
+        let names = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"echo".to_string()));
+        assert!(names.contains(&"remote_a".to_string()));
+        assert!(names.contains(&"remote_b".to_string()));
+
+        handle
+            .replace_remote_tools_with_provider(
+                managed,
+                vec![test_tool("remote_c")],
+                provider,
+                ToolOwner::Remote(1),
+            )
+            .await
+            .expect("remote tools should replace");
+
+        let names = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"echo".to_string()));
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.starts_with("remote_"))
+                .count(),
+            1
         );
+        assert!(names.contains(&"remote_c".to_string()));
+        assert!(!names.contains(&"remote_a".to_string()));
+        assert!(!names.contains(&"remote_b".to_string()));
+    }
 
-        let defs = get_defs.unwrap().unwrap();
-        assert_eq!(defs.len(), 2);
+    #[tokio::test]
+    async fn remote_tool_replacement_only_removes_tools_owned_by_caller() {
+        let handle = ToolServer::new().local_rmcp_tool(EchoTool).run();
+        let provider_a = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_a"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("a")])) },
+        });
+        let provider_b = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_b"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("b")])) },
+        });
 
-        let tool_names: Vec<&str> = defs.iter().map(|t| t.name.as_str()).collect();
-        assert!(tool_names.contains(&"add"));
-        assert!(tool_names.contains(&"subtract"));
+        let managed_a = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("remote_a")],
+                provider_a.clone(),
+                ToolOwner::Remote(2),
+            )
+            .await
+            .expect("first remote server should register");
+        let managed_b = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("remote_b")],
+                provider_b.clone(),
+                ToolOwner::Remote(3),
+            )
+            .await
+            .expect("second remote server should register");
+
+        let managed_a = handle
+            .replace_remote_tools_with_provider(
+                managed_a,
+                vec![test_tool("remote_a2")],
+                provider_a,
+                ToolOwner::Remote(2),
+            )
+            .await
+            .expect("first remote server should refresh");
+
+        let names = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"echo".to_string()));
+        assert!(names.contains(&"remote_a2".to_string()));
+        assert!(names.contains(&"remote_b".to_string()));
+        assert!(!names.contains(&"remote_a".to_string()));
+        assert_eq!(managed_a, vec!["remote_a2".to_string()]);
+        assert_eq!(managed_b, vec!["remote_b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn remote_tool_replacement_does_not_remove_colliding_name_from_other_owner() {
+        let handle = ToolServer::new().run();
+        let provider_a = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_a"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("a")])) },
+        });
+        let provider_b = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_b"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("b")])) },
+        });
+
+        let managed_a = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("shared")],
+                provider_a.clone(),
+                ToolOwner::Remote(4),
+            )
+            .await
+            .expect("first remote server should register");
+
+        handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("shared")],
+                provider_b,
+                ToolOwner::Remote(5),
+            )
+            .await
+            .expect("second remote server should replace shared name");
+
+        handle
+            .replace_remote_tools_with_provider(
+                managed_a,
+                Vec::new(),
+                provider_a,
+                ToolOwner::Remote(4),
+            )
+            .await
+            .expect("first remote server refresh should not remove second server tool");
+
+        let result = handle
+            .call_tool_text(CallToolRequestParams::new("shared"))
+            .await
+            .expect("shared tool should still be registered");
+        assert_eq!(result, "b");
+    }
+
+    #[test]
+    fn push_unique_tool_name_deduplicates_existing_names() {
+        let mut names = vec!["search".to_string()];
+
+        push_unique_tool_name(&mut names, "search".to_string());
+        push_unique_tool_name(&mut names, "lookup".to_string());
+
+        assert_eq!(names, vec!["search", "lookup"]);
     }
 }

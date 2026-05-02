@@ -32,8 +32,8 @@ async fn tool_prompt_across_subproviders() {
                  Use the provided tools to answer the user's question.",
             )
             .max_tokens(1024)
-            .tool(Adder)
-            .tool(Subtract)
+            .local_rmcp_tool(Adder)
+            .local_rmcp_tool(Subtract)
             .build();
 
         let response = agent

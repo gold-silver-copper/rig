@@ -6,7 +6,7 @@ use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Prompt, ToolDefinition};
 use rig::providers::anthropic;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -25,7 +25,7 @@ enum MathError {
 #[derive(Deserialize, Serialize)]
 struct Add;
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -51,7 +51,7 @@ impl Tool for Add {
 #[derive(Deserialize, Serialize)]
 struct Divide;
 
-impl Tool for Divide {
+impl LocalRmcpTool for Divide {
     const NAME: &'static str = "divide";
     type Error = MathError;
     type Args = OperationArgs;
@@ -88,8 +88,8 @@ async fn main() -> Result<()> {
             "You are an assistant that must use the available tools for arithmetic. \
              Never compute the result yourself.",
         )
-        .tool(Add)
-        .tool(Divide)
+        .local_rmcp_tool(Add)
+        .local_rmcp_tool(Divide)
         .default_max_turns(10)
         .build();
 

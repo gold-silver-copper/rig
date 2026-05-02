@@ -2,7 +2,7 @@ use rig::prelude::*;
 use rig::{
     completion::{Prompt, ToolDefinition},
     providers::anthropic,
-    tool::Tool,
+    tool::server::LocalRmcpTool,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -28,10 +28,10 @@ async fn main() -> anyhow::Result<()> {
             3. This is very important: never perform the operation yourself.
             "
         )
-        .tool(Add)
-        .tool(Subtract)
-        .tool(Multiply)
-        .tool(Divide)
+        .local_rmcp_tool(Add)
+        .local_rmcp_tool(Subtract)
+        .local_rmcp_tool(Multiply)
+        .local_rmcp_tool(Divide)
         .build();
 
     // Prompt the agent and print the response
@@ -68,7 +68,7 @@ struct MathError;
 #[derive(Deserialize, Serialize)]
 struct Add;
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -103,7 +103,7 @@ impl Tool for Add {
 #[derive(Deserialize, Serialize)]
 struct Subtract;
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -138,7 +138,7 @@ impl Tool for Subtract {
 #[derive(Deserialize, Serialize)]
 struct Multiply;
 
-impl Tool for Multiply {
+impl LocalRmcpTool for Multiply {
     const NAME: &'static str = "multiply";
     type Error = MathError;
     type Args = OperationArgs;
@@ -173,7 +173,7 @@ impl Tool for Multiply {
 #[derive(Deserialize, Serialize)]
 struct Divide;
 
-impl Tool for Divide {
+impl LocalRmcpTool for Divide {
     const NAME: &'static str = "divide";
     type Error = MathError;
     type Args = OperationArgs;

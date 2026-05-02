@@ -55,7 +55,7 @@ async fn tools() -> Result<(), anyhow::Error> {
     let calculator_agent = partial_agent()?
         .preamble("You must only do math by using a tool.")
         .max_tokens(1024)
-        .tool(common::Adder)
+        .local_rmcp_tool(common::Adder)
         .build();
 
     info!(

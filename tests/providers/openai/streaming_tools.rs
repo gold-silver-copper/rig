@@ -6,7 +6,7 @@ use rig::completion::CompletionModel;
 use rig::message::{AssistantContent, Message};
 use rig::providers::openai;
 use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, Adder, AlphaSignal, ORDERED_TOOL_STREAM_PREAMBLE,
@@ -23,8 +23,8 @@ async fn streaming_tools_smoke() {
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
@@ -46,8 +46,8 @@ async fn example_streaming_with_tools() {
              Use the tools provided to answer the user's question and answer in a full sentence.",
         )
         .max_tokens(1024)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
@@ -65,7 +65,7 @@ async fn responses_stream_preserves_tool_result_flow() {
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
-        .tool(AlphaSignal)
+        .local_rmcp_tool(AlphaSignal)
         .build();
 
     let mut stream = agent
@@ -89,7 +89,8 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE.to_string())
-        .tool(AlphaSignal.definition(String::new()).await)
+        .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
+        .await
         .build();
 
     let first_turn = collect_raw_stream_observation(

@@ -49,12 +49,13 @@ impl AwsCompletionRequest {
     pub fn tools_config(&self) -> Result<Option<ToolConfiguration>, CompletionError> {
         let mut tools = vec![];
         for tool_definition in self.inner.tools.iter() {
+            let tool_definition = rig_core::completion::ToolDefinition::from(tool_definition);
             let doc: AwsDocument = tool_definition.parameters.clone().into();
             let schema = ToolInputSchema::Json(doc.0);
             let tool = Tool::ToolSpec(
                 ToolSpecification::builder()
-                    .name(tool_definition.name.clone())
-                    .set_description(Some(tool_definition.description.clone()))
+                    .name(tool_definition.name)
+                    .set_description(Some(tool_definition.description))
                     .set_input_schema(Some(schema))
                     .build()
                     .map_err(|e| CompletionError::RequestError(e.into()))?,
@@ -235,14 +236,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: Some(ToolChoice::Auto),
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -268,14 +272,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: Some(ToolChoice::Required),
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -301,14 +308,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: Some(ToolChoice::None),
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -331,14 +341,17 @@ mod tests {
             tool_choice: Some(ToolChoice::Specific {
                 function_names: vec!["specific_tool".to_string()],
             }),
-            tools: vec![ToolDefinition {
-                name: "specific_tool".to_string(),
-                description: "A specific tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "specific_tool".to_string(),
+                    description: "A specific tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -364,14 +377,17 @@ mod tests {
         let request = CompletionRequest {
             model: None,
             tool_choice: None, // Not set
-            tools: vec![ToolDefinition {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "test_tool".to_string(),
+                    description: "A test tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -391,14 +407,17 @@ mod tests {
         // Test that tools with empty parameters (like document_list) work correctly
         let request = CompletionRequest {
             model: None,
-            tools: vec![ToolDefinition {
-                name: "document_list".to_string(),
-                description: "Lists all documents".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }],
+            tools: vec![
+                ToolDefinition {
+                    name: "document_list".to_string(),
+                    description: "Lists all documents".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {}
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 
@@ -426,24 +445,27 @@ mod tests {
         // Test that tools with parameters work correctly
         let request = CompletionRequest {
             model: None,
-            tools: vec![ToolDefinition {
-                name: "get_weather".to_string(),
-                description: "Get weather for a location".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "City name"
+            tools: vec![
+                ToolDefinition {
+                    name: "get_weather".to_string(),
+                    description: "Get weather for a location".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "City name"
+                            },
+                            "units": {
+                                "type": "string",
+                                "enum": ["celsius", "fahrenheit"]
+                            }
                         },
-                        "units": {
-                            "type": "string",
-                            "enum": ["celsius", "fahrenheit"]
-                        }
-                    },
-                    "required": ["location"]
-                }),
-            }],
+                        "required": ["location"]
+                    }),
+                }
+                .into(),
+            ],
             ..minimal_request()
         };
 

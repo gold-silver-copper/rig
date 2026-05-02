@@ -18,7 +18,7 @@ async fn streaming() {
         .agent(LIVE_MODEL)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(serde_json::json!({
             "reasoning": { "effort": "high" }
         }))

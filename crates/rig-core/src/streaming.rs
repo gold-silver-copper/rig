@@ -565,9 +565,19 @@ where
             }) => {
                 let res = agent
                     .tool_server_handle
-                    .call_tool(
-                        &tool_call.function.name,
-                        &tool_call.function.arguments.to_string(),
+                    .call_tool_text(
+                        ::rmcp::model::CallToolRequestParams::new(tool_call.function.name.clone())
+                            .with_arguments(
+                                crate::json_utils::parse_tool_arguments(
+                                    &crate::json_utils::value_to_json_string(
+                                        &tool_call.function.arguments,
+                                    ),
+                                )
+                                .map_err(|x| std::io::Error::other(x.to_string()))?
+                                .as_object()
+                                .cloned()
+                                .unwrap_or_default(),
+                            ),
                     )
                     .await
                     .map_err(|x| std::io::Error::other(x.to_string()))?;

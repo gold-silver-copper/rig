@@ -36,9 +36,8 @@ use serde_json::json;
 
 use crate::{
     agent::{Agent, AgentBuilder, WithBuilderTools},
-    completion::{Completion, CompletionError, CompletionModel, ToolDefinition, Usage},
+    completion::{Completion, CompletionError, CompletionModel, Usage},
     message::{AssistantContent, Message, ToolCall, ToolChoice, ToolFunction},
-    tool::Tool,
     vector_store::VectorStoreIndexDyn,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
@@ -330,7 +329,10 @@ where
                     Use the `submit` function to submit the structured data.\n\
                     Be sure to fill out every field and ALWAYS CALL THE `submit` function, even with default values!!!.
                 ")
-                .tool(SubmitTool::<T> {_t: PhantomData})
+                .rmcp_tool(submit_tool::<T>(), |params| async move {
+                    let data = serde_json::to_value(params.arguments.unwrap_or_default())?;
+                    Ok(::rmcp::model::CallToolResult::structured(data))
+                })
                 .tool_choice(ToolChoice::Required),
             retries: None,
             _t: PhantomData,
@@ -397,37 +399,16 @@ where
     }
 }
 
-#[derive(Deserialize, Serialize)]
-struct SubmitTool<T>
+fn submit_tool<T>() -> ::rmcp::model::Tool
 where
-    T: JsonSchema + for<'a> Deserialize<'a> + Serialize + WasmCompatSend + WasmCompatSync,
+    T: JsonSchema,
 {
-    _t: PhantomData<T>,
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("SubmitError")]
-struct SubmitError;
-
-impl<T> Tool for SubmitTool<T>
-where
-    T: JsonSchema + for<'a> Deserialize<'a> + Serialize + WasmCompatSend + WasmCompatSync,
-{
-    const NAME: &'static str = SUBMIT_TOOL_NAME;
-    type Error = SubmitError;
-    type Args = T;
-    type Output = T;
-
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Submit the structured data you extracted from the provided text."
-                .to_string(),
-            parameters: json!(schema_for!(T)),
-        }
-    }
-
-    async fn call(&self, data: Self::Args) -> Result<Self::Output, Self::Error> {
-        Ok(data)
-    }
+    ::rmcp::model::Tool::new(
+        SUBMIT_TOOL_NAME.to_string(),
+        "Submit the structured data you extracted from the provided text.",
+        match json!(schema_for!(T)) {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        },
+    )
 }

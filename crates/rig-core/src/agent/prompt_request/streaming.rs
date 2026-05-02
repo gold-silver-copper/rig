@@ -20,7 +20,7 @@ use crate::{
     agent::Agent,
     completion::{CompletionError, CompletionModel, PromptError},
     message::{Message, Text},
-    tool::ToolSetError,
+    tool::ToolError,
 };
 
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
@@ -157,9 +157,8 @@ async fn cancelled_prompt_error(
 fn tool_result_to_user_message(
     id: String,
     call_id: Option<String>,
-    tool_result: String,
+    content: OneOrMany<ToolResultContent>,
 ) -> Message {
-    let content = ToolResultContent::from_tool_output(tool_result);
     let user_content = match call_id {
         Some(call_id) => UserContent::tool_result_with_call_id(id, call_id, content),
         None => UserContent::tool_result(id, content),
@@ -168,6 +167,17 @@ fn tool_result_to_user_message(
     Message::User {
         content: OneOrMany::one(user_content),
     }
+}
+
+fn tool_result_content_to_text(content: &OneOrMany<ToolResultContent>) -> String {
+    content
+        .iter()
+        .map(|content| match content {
+            ToolResultContent::Text(text) => text.text.clone(),
+            ToolResultContent::Image(_) => "[Image]".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn assistant_text_from_choice(choice: &OneOrMany<AssistantContent>) -> String {
@@ -186,8 +196,8 @@ pub enum StreamingError {
     Completion(#[from] CompletionError),
     #[error("PromptError: {0}")]
     Prompt(#[from] Box<PromptError>),
-    #[error("ToolSetError: {0}")]
-    Tool(#[from] ToolSetError),
+    #[error("ToolError: {0}")]
+    Tool(#[from] ToolError),
 }
 
 const UNKNOWN_AGENT_NAME: &str = "Unnamed Agent";
@@ -549,25 +559,45 @@ where
                                         );
                                         let tool_call_msg = AssistantContent::ToolCall(tool_call.clone());
                                         tool_calls.push(tool_call_msg);
-                                        tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), reason.clone()));
+                                        tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), ToolResultContent::from_tool_output(reason.clone())));
                                         saw_tool_call_this_turn = true;
-                                        return Ok(reason);
+                                        return Ok((
+                                            reason.clone(),
+                                            ToolResultContent::from_tool_output(reason),
+                                        ));
                                     }
                                 }
 
                                 tool_span.record("gen_ai.tool.name", &tool_call.function.name);
                                 tool_span.record("gen_ai.tool.call.arguments", &tool_args);
 
-                                let tool_result = match
-                                tool_server_handle.call_tool(&tool_call.function.name, &tool_args).await {
-                                    Ok(thing) => thing,
+                                let (tool_result_text, tool_result_content) = match serde_json::from_str::<::rmcp::model::JsonObject>(&tool_args)
+                                {
+                                    Ok(arguments) => {
+                                        let params = ::rmcp::model::CallToolRequestParams::new(
+                                            tool_call.function.name.clone(),
+                                        )
+                                        .with_arguments(arguments);
+                                        match tool_server_handle.call_tool_content(params).await {
+                                            Ok(content) => (tool_result_content_to_text(&content), content),
+                                            Err(e) => {
+                                                tracing::warn!("Error while calling tool: {e}");
+                                                let text = e.to_string();
+                                                (text.clone(), ToolResultContent::from_tool_output(text))
+                                            }
+                                        }
+                                    }
                                     Err(e) => {
-                                        tracing::warn!("Error while calling tool: {e}");
-                                        e.to_string()
+                                        let message = format!(
+                                            "ToolCallError: invalid arguments for tool '{}': {e}",
+                                            tool_call.function.name
+                                        );
+                                        tracing::warn!("{message}");
+                                        (message.clone(), ToolResultContent::from_tool_output(message))
                                     }
                                 };
 
-                                tool_span.record("gen_ai.tool.call.result", &tool_result);
+                                tool_span.record("gen_ai.tool.call.result", &tool_result_text);
 
                                 if let Some(ref hook) = self.hook &&
                                     let HookAction::Terminate { reason } =
@@ -576,7 +606,7 @@ where
                                         tool_call.call_id.clone(),
                                         &internal_call_id,
                                         &tool_args,
-                                        &tool_result.to_string()
+                                        &tool_result_text
                                     )
                                     .await {
                                         return Err(cancelled_prompt_error(chat_history.as_deref(), new_messages.clone(), reason).await);
@@ -585,15 +615,15 @@ where
                                 let tool_call_msg = AssistantContent::ToolCall(tool_call.clone());
 
                                 tool_calls.push(tool_call_msg);
-                                tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_result.clone()));
+                                tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_result_content.clone()));
 
                                 saw_tool_call_this_turn = true;
-                                Ok(tool_result)
+                                Ok((tool_result_text, tool_result_content))
                             }.instrument(tool_span).await;
 
                             match tc_result {
-                                Ok(text) => {
-                                    let tr = ToolResult { id: tool_call.id, call_id: tool_call.call_id, content: ToolResultContent::from_tool_output(text) };
+                                Ok((_text, content)) => {
+                                    let tr = ToolResult { id: tool_call.id, call_id: tool_call.call_id, content };
                                     yield Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult{ tool_result: tr, internal_call_id }));
                                 }
                                 Err(e) => {
@@ -927,19 +957,21 @@ mod tests {
         let message = tool_result_to_user_message(
             "tool_call_1".to_string(),
             Some("call_1".to_string()),
-            serde_json::json!({
-                "response": {
-                    "instruction": "Use the image part to answer."
-                },
-                "parts": [
-                    {
-                        "type": "image",
-                        "data": "base64data==",
-                        "mimeType": "image/png"
-                    }
-                ]
-            })
-            .to_string(),
+            ToolResultContent::from_tool_output(
+                serde_json::json!({
+                    "response": {
+                        "instruction": "Use the image part to answer."
+                    },
+                    "parts": [
+                        {
+                            "type": "image",
+                            "data": "base64data==",
+                            "mimeType": "image/png"
+                        }
+                    ]
+                })
+                .to_string(),
+            ),
         );
 
         let tool_result = match message {
@@ -1168,6 +1200,122 @@ mod tests {
                 ))
         )));
         assert_eq!(turn_counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[derive(Clone, Default)]
+    struct InvalidStreamingToolArgsMockModel {
+        turn_counter: Arc<AtomicUsize>,
+    }
+
+    #[allow(refining_impl_trait)]
+    impl CompletionModel for InvalidStreamingToolArgsMockModel {
+        type Response = ();
+        type StreamingResponse = MockStreamingResponse;
+        type Client = ();
+
+        fn make(_: &Self::Client, _: impl Into<String>) -> Self {
+            Self::default()
+        }
+
+        async fn completion(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+            Err(CompletionError::ProviderError(
+                "completion is unused in this streaming test".to_string(),
+            ))
+        }
+
+        async fn stream(
+            &self,
+            request: CompletionRequest,
+        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+            let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
+            let invalid_args_were_reported = if turn == 0 {
+                true
+            } else {
+                request.chat_history.iter().any(|message| matches!(
+                    message,
+                    Message::User { content }
+                        if matches!(
+                            content.first(),
+                            UserContent::ToolResult(tool_result)
+                                if tool_result.content.iter().any(|content| matches!(
+                                    content,
+                                    ToolResultContent::Text(text)
+                                        if text.text.contains("invalid arguments for tool 'should_not_call'")
+                                ))
+                        )
+                ))
+            };
+            let stream = async_stream::stream! {
+                if turn == 0 {
+                    yield Ok(RawStreamingChoice::ToolCall(
+                        RawStreamingToolCall::new(
+                            "tool_call_invalid_args".to_string(),
+                            "should_not_call".to_string(),
+                            serde_json::json!("not an object"),
+                        )
+                    ));
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(1)));
+                } else if invalid_args_were_reported {
+                    yield Ok(RawStreamingChoice::Message("done".to_string()));
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(1)));
+                } else {
+                    yield Err(CompletionError::ProviderError(
+                        "follow-up history did not include invalid argument tool result".to_string(),
+                    ));
+                }
+            };
+
+            let pinned_stream: crate::streaming::StreamingResult<Self::StreamingResponse> =
+                Box::pin(stream);
+            Ok(StreamingCompletionResponse::stream(pinned_stream))
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_prompt_reports_invalid_tool_arguments_without_dispatching() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = calls.clone();
+        let agent = AgentBuilder::new(InvalidStreamingToolArgsMockModel::default())
+            .rmcp_tool(
+                crate::tool::tool_from_schema(
+                    "should_not_call",
+                    "Should not be invoked",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {},
+                    }),
+                ),
+                move |_params| {
+                    let handler_calls = handler_calls.clone();
+                    async move {
+                        handler_calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(::rmcp::model::CallToolResult::success(vec![
+                            ::rmcp::model::Content::text("called"),
+                        ]))
+                    }
+                },
+            )
+            .build();
+
+        let mut stream = agent
+            .stream_prompt("call with invalid args")
+            .multi_turn(3)
+            .await;
+        let mut final_response = None;
+        while let Some(item) = stream.next().await {
+            if let MultiTurnStreamItem::FinalResponse(response) =
+                item.expect("stream should not fail")
+            {
+                final_response = Some(response.response().to_string());
+                break;
+            }
+        }
+
+        assert_eq!(final_response.as_deref(), Some("done"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[derive(Clone, Copy)]

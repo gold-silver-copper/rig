@@ -7,7 +7,7 @@ use rig::message::ToolChoice;
 use rig::message::{AssistantContent, Message};
 use rig::providers::xai;
 use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -35,7 +35,7 @@ struct StatusToolError;
 #[derive(Deserialize, Serialize)]
 struct StatusWordTool;
 
-impl Tool for StatusWordTool {
+impl LocalRmcpTool for StatusWordTool {
     const NAME: &'static str = "get_status_word";
     type Error = StatusToolError;
     type Args = NoArgs;
@@ -65,7 +65,8 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let model = client.completion_model(xai::completion::GROK_4);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
-        .tool(zero_arg_tool_definition("ping"))
+        .local_rmcp_tool(zero_arg_tool_definition("ping"))
+        .await
         .tool_choice(ToolChoice::Required)
         .build();
     let stream = model.stream(request).await.expect("stream should start");
@@ -80,7 +81,7 @@ async fn responses_stream_preserves_tool_result_flow() {
     let agent = client
         .agent(xai::completion::GROK_4)
         .preamble(XAI_STATUS_TOOL_PREAMBLE)
-        .tool(StatusWordTool)
+        .local_rmcp_tool(StatusWordTool)
         .build();
 
     let mut stream = agent
@@ -104,7 +105,8 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
     let request = model
         .completion_request(XAI_STATUS_TOOL_PROMPT)
         .preamble(XAI_STATUS_TOOL_PREAMBLE.to_string())
-        .tool(StatusWordTool.definition(String::new()).await)
+        .local_rmcp_tool(StatusWordTool.definition(String::new()).await)
+        .await
         .build();
 
     let first_turn = collect_raw_stream_observation(

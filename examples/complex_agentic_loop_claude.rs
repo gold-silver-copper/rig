@@ -140,11 +140,11 @@ async fn main() -> Result<(), anyhow::Error> {
             Combine these tools effectively to provide comprehensive, accurate, and actionable advice on
             environmental sustainability issues."
         )
-        .tool(ThinkTool)
-        .tool(vector_index)
-        .tool(research_agent)
-        .tool(analysis_agent)
-        .tool(recommendation_agent)
+        .local_rmcp_tool(ThinkTool)
+        .dynamic_context(3, vector_index)
+        .local_rmcp_tool(research_agent)
+        .local_rmcp_tool(analysis_agent)
+        .local_rmcp_tool(recommendation_agent)
         .name("orchestrator_agent")
         .build();
 

@@ -25,7 +25,7 @@ async fn streaming() {
         .agent(deepseek::DEEPSEEK_V4_FLASH)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(thinking_params())
         .build();
 
@@ -55,7 +55,7 @@ async fn nonstreaming() {
         .agent(deepseek::DEEPSEEK_V4_FLASH)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(thinking_params())
         .build();
 

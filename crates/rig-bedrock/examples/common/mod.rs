@@ -3,7 +3,7 @@ use std::{
     fmt::{Display, Formatter},
 };
 
-use rig_core::{completion::ToolDefinition, tool::Tool};
+use rig_core::{completion::ToolDefinition, tool::server::LocalRmcpTool};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -26,7 +26,7 @@ impl Error for MathError {}
 
 #[derive(Deserialize, Serialize)]
 pub struct Adder;
-impl Tool for Adder {
+impl LocalRmcpTool for Adder {
     const NAME: &'static str = "add";
 
     type Error = MathError;

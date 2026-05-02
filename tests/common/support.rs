@@ -7,7 +7,7 @@ use rig::{
     completion::{AssistantContent, GetTokenUsage, ToolDefinition},
     embeddings::Embedding,
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingCompletionResponse},
-    tool::Tool,
+    tool::server::{LocalRmcpTool, ToolServerError},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -120,34 +120,17 @@ pub(crate) struct EmptyArgs {}
 #[error("Math error")]
 pub(crate) struct MathError;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Adder;
 
-impl Tool for Adder {
+impl LocalRmcpTool for Adder {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: "add".to_string(),
-            description: "Add x and y together".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The first number to add"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The second number to add"
-                    }
-                },
-                "required": ["x", "y"]
-            }),
-        }
+        ToolDefinition::from(adder_tool())
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -155,34 +138,48 @@ impl Tool for Adder {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+pub(crate) fn adder_tool() -> ::rmcp::model::Tool {
+    rig::tool::tool_from_schema(
+        "add",
+        "Add x and y together",
+        json!({
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number",
+                    "description": "The first number to add"
+                },
+                "y": {
+                    "type": "number",
+                    "description": "The second number to add"
+                }
+            },
+            "required": ["x", "y"]
+        }),
+    )
+}
+
+pub(crate) async fn call_adder_tool(
+    params: ::rmcp::model::CallToolRequestParams,
+) -> Result<::rmcp::model::CallToolResult, ToolServerError> {
+    let args =
+        serde_json::from_value::<OperationArgs>(params.arguments.unwrap_or_default().into())?;
+    Ok(::rmcp::model::CallToolResult::success(vec![
+        ::rmcp::model::Content::text((args.x + args.y).to_string()),
+    ]))
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Subtract;
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
     type Output = i32;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: "subtract".to_string(),
-            description: "Subtract y from x (i.e.: x - y)".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "number",
-                        "description": "The number to subtract from"
-                    },
-                    "y": {
-                        "type": "number",
-                        "description": "The number to subtract"
-                    }
-                },
-                "required": ["x", "y"]
-            }),
-        }
+        ToolDefinition::from(subtract_tool())
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -190,25 +187,48 @@ impl Tool for Subtract {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+pub(crate) fn subtract_tool() -> ::rmcp::model::Tool {
+    rig::tool::tool_from_schema(
+        "subtract",
+        "Subtract y from x (i.e.: x - y)",
+        json!({
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "number",
+                    "description": "The number to subtract from"
+                },
+                "y": {
+                    "type": "number",
+                    "description": "The number to subtract"
+                }
+            },
+            "required": ["x", "y"]
+        }),
+    )
+}
+
+pub(crate) async fn call_subtract_tool(
+    params: ::rmcp::model::CallToolRequestParams,
+) -> Result<::rmcp::model::CallToolResult, ToolServerError> {
+    let args =
+        serde_json::from_value::<OperationArgs>(params.arguments.unwrap_or_default().into())?;
+    Ok(::rmcp::model::CallToolResult::success(vec![
+        ::rmcp::model::Content::text((args.x - args.y).to_string()),
+    ]))
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct AlphaSignal;
 
-impl Tool for AlphaSignal {
+impl LocalRmcpTool for AlphaSignal {
     const NAME: &'static str = "lookup_harbor_label";
     type Error = MathError;
     type Args = EmptyArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Return the alpha signal marker.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {},
-                "required": [],
-            }),
-        }
+        ToolDefinition::from(alpha_signal_tool())
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -216,25 +236,37 @@ impl Tool for AlphaSignal {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+pub(crate) fn alpha_signal_tool() -> ::rmcp::model::Tool {
+    rig::tool::tool_from_schema(
+        "lookup_harbor_label",
+        "Return the alpha signal marker.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }),
+    )
+}
+
+pub(crate) async fn call_alpha_signal_tool(
+    _params: ::rmcp::model::CallToolRequestParams,
+) -> Result<::rmcp::model::CallToolResult, ToolServerError> {
+    Ok(::rmcp::model::CallToolResult::success(vec![
+        ::rmcp::model::Content::text(ALPHA_SIGNAL_OUTPUT),
+    ]))
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct BetaSignal;
 
-impl Tool for BetaSignal {
+impl LocalRmcpTool for BetaSignal {
     const NAME: &'static str = "lookup_orchard_label";
     type Error = MathError;
     type Args = EmptyArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Return the beta signal marker.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {},
-                "required": [],
-            }),
-        }
+        ToolDefinition::from(beta_signal_tool())
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -242,16 +274,36 @@ impl Tool for BetaSignal {
     }
 }
 
-pub(crate) fn zero_arg_tool_definition(name: &str) -> ToolDefinition {
-    ToolDefinition {
-        name: name.to_owned(),
-        description: format!("A zero-argument tool named {name}."),
-        parameters: json!({
+pub(crate) fn beta_signal_tool() -> ::rmcp::model::Tool {
+    rig::tool::tool_from_schema(
+        "lookup_orchard_label",
+        "Return the beta signal marker.",
+        json!({
             "type": "object",
             "properties": {},
             "required": [],
         }),
-    }
+    )
+}
+
+pub(crate) async fn call_beta_signal_tool(
+    _params: ::rmcp::model::CallToolRequestParams,
+) -> Result<::rmcp::model::CallToolResult, ToolServerError> {
+    Ok(::rmcp::model::CallToolResult::success(vec![
+        ::rmcp::model::Content::text(BETA_SIGNAL_OUTPUT),
+    ]))
+}
+
+pub(crate) fn zero_arg_tool_definition(name: &str) -> ::rmcp::model::Tool {
+    rig::tool::tool_from_schema(
+        name.to_owned(),
+        format!("A zero-argument tool named {name}."),
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }),
+    )
 }
 
 pub(crate) fn assert_nonempty_response(response: &str) {

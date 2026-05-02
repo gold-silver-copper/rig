@@ -22,7 +22,7 @@ async fn streaming() {
         .agent("gemini-2.5-flash")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(serde_json::json!({
             "generationConfig": {
                 "thinkingConfig": { "thinkingBudget": 4096, "includeThoughts": true }
@@ -48,7 +48,7 @@ async fn nonstreaming() {
         .agent("gemini-2.5-flash")
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(serde_json::json!({
             "generationConfig": {
                 "thinkingConfig": { "thinkingBudget": 4096, "includeThoughts": true }

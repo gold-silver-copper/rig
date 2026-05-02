@@ -22,7 +22,7 @@ async fn streaming() {
         .agent(CLAUDE_SONNET_4_6)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(16384)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(serde_json::json!({
             "thinking": { "type": "adaptive" }
         }))
@@ -59,7 +59,7 @@ async fn nonstreaming() {
         .agent(CLAUDE_SONNET_4_6)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(16384)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(serde_json::json!({
             "thinking": { "type": "adaptive" }
         }))

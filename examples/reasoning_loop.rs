@@ -5,7 +5,7 @@ use rig::{
     extractor::Extractor,
     message::Message,
     providers::anthropic,
-    tool::Tool,
+    tool::server::LocalRmcpTool,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -91,10 +91,10 @@ async fn main() -> anyhow::Result<()> {
                 4. When you think you've finished calling tools for the operation, present the final result from the series of tool calls you made.
                 "
             )
-            .tool(Add)
-            .tool(Subtract)
-            .tool(Multiply)
-            .tool(Divide)
+            .local_rmcp_tool(Add)
+            .local_rmcp_tool(Subtract)
+            .local_rmcp_tool(Multiply)
+            .local_rmcp_tool(Divide)
             .build(),
     };
 
@@ -121,7 +121,7 @@ struct MathError;
 #[derive(Deserialize, Serialize)]
 struct Add;
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -153,7 +153,7 @@ impl Tool for Add {
 }
 #[derive(Deserialize, Serialize)]
 struct Subtract;
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -186,7 +186,7 @@ impl Tool for Subtract {
 
 struct Multiply;
 
-impl Tool for Multiply {
+impl LocalRmcpTool for Multiply {
     const NAME: &'static str = "multiply";
     type Error = MathError;
     type Args = OperationArgs;
@@ -220,7 +220,7 @@ impl Tool for Multiply {
 
 struct Divide;
 
-impl Tool for Divide {
+impl LocalRmcpTool for Divide {
     const NAME: &'static str = "divide";
     type Error = MathError;
     type Args = OperationArgs;
