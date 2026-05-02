@@ -6,7 +6,7 @@
     clippy::unreachable
 )]
 
-use rig_core::tool::Tool;
+use rig_core::tool::server::LocalRmcpTool;
 use rig_derive::rig_tool;
 
 #[rig_tool(name = "search-docs")]

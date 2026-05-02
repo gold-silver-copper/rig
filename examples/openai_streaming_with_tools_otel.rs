@@ -2,7 +2,9 @@ use anyhow::Result;
 use rig::agent::stream_to_stdout;
 use rig::prelude::*;
 
-use rig::{completion::ToolDefinition, providers, streaming::StreamingPrompt, tool::server::LocalRmcpTool};
+use rig::{
+    completion::ToolDefinition, providers, streaming::StreamingPrompt, tool::server::LocalRmcpTool,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

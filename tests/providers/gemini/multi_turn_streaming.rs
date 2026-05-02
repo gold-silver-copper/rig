@@ -12,7 +12,10 @@ use rig::completion::{self, CompletionError, CompletionModel, PromptError, ToolD
 use rig::message::{AssistantContent, Message, Text, ToolResultContent, UserContent};
 use rig::providers::gemini;
 use rig::streaming::{StreamedAssistantContent, StreamingCompletion};
-use rig::tool::{ToolError, server::{LocalRmcpTool, ToolServerError}};
+use rig::tool::{
+    ToolError,
+    server::{LocalRmcpTool, ToolServerError},
+};
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use thiserror::Error;

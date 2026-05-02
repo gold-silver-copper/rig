@@ -26,6 +26,10 @@ pub trait LocalRmcpTool: WasmCompatSend + WasmCompatSync + 'static {
     type Args: serde::de::DeserializeOwned + WasmCompatSend;
     type Output: serde::Serialize + WasmCompatSend;
 
+    fn name(&self) -> String {
+        Self::NAME.to_string()
+    }
+
     fn definition(
         &self,
         prompt: String,
@@ -48,10 +52,7 @@ impl LocalRmcpTool for Tool {
         crate::completion::ToolDefinition::from(self)
     }
 
-    async fn call(
-        &self,
-        _args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
         Ok(error_result(format!(
             "No local handler is registered for rmcp tool '{}'",
             self.name
@@ -70,10 +71,7 @@ impl LocalRmcpTool for crate::completion::ToolDefinition {
         self.clone()
     }
 
-    async fn call(
-        &self,
-        _args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
         Ok(error_result(format!(
             "No local handler is registered for rmcp tool '{}'",
             self.name
@@ -211,9 +209,8 @@ impl ToolServer {
         self.rmcp_tool(definition.into(), move |params| {
             let tool = tool.clone();
             async move {
-                let args = serde_json::from_value::<T::Args>(
-                    params.arguments.unwrap_or_default().into(),
-                )?;
+                let args =
+                    serde_json::from_value::<T::Args>(params.arguments.unwrap_or_default().into())?;
                 let output = tool
                     .call(args)
                     .await
@@ -302,9 +299,8 @@ impl RmcpToolRegistry {
         self.add_tool(definition.into(), move |params| {
             let tool = tool.clone();
             async move {
-                let args = serde_json::from_value::<T::Args>(
-                    params.arguments.unwrap_or_default().into(),
-                )?;
+                let args =
+                    serde_json::from_value::<T::Args>(params.arguments.unwrap_or_default().into())?;
                 let output = tool
                     .call(args)
                     .await
@@ -358,6 +354,11 @@ impl ToolServerHandle {
 
     pub async fn append_registry(&self, registry: RmcpToolRegistry) -> Result<(), ToolServerError> {
         let mut state = self.0.write().await;
+        for name in registry.tools.keys() {
+            if !state.static_tool_names.contains(name) {
+                state.static_tool_names.push(name.clone());
+            }
+        }
         state.tools.extend(registry.tools);
         Ok(())
     }
@@ -515,4 +516,106 @@ impl From<serde_json::Error> for ToolServerError {
 
 pub fn error_result(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message.into())])
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn add_rmcp_tool_advertises_runtime_tool_definition() {
+        let handle = ToolServer::new().run();
+        let tool = crate::tool::tool_from_schema(
+            "runtime_tool",
+            "Runtime registered tool",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        );
+
+        handle
+            .add_rmcp_tool(tool, |_params| async {
+                Ok(CallToolResult::success(vec![Content::text("ok")]))
+            })
+            .await
+            .expect("tool should register");
+
+        let defs = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load");
+        let names = defs
+            .iter()
+            .map(|tool| tool.name.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["runtime_tool"]);
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    struct EchoTool;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct EchoArgs {
+        message: String,
+    }
+
+    impl LocalRmcpTool for EchoTool {
+        const NAME: &'static str = "echo";
+
+        type Error = ToolError;
+        type Args = EchoArgs;
+        type Output = String;
+
+        async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+            crate::completion::ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "Echo a message".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string" }
+                    },
+                    "required": ["message"]
+                }),
+            }
+        }
+
+        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok(args.message)
+        }
+    }
+
+    #[tokio::test]
+    async fn add_local_rmcp_tool_advertises_runtime_tool_definition() {
+        let handle = ToolServer::new().run();
+
+        handle
+            .add_local_rmcp_tool(EchoTool)
+            .await
+            .expect("tool should register");
+
+        let defs = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "echo");
+
+        let result = handle
+            .call_tool_text(
+                CallToolRequestParams::new("echo").with_arguments(
+                    serde_json::json!({ "message": "hello" })
+                        .as_object()
+                        .cloned()
+                        .expect("object"),
+                ),
+            )
+            .await
+            .expect("tool call should succeed");
+        assert_eq!(result, "hello");
+    }
 }

@@ -36,7 +36,9 @@ where
         );
 
         crate::tool::tool_from_schema(
-            self.name.clone().unwrap_or_else(|| "agent_tool".to_string()),
+            self.name
+                .clone()
+                .unwrap_or_else(|| "agent_tool".to_string()),
             description,
             json!(schema_for!(AgentToolArgs)),
         )
@@ -46,7 +48,10 @@ where
         self,
     ) -> (
         Tool,
-        impl Fn(CallToolRequestParams) -> crate::wasm_compat::WasmBoxedFuture<'static, Result<CallToolResult, ToolServerError>>
+        impl Fn(
+            CallToolRequestParams,
+        )
+            -> crate::wasm_compat::WasmBoxedFuture<'static, Result<CallToolResult, ToolServerError>>
         + Clone
         + crate::wasm_compat::WasmCompatSend
         + crate::wasm_compat::WasmCompatSync
@@ -60,11 +65,16 @@ where
                 let args = serde_json::from_value::<AgentToolArgs>(
                     params.arguments.unwrap_or_default().into(),
                 )?;
-                let output = agent.prompt(args.prompt).await.map_err(|e| {
-                    ToolServerError::from(format!("Agent tool prompt failed: {e}"))
-                })?;
+                let output = agent
+                    .prompt(args.prompt)
+                    .await
+                    .map_err(|e| ToolServerError::from(format!("Agent tool prompt failed: {e}")))?;
                 Ok(CallToolResult::success(vec![Content::text(output)]))
-            }) as crate::wasm_compat::WasmBoxedFuture<'static, Result<CallToolResult, ToolServerError>>
+            })
+                as crate::wasm_compat::WasmBoxedFuture<
+                    'static,
+                    Result<CallToolResult, ToolServerError>,
+                >
         };
 
         (tool, handler)

@@ -5,8 +5,9 @@ use rig::providers::openai;
 use rig::{
     completion::ToolDefinition,
     embeddings::EmbeddingsBuilder,
+    embeddings::tool::ToolSchema,
     providers::openai::Client,
-    embeddings::tool::ToolSchema, tool::server::{LocalRmcpTool, RmcpToolRegistry},
+    tool::server::{LocalRmcpTool, RmcpToolRegistry},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 
@@ -99,7 +100,6 @@ impl LocalRmcpTool for Subtract {
     }
 }
 
-
 struct Multiply;
 
 impl LocalRmcpTool for Multiply {
@@ -134,7 +134,6 @@ impl LocalRmcpTool for Multiply {
         Ok(result)
     }
 }
-
 
 struct Divide;
 

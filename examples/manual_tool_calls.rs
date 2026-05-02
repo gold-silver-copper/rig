@@ -169,10 +169,7 @@ async fn main() -> Result<()> {
                     serde_json::from_value(tool_call.function.arguments.clone())
                         .unwrap_or_default(),
                 );
-            let output = agent
-                .tool_server_handle
-                .call_tool_text(params)
-                .await?;
+            let output = agent.tool_server_handle.call_tool_text(params).await?;
             println!("  {}({args}) -> {}", tool_call.function.name, output);
             history.push(tool_result_message(tool_call, output));
         }

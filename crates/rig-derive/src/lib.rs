@@ -487,7 +487,13 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
         #vis struct #struct_name;
 
         impl #rig_core::tool::server::LocalRmcpTool for #struct_name {
-            fn definition(&self) -> ::rmcp::model::Tool {
+            const NAME: &'static str = #tool_name;
+
+            type Args = #params_struct_name;
+            type Output = #output_type;
+            type Error = #error_type;
+
+            async fn definition(&self, _prompt: String) -> #rig_core::completion::ToolDefinition {
                 let parameters = serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -501,23 +507,15 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
                     "required": [#(#required_args),*]
                 });
 
-                #rig_core::tool::tool_from_schema(
-                    #tool_name,
-                    #tool_description,
+                #rig_core::completion::ToolDefinition {
+                    name: #tool_name.to_string(),
+                    description: #tool_description.to_string(),
                     parameters,
-                )
+                }
             }
 
-            async fn call(
-                &self,
-                params: ::rmcp::model::CallToolRequestParams,
-            ) -> Result<::rmcp::model::CallToolResult, #rig_core::tool::server::ToolServerError> {
-                let args = serde_json::from_value::<#params_struct_name>(
-                    params.arguments.unwrap_or_default().into(),
-                )?;
-                let output: #output_type = #call_body?;
-                let content = serde_json::to_value(output)?;
-                Ok(::rmcp::model::CallToolResult::structured(content))
+            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+                #call_body
             }
         }
 

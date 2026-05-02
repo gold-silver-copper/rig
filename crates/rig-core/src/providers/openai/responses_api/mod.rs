@@ -896,7 +896,6 @@ impl TryFrom<(String, crate::completion::CompletionRequest)> for CompletionReque
             .tools
             .into_iter()
             .map(crate::completion::ToolDefinition::from)
-            .map(crate::completion::ToolDefinition::from)
             .map(ResponsesToolDefinition::from)
             .collect();
         tools.append(&mut additional_tools);

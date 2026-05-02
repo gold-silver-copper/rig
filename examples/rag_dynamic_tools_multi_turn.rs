@@ -2,9 +2,10 @@ use anyhow::Result;
 use rig::{
     completion::{Prompt, ToolDefinition},
     embeddings::EmbeddingsBuilder,
+    embeddings::tool::ToolSchema,
     prelude::*,
     providers::openai::{self, Client},
-    embeddings::tool::ToolSchema, tool::server::{LocalRmcpTool, RmcpToolRegistry},
+    tool::server::{LocalRmcpTool, RmcpToolRegistry},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,6 @@ struct OperationArgs {
 #[derive(Debug, thiserror::Error)]
 #[error("Math error")]
 struct MathError;
-
 
 #[derive(Deserialize, Serialize)]
 struct Add;

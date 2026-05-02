@@ -11,6 +11,7 @@
 //! is accessible from outside the defining module.
 
 mod tools {
+    use rig_core::tool::server::LocalRmcpTool;
     use rig_derive::rig_tool;
 
     #[rig_tool(
@@ -33,7 +34,6 @@ mod tools {
 
     /// Verify that a private tool is accessible within its defining module.
     pub async fn use_private_tool() -> i32 {
-        use rig_core::tool::Tool;
         let tool = PrivateAdder;
         tool.call(PrivateAdderParameters { x: 99 }).await.unwrap()
     }
@@ -41,7 +41,7 @@ mod tools {
 
 #[tokio::test]
 async fn test_pub_tool_accessible_from_outside_module() {
-    use rig_core::tool::Tool;
+    use rig_core::tool::server::LocalRmcpTool;
 
     // PublicAdder and its parameters struct are accessible outside the `tools` module.
     let tool = tools::PublicAdder;
@@ -53,7 +53,7 @@ async fn test_pub_tool_accessible_from_outside_module() {
         .call(tools::PublicAdderParameters { x: 41 })
         .await
         .unwrap();
-    assert_eq!(result, serde_json::json!(42));
+    assert_eq!(result, 42);
 }
 
 #[test]
