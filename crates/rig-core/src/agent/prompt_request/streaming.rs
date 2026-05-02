@@ -558,23 +558,28 @@ where
                                 tool_span.record("gen_ai.tool.name", &tool_call.function.name);
                                 tool_span.record("gen_ai.tool.call.arguments", &tool_args);
 
-                                let params = match serde_json::from_str::<::rmcp::model::JsonObject>(&tool_args)
+                                let tool_result = match serde_json::from_str::<::rmcp::model::JsonObject>(&tool_args)
                                 {
-                                    Ok(arguments) => ::rmcp::model::CallToolRequestParams::new(
-                                        tool_call.function.name.clone(),
-                                    )
-                                    .with_arguments(arguments),
-                                    Err(_) => ::rmcp::model::CallToolRequestParams::new(
-                                        tool_call.function.name.clone(),
-                                    ),
-                                };
-
-                                let tool_result = match
-                                tool_server_handle.call_tool_text(params).await {
-                                    Ok(thing) => thing,
+                                    Ok(arguments) => {
+                                        let params = ::rmcp::model::CallToolRequestParams::new(
+                                            tool_call.function.name.clone(),
+                                        )
+                                        .with_arguments(arguments);
+                                        match tool_server_handle.call_tool_text(params).await {
+                                            Ok(thing) => thing,
+                                            Err(e) => {
+                                                tracing::warn!("Error while calling tool: {e}");
+                                                e.to_string()
+                                            }
+                                        }
+                                    }
                                     Err(e) => {
-                                        tracing::warn!("Error while calling tool: {e}");
-                                        e.to_string()
+                                        let message = format!(
+                                            "ToolCallError: invalid arguments for tool '{}': {e}",
+                                            tool_call.function.name
+                                        );
+                                        tracing::warn!("{message}");
+                                        message
                                     }
                                 };
 
@@ -1179,6 +1184,123 @@ mod tests {
                 ))
         )));
         assert_eq!(turn_counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[derive(Clone, Default)]
+    struct InvalidStreamingToolArgsMockModel {
+        turn_counter: Arc<AtomicUsize>,
+    }
+
+    #[allow(refining_impl_trait)]
+    impl CompletionModel for InvalidStreamingToolArgsMockModel {
+        type Response = ();
+        type StreamingResponse = MockStreamingResponse;
+        type Client = ();
+
+        fn make(_: &Self::Client, _: impl Into<String>) -> Self {
+            Self::default()
+        }
+
+        async fn completion(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+            Err(CompletionError::ProviderError(
+                "completion is unused in this streaming test".to_string(),
+            ))
+        }
+
+        async fn stream(
+            &self,
+            request: CompletionRequest,
+        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+            let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
+            let invalid_args_were_reported = if turn == 0 {
+                true
+            } else {
+                request.chat_history.iter().any(|message| matches!(
+                    message,
+                    Message::User { content }
+                        if matches!(
+                            content.first(),
+                            UserContent::ToolResult(tool_result)
+                                if tool_result.content.iter().any(|content| matches!(
+                                    content,
+                                    ToolResultContent::Text(text)
+                                        if text.text.contains("invalid arguments for tool 'should_not_call'")
+                                ))
+                        )
+                ))
+            };
+            let stream = async_stream::stream! {
+                if turn == 0 {
+                    yield Ok(RawStreamingChoice::ToolCall(
+                        RawStreamingToolCall::new(
+                            "tool_call_invalid_args".to_string(),
+                            "should_not_call".to_string(),
+                            serde_json::json!("not an object"),
+                        )
+                    ));
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(1)));
+                } else if invalid_args_were_reported {
+                    yield Ok(RawStreamingChoice::Message("done".to_string()));
+                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(1)));
+                } else {
+                    yield Err(CompletionError::ProviderError(
+                        "follow-up history did not include invalid argument tool result".to_string(),
+                    ));
+                }
+            };
+
+            let pinned_stream: crate::streaming::StreamingResult<Self::StreamingResponse> =
+                Box::pin(stream);
+            Ok(StreamingCompletionResponse::stream(pinned_stream))
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_prompt_reports_invalid_tool_arguments_without_dispatching() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = calls.clone();
+        let agent = AgentBuilder::new(InvalidStreamingToolArgsMockModel::default())
+            .rmcp_tool(
+                crate::tool::tool_from_schema(
+                    "should_not_call",
+                    "Should not be invoked",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {},
+                    }),
+                ),
+                move |_params| {
+                    let handler_calls = handler_calls.clone();
+                    async move {
+                        handler_calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(::rmcp::model::CallToolResult::success(vec![
+                            ::rmcp::model::Content::text("called"),
+                        ]))
+                    }
+                },
+            )
+            .build();
+
+        let mut stream = agent
+            .stream_prompt("call with invalid args")
+            .multi_turn(3)
+            .await;
+        let mut final_response = None;
+        while let Some(item) = stream.next().await {
+            match item.expect("stream should not fail") {
+                MultiTurnStreamItem::FinalResponse(response) => {
+                    final_response = Some(response.response().to_string());
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(final_response.as_deref(), Some("done"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[derive(Clone, Copy)]

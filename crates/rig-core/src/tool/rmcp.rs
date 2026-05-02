@@ -88,12 +88,6 @@ impl ::rmcp::handler::client::ClientHandler for McpClientHandler {
         };
 
         let mut managed = self.managed_tool_names.write().await;
-        for name in managed.drain(..) {
-            if let Err(e) = self.tool_server_handle.remove_tool(&name).await {
-                tracing::warn!("Failed to remove MCP tool '{name}' during refresh: {e}");
-            }
-        }
-
         let tool_names = tools
             .iter()
             .map(|tool| tool.name.to_string())

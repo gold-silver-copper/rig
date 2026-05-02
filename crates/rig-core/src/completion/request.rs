@@ -770,11 +770,11 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
     }
 
     /// Adds a local rmcp tool definition to the completion request.
-    pub fn local_rmcp_tool<T>(self, tool: T) -> Self
+    pub async fn local_rmcp_tool<T>(self, tool: T) -> Self
     where
         T: crate::tool::server::LocalRmcpTool,
     {
-        let definition = futures::executor::block_on(tool.definition(String::new()));
+        let definition = tool.definition(String::new()).await;
         self.rmcp_tool(definition.into())
     }
 
@@ -933,7 +933,13 @@ mod tests {
 
     use super::*;
     use crate::streaming::StreamingCompletionResponse;
+    use crate::tool::ToolError;
+    use crate::tool::server::LocalRmcpTool;
     use serde::{Deserialize, Serialize};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     #[derive(Clone)]
     struct DummyModel;
@@ -973,6 +979,51 @@ mod tests {
                 "dummy completion model".to_string(),
             ))
         }
+    }
+
+    #[derive(Clone)]
+    struct AsyncDefinitionTool {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl LocalRmcpTool for AsyncDefinitionTool {
+        const NAME: &'static str = "async_definition";
+
+        type Error = ToolError;
+        type Args = serde_json::Value;
+        type Output = String;
+
+        async fn definition(&self, _prompt: String) -> ToolDefinition {
+            tokio::task::yield_now().await;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "Async definition".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                }),
+            }
+        }
+
+        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok("ok".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn local_rmcp_tool_builder_resolves_definition_async() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let request = CompletionRequestBuilder::new(DummyModel, "hello")
+            .local_rmcp_tool(AsyncDefinitionTool {
+                calls: calls.clone(),
+            })
+            .await
+            .build();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, "async_definition");
     }
 
     #[test]

@@ -213,6 +213,7 @@ impl RmcpToolProvider for RemoteToolProvider {
 
 struct ToolServerState {
     static_tool_names: Vec<String>,
+    remote_tool_names: Vec<String>,
     dynamic_tools: Vec<(usize, Arc<dyn VectorStoreIndexDyn + Send + Sync>)>,
     tools: HashMap<String, RegisteredTool>,
 }
@@ -339,6 +340,7 @@ impl ToolServer {
     pub fn run(self) -> ToolServerHandle {
         ToolServerHandle(Arc::new(RwLock::new(ToolServerState {
             static_tool_names: self.static_tool_names,
+            remote_tool_names: Vec::new(),
             dynamic_tools: self.dynamic_tools,
             tools: self.tools,
         })))
@@ -432,15 +434,32 @@ impl ToolServerHandle {
         tools: Vec<Tool>,
         sink: ::rmcp::service::ServerSink,
     ) -> Result<(), ToolServerError> {
+        self.set_remote_tools_with_provider(tools, Arc::new(RemoteToolProvider::new(sink)))
+            .await
+    }
+
+    async fn set_remote_tools_with_provider(
+        &self,
+        tools: Vec<Tool>,
+        provider: Arc<dyn RmcpToolProvider>,
+    ) -> Result<(), ToolServerError> {
         let mut state = self.0.write().await;
-        let provider = Arc::new(RemoteToolProvider::new(sink));
+        let old_remote_names = std::mem::take(&mut state.remote_tool_names);
+        for name in old_remote_names {
+            state.static_tool_names.retain(|x| x != &name);
+            state.tools.remove(&name);
+        }
+
+        let mut remote_tool_names = Vec::new();
         for tool in tools {
             let name = tool.name.to_string();
             push_unique_tool_name(&mut state.static_tool_names, name.clone());
+            push_unique_tool_name(&mut remote_tool_names, name.clone());
             state
                 .tools
                 .insert(name, static_registered_tool(tool, provider.clone()));
         }
+        state.remote_tool_names = remote_tool_names;
         Ok(())
     }
 
@@ -821,6 +840,70 @@ mod tests {
             error,
             ToolServerError::ToolResultError(message) if message == "remote failure"
         ));
+    }
+
+    fn test_tool(name: &str) -> Tool {
+        crate::tool::tool_from_schema(
+            name.to_string(),
+            format!("{name} description"),
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn set_remote_tools_replaces_previous_remote_tools() {
+        let handle = ToolServer::new().local_rmcp_tool(EchoTool).run();
+        let provider = Arc::new(ClosureToolProvider {
+            definition: test_tool("remote_provider"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("ok")])) },
+        });
+
+        handle
+            .set_remote_tools_with_provider(
+                vec![test_tool("remote_a"), test_tool("remote_b")],
+                provider.clone(),
+            )
+            .await
+            .expect("initial remote tools should register");
+
+        let names = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"echo".to_string()));
+        assert!(names.contains(&"remote_a".to_string()));
+        assert!(names.contains(&"remote_b".to_string()));
+
+        handle
+            .set_remote_tools_with_provider(vec![test_tool("remote_c")], provider)
+            .await
+            .expect("remote tools should replace");
+
+        let names = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"echo".to_string()));
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.starts_with("remote_"))
+                .count(),
+            1
+        );
+        assert!(names.contains(&"remote_c".to_string()));
+        assert!(!names.contains(&"remote_a".to_string()));
+        assert!(!names.contains(&"remote_b".to_string()));
     }
 
     #[test]
