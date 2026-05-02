@@ -121,7 +121,7 @@ pub(crate) async fn stream_events(
         yield Ok(ModelEvent::Done);
     };
 
-    Ok(rig_core::model_event::result_stream(Box::pin(stream)))
+    Ok(rig_core::completion::codec::result_stream(Box::pin(stream)))
 }
 
 fn encode_signature(bytes: &[u8]) -> Option<String> {

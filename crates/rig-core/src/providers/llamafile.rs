@@ -147,7 +147,7 @@ enum ApiResponse<T> {
 /// Llamafile uses the OpenAI chat completions format.
 /// We reuse the OpenAI `Message` type for maximum compatibility.
 #[derive(Debug, Serialize)]
-struct LlamafileCompletionRequest {
+pub(crate) struct LlamafileCompletionRequest {
     model: String,
     messages: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -288,10 +288,8 @@ fn llamafile_message_value(message: openai::Message) -> Result<Value, Completion
     }
 }
 
-impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl LlamafileCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs may not be supported by llamafile");
         }
@@ -335,6 +333,27 @@ impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
                 .collect(),
             additional_params: req.additional_params,
         })
+    }
+}
+
+pub(crate) struct LlamafileCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> LlamafileCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for LlamafileCompletionRequestCodec<'_> {
+    type Request = LlamafileCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        LlamafileCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -395,8 +414,10 @@ where
                 tracing::Span::current()
             };
 
-            let request =
-                LlamafileCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &LlamafileCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if tracing::enabled!(Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -478,8 +499,10 @@ where
             tracing::Span::current()
         };
 
-        let mut request =
-            LlamafileCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &LlamafileCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),
@@ -776,8 +799,11 @@ mod tests {
             output_schema: None,
         };
 
-        let request = LlamafileCompletionRequest::try_from((LLAMA_CPP, completion_request))
-            .expect("Failed to create request");
+        let request = crate::completion::CompletionCodec::encode_request(
+            &LlamafileCompletionRequestCodec::new(LLAMA_CPP),
+            completion_request,
+        )
+        .expect("Failed to create request");
 
         assert_eq!(request.model, LLAMA_CPP);
         assert_eq!(request.messages.len(), 2); // system + user
@@ -824,8 +850,11 @@ mod tests {
             output_schema: None,
         };
 
-        let request = LlamafileCompletionRequest::try_from((LLAMA_CPP, completion_request))
-            .expect("Failed to create request");
+        let request = crate::completion::CompletionCodec::encode_request(
+            &LlamafileCompletionRequestCodec::new(LLAMA_CPP),
+            completion_request,
+        )
+        .expect("Failed to create request");
 
         assert_eq!(request.messages.len(), 2);
         assert!(request.messages[0]["content"].is_string());

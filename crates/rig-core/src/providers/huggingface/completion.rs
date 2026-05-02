@@ -553,61 +553,67 @@ where
     }
 }
 
-fn completion_response_events(
-    response: CompletionResponse,
-) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
-    let choice = response.choices.first().ok_or_else(|| {
-        CompletionError::ResponseError("Response contained no choices".to_owned())
-    })?;
+pub(crate) struct HuggingfaceCompletionCodec;
 
-    let content = match &choice.message {
-        Message::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let mut content = content
-                .iter()
-                .map(|c| match c {
-                    AssistantContent::Text { text } => message::AssistantContent::text(text),
-                })
-                .collect::<Vec<_>>();
+impl crate::completion::CompletionResponseCodec for HuggingfaceCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
 
-            content.extend(tool_calls.iter().map(|call| {
-                completion::AssistantContent::tool_call(
-                    &call.id,
-                    &call.function.name,
-                    call.function.arguments.clone(),
-                )
-            }));
-            Ok(content)
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let choice = response.choices.first().ok_or_else(|| {
+            CompletionError::ResponseError("Response contained no choices".to_owned())
+        })?;
+
+        let content = match &choice.message {
+            Message::Assistant {
+                content,
+                tool_calls,
+                ..
+            } => {
+                let mut content = content
+                    .iter()
+                    .map(|c| match c {
+                        AssistantContent::Text { text } => message::AssistantContent::text(text),
+                    })
+                    .collect::<Vec<_>>();
+
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
+                Ok(content)
+            }
+            _ => Err(CompletionError::ResponseError(
+                "Response did not contain a valid message or tool call".into(),
+            )),
+        }?;
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
         }
-        _ => Err(CompletionError::ResponseError(
-            "Response did not contain a valid message or tool call".into(),
-        )),
-    }?;
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+        let usage = completion::Usage {
+            input_tokens: response.usage.prompt_tokens as u64,
+            output_tokens: response.usage.completion_tokens as u64,
+            total_tokens: response.usage.total_tokens as u64,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        };
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
-
-    let usage = completion::Usage {
-        input_tokens: response.usage.prompt_tokens as u64,
-        output_tokens: response.usage.completion_tokens as u64,
-        total_tokens: response.usage.total_tokens as u64,
-        cached_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-    };
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct HuggingfaceCompletionRequest {
+pub(crate) struct HuggingfaceCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -620,10 +626,8 @@ pub(super) struct HuggingfaceCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for HuggingfaceCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl HuggingfaceCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Huggingface");
         }
@@ -678,6 +682,27 @@ impl TryFrom<(&str, CompletionRequest)> for HuggingfaceCompletionRequest {
             tool_choice,
             additional_params: req.additional_params,
         })
+    }
+}
+
+pub(crate) struct HuggingfaceCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> HuggingfaceCompletionRequestCodec<'a> {
+    pub(crate) fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for HuggingfaceCompletionRequestCodec<'_> {
+    type Request = HuggingfaceCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        HuggingfaceCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -738,8 +763,10 @@ where
             };
 
             let model = self.client.subprovider().model_identifier(&request_model);
-            let request =
-                HuggingfaceCompletionRequest::try_from((model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &HuggingfaceCompletionRequestCodec::new(model.as_ref()),
+                completion_request,
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(
@@ -785,7 +812,10 @@ where
                             span.record_token_usage(&response.usage);
                             span.record_response_metadata(&response);
 
-                            completion_response_events(response)
+                            crate::completion::codec::response_events(
+                                &HuggingfaceCompletionCodec,
+                                response,
+                            )
                         }
                         ApiResponse::Err(err) => {
                             Err(CompletionError::ProviderError(err.to_string()))
@@ -837,8 +867,11 @@ mod tests {
             output_schema: None,
         };
 
-        let hf_request = HuggingfaceCompletionRequest::try_from(("mistralai/Mistral-7B", request))
-            .expect("request conversion should succeed");
+        let hf_request = crate::completion::CompletionCodec::encode_request(
+            &HuggingfaceCompletionRequestCodec::new("mistralai/Mistral-7B"),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized = serde_json::to_value(hf_request).expect("serialization should succeed");
 
         assert_eq!(serialized["model"], "meta-llama/Meta-Llama-3.1-8B-Instruct");
@@ -859,8 +892,11 @@ mod tests {
             output_schema: None,
         };
 
-        let hf_request = HuggingfaceCompletionRequest::try_from(("mistralai/Mistral-7B", request))
-            .expect("request conversion should succeed");
+        let hf_request = crate::completion::CompletionCodec::encode_request(
+            &HuggingfaceCompletionRequestCodec::new("mistralai/Mistral-7B"),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized = serde_json::to_value(hf_request).expect("serialization should succeed");
 
         assert_eq!(serialized["model"], "mistralai/Mistral-7B");
@@ -1319,7 +1355,10 @@ mod tests {
             output_schema: None,
         };
 
-        let result = HuggingfaceCompletionRequest::try_from(("meta/test-model", request));
+        let result = crate::completion::CompletionCodec::encode_request(
+            &HuggingfaceCompletionRequestCodec::new("meta/test-model"),
+            request,
+        );
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
     }
 }

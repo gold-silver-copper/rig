@@ -2,7 +2,7 @@ use super::completion::CompletionModel;
 use crate::completion::{CompletionError, CompletionRequest};
 use crate::http_client::HttpClientExt;
 use crate::json_utils::{self};
-use crate::providers::huggingface::completion::HuggingfaceCompletionRequest;
+use crate::providers::huggingface::completion::HuggingfaceCompletionRequestCodec;
 use crate::providers::openai::{StreamingResponse, send_compatible_streaming_request};
 use tracing::{Instrument, info_span};
 
@@ -19,8 +19,10 @@ where
             .clone()
             .unwrap_or_else(|| self.model.clone());
         let model = self.client.subprovider().model_identifier(&request_model);
-        let mut request =
-            HuggingfaceCompletionRequest::try_from((model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &HuggingfaceCompletionRequestCodec::new(model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

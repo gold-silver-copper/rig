@@ -10,9 +10,7 @@ use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
     CompatibleToolCallChunk,
 };
-use crate::providers::openrouter::{
-    OpenRouterRequestParams, OpenrouterCompletionRequest, ReasoningDetails,
-};
+use crate::providers::openrouter::ReasoningDetails;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct StreamingResponse {
@@ -133,11 +131,10 @@ where
             .clone()
             .unwrap_or_else(|| self.model.clone());
         let preamble = completion_request.preamble.clone();
-        let mut request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
-            model: request_model.as_ref(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-        })?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &super::OpenRouterCompletionCodec::new(request_model.clone(), self.strict_tools),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

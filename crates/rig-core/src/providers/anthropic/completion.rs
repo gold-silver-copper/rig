@@ -207,39 +207,109 @@ pub enum SystemContent {
     },
 }
 
+#[derive(Debug, Clone)]
+struct AnthropicCompletionCodec {
+    model: String,
+    default_max_tokens: Option<u64>,
+    prompt_caching: bool,
+    automatic_caching: bool,
+    automatic_caching_ttl: Option<CacheTtl>,
+}
+
+impl AnthropicCompletionCodec {
+    fn new<Ext, T>(model: &GenericCompletionModel<Ext, T>) -> Self
+    where
+        Ext: AnthropicCompatibleProvider,
+    {
+        Self {
+            model: model.model.clone(),
+            default_max_tokens: model.default_max_tokens,
+            prompt_caching: model.prompt_caching,
+            automatic_caching: model.automatic_caching,
+            automatic_caching_ttl: model.automatic_caching_ttl.clone(),
+        }
+    }
+}
+
+impl crate::completion::CompletionCodec for AnthropicCompletionCodec {
+    type Request = AnthropicCompletionRequest;
+
+    fn encode_request(
+        &self,
+        mut request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        let request_model = request.model.clone().unwrap_or_else(|| self.model.clone());
+
+        if request.max_tokens.is_none() {
+            if let Some(tokens) = self.default_max_tokens {
+                request.max_tokens = Some(tokens);
+            } else {
+                return Err(CompletionError::RequestError(
+                    "`max_tokens` must be set for Anthropic".into(),
+                ));
+            }
+        }
+
+        AnthropicCompletionRequest::from_params(AnthropicRequestParams {
+            model: &request_model,
+            request,
+            prompt_caching: self.prompt_caching,
+            automatic_caching: self.automatic_caching,
+            automatic_caching_ttl: self.automatic_caching_ttl.clone(),
+        })
+    }
+}
+
+impl crate::completion::CompletionResponseCodec for AnthropicCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let mut content = response
+            .content
+            .iter()
+            .map(|content| content.clone().try_into())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if content.is_empty() {
+            if response.stop_reason.as_deref() == Some("end_turn") {
+                content.push(completion::AssistantContent::text(""));
+            } else {
+                return Err(CompletionError::ResponseError(
+                    EMPTY_RESPONSE_ERROR.to_owned(),
+                ));
+            }
+        }
+
+        let usage = completion::Usage {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            total_tokens: response.usage.input_tokens
+                + response.usage.cache_read_input_tokens.unwrap_or(0)
+                + response.usage.cache_creation_input_tokens.unwrap_or(0)
+                + response.usage.output_tokens,
+            cached_input_tokens: response.usage.cache_read_input_tokens.unwrap_or(0),
+            cache_creation_input_tokens: response.usage.cache_creation_input_tokens.unwrap_or(0),
+        };
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
+    }
+}
+
 fn completion_response_events(
     response: CompletionResponse,
 ) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
-    let mut content = response
-        .content
-        .iter()
-        .map(|content| content.clone().try_into())
-        .collect::<Result<Vec<_>, _>>()?;
-
-    if content.is_empty() {
-        if response.stop_reason.as_deref() == Some("end_turn") {
-            content.push(completion::AssistantContent::text(""));
-        } else {
-            return Err(CompletionError::ResponseError(
-                EMPTY_RESPONSE_ERROR.to_owned(),
-            ));
-        }
-    }
-
-    let usage = completion::Usage {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-        total_tokens: response.usage.input_tokens
-            + response.usage.cache_read_input_tokens.unwrap_or(0)
-            + response.usage.cache_creation_input_tokens.unwrap_or(0)
-            + response.usage.output_tokens,
-        cached_input_tokens: response.usage.cache_read_input_tokens.unwrap_or(0),
-        cache_creation_input_tokens: response.usage.cache_creation_input_tokens.unwrap_or(0),
+    let codec = AnthropicCompletionCodec {
+        model: String::new(),
+        default_max_tokens: None,
+        prompt_caching: false,
+        automatic_caching: false,
+        automatic_caching_ttl: None,
     };
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
+    crate::completion::codec::response_events(&codec, response)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -1215,21 +1285,16 @@ pub(super) fn split_system_messages_from_history(
     (system, remaining)
 }
 
-/// Parameters for building an AnthropicCompletionRequest
-pub struct AnthropicRequestParams<'a> {
-    pub model: &'a str,
-    pub request: CompletionRequest,
-    pub prompt_caching: bool,
-    /// Add a top-level `cache_control` field for Anthropic's automatic caching mode.
-    pub automatic_caching: bool,
-    /// TTL for the top-level cache_control. `None` omits the `ttl` field (API default is 5 min).
-    pub automatic_caching_ttl: Option<CacheTtl>,
+struct AnthropicRequestParams<'a> {
+    model: &'a str,
+    request: CompletionRequest,
+    prompt_caching: bool,
+    automatic_caching: bool,
+    automatic_caching_ttl: Option<CacheTtl>,
 }
 
-impl TryFrom<AnthropicRequestParams<'_>> for AnthropicCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from(params: AnthropicRequestParams<'_>) -> Result<Self, Self::Error> {
+impl AnthropicCompletionRequest {
+    fn from_params(params: AnthropicRequestParams<'_>) -> Result<Self, CompletionError> {
         let AnthropicRequestParams {
             model,
             request: mut req,
@@ -1365,7 +1430,7 @@ where
 
     async fn events(
         &self,
-        mut completion_request: completion::CompletionRequest,
+        completion_request: completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
         async {
             let request_model = completion_request
@@ -1391,24 +1456,10 @@ where
                 tracing::Span::current()
             };
 
-            // Check if max_tokens is set, required for Anthropic
-            if completion_request.max_tokens.is_none() {
-                if let Some(tokens) = self.default_max_tokens {
-                    completion_request.max_tokens = Some(tokens);
-                } else {
-                    return Err(CompletionError::RequestError(
-                        "`max_tokens` must be set for Anthropic".into(),
-                    ));
-                }
-            }
-
-            let request = AnthropicCompletionRequest::try_from(AnthropicRequestParams {
-                model: &request_model,
-                request: completion_request,
-                prompt_caching: self.prompt_caching,
-                automatic_caching: self.automatic_caching,
-                automatic_caching_ttl: self.automatic_caching_ttl.clone(),
-            })?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &AnthropicCompletionCodec::new(self),
+                completion_request,
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(
@@ -1518,6 +1569,35 @@ mod tests {
     fn unknown_model_uses_conservative_default_max_tokens_fallback() {
         assert_eq!(default_max_tokens_for_model("claude-unknown"), None);
         assert_eq!(default_max_tokens_with_fallback("claude-unknown"), 2_048);
+    }
+
+    #[test]
+    fn anthropic_codec_applies_default_max_tokens_when_encoding_request() {
+        let codec = AnthropicCompletionCodec {
+            model: CLAUDE_SONNET_4_6.to_string(),
+            default_max_tokens: Some(64_000),
+            prompt_caching: false,
+            automatic_caching: false,
+            automatic_caching_ttl: None,
+        };
+        let request = CompletionRequest {
+            model: None,
+            preamble: Some("You are helpful.".to_string()),
+            chat_history: OneOrMany::one(completion::Message::user("hello")),
+            documents: Vec::new(),
+            tools: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let encoded = crate::completion::CompletionCodec::encode_request(&codec, request)
+            .expect("request should encode");
+
+        assert_eq!(encoded.model, CLAUDE_SONNET_4_6);
+        assert_eq!(encoded.max_tokens, 64_000);
     }
 
     #[test]
@@ -2364,8 +2444,10 @@ mod tests {
             },
         };
 
-        let err = completion_response_events(response)
-            .expect_err("empty non-end_turn should remain an error");
+        let err = match completion_response_events(response) {
+            Ok(_) => panic!("empty non-end_turn should remain an error"),
+            Err(err) => err,
+        };
 
         assert!(matches!(
             err,

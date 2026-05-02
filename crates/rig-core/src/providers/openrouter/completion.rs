@@ -588,142 +588,179 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
+pub(crate) struct OpenRouterCompletionCodec {
+    model: String,
+    strict_tools: bool,
+}
+
+impl OpenRouterCompletionCodec {
+    pub(crate) fn new(model: impl Into<String>, strict_tools: bool) -> Self {
+        Self {
+            model: model.into(),
+            strict_tools,
+        }
+    }
+}
+
+impl crate::completion::CompletionCodec for OpenRouterCompletionCodec {
+    type Request = OpenrouterCompletionRequest;
+
+    fn encode_request(&self, request: CompletionRequest) -> Result<Self::Request, CompletionError> {
+        let model = request.model.clone().unwrap_or_else(|| self.model.clone());
+        OpenrouterCompletionRequest::from_params(OpenRouterRequestParams {
+            model: &model,
+            request,
+            strict_tools: self.strict_tools,
+        })
+    }
+}
+
+impl crate::completion::CompletionResponseCodec for OpenRouterCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let choice = response.choices.first().ok_or_else(|| {
+            CompletionError::ResponseError("Response contained no choices".to_owned())
+        })?;
+
+        let content = match &choice.message {
+            Message::Assistant {
+                content,
+                tool_calls,
+                reasoning,
+                reasoning_details,
+                ..
+            } => {
+                let mut content = content
+                    .iter()
+                    .map(|c| match c {
+                        openai::AssistantContent::Text { text } => {
+                            completion::AssistantContent::text(text)
+                        }
+                        openai::AssistantContent::Refusal { refusal } => {
+                            completion::AssistantContent::text(refusal)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
+
+                let mut grouped_reasoning: HashMap<
+                    Option<String>,
+                    Vec<(usize, usize, message::ReasoningContent)>,
+                > = HashMap::new();
+                let mut reasoning_order: Vec<Option<String>> = Vec::new();
+                for (position, detail) in reasoning_details.iter().enumerate() {
+                    let (reasoning_id, sort_index, parsed_content) = match detail {
+                        ReasoningDetails::Summary {
+                            id, index, summary, ..
+                        } => (
+                            id.clone(),
+                            *index,
+                            Some(message::ReasoningContent::Summary(summary.clone())),
+                        ),
+                        ReasoningDetails::Encrypted {
+                            id, index, data, ..
+                        } => (
+                            id.clone(),
+                            *index,
+                            Some(message::ReasoningContent::Encrypted(data.clone())),
+                        ),
+                        ReasoningDetails::Text {
+                            id,
+                            index,
+                            text,
+                            signature,
+                            ..
+                        } => (
+                            id.clone(),
+                            *index,
+                            text.as_ref().map(|text| message::ReasoningContent::Text {
+                                text: text.clone(),
+                                signature: signature.clone(),
+                            }),
+                        ),
+                    };
+
+                    let Some(parsed_content) = parsed_content else {
+                        continue;
+                    };
+                    let sort_index = sort_index.unwrap_or(position);
+
+                    let entry = grouped_reasoning.entry(reasoning_id.clone());
+                    if matches!(entry, std::collections::hash_map::Entry::Vacant(_)) {
+                        reasoning_order.push(reasoning_id);
+                    }
+                    entry
+                        .or_default()
+                        .push((sort_index, position, parsed_content));
+                }
+
+                if grouped_reasoning.is_empty() {
+                    if let Some(reasoning) = reasoning {
+                        content.push(completion::AssistantContent::reasoning(reasoning));
+                    }
+                } else {
+                    for reasoning_id in reasoning_order {
+                        let Some(mut blocks) = grouped_reasoning.remove(&reasoning_id) else {
+                            continue;
+                        };
+                        blocks.sort_by_key(|(index, position, _)| (*index, *position));
+                        content.push(completion::AssistantContent::Reasoning(
+                            message::Reasoning {
+                                id: reasoning_id,
+                                content: blocks
+                                    .into_iter()
+                                    .map(|(_, _, content)| content)
+                                    .collect::<Vec<_>>(),
+                            },
+                        ));
+                    }
+                }
+
+                Ok(content)
+            }
+            _ => Err(CompletionError::ResponseError(
+                "Response did not contain a valid message or tool call".into(),
+            )),
+        }?;
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.prompt_tokens as u64,
+                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+                total_tokens: usage.total_tokens as u64,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
+    }
+}
+
 fn completion_response_events(
     response: CompletionResponse,
 ) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
-    let choice = response.choices.first().ok_or_else(|| {
-        CompletionError::ResponseError("Response contained no choices".to_owned())
-    })?;
-
-    let content = match &choice.message {
-        Message::Assistant {
-            content,
-            tool_calls,
-            reasoning,
-            reasoning_details,
-            ..
-        } => {
-            let mut content = content
-                .iter()
-                .map(|c| match c {
-                    openai::AssistantContent::Text { text } => {
-                        completion::AssistantContent::text(text)
-                    }
-                    openai::AssistantContent::Refusal { refusal } => {
-                        completion::AssistantContent::text(refusal)
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            content.extend(tool_calls.iter().map(|call| {
-                completion::AssistantContent::tool_call(
-                    &call.id,
-                    &call.function.name,
-                    call.function.arguments.clone(),
-                )
-            }));
-
-            let mut grouped_reasoning: HashMap<
-                Option<String>,
-                Vec<(usize, usize, message::ReasoningContent)>,
-            > = HashMap::new();
-            let mut reasoning_order: Vec<Option<String>> = Vec::new();
-            for (position, detail) in reasoning_details.iter().enumerate() {
-                let (reasoning_id, sort_index, parsed_content) = match detail {
-                    ReasoningDetails::Summary {
-                        id, index, summary, ..
-                    } => (
-                        id.clone(),
-                        *index,
-                        Some(message::ReasoningContent::Summary(summary.clone())),
-                    ),
-                    ReasoningDetails::Encrypted {
-                        id, index, data, ..
-                    } => (
-                        id.clone(),
-                        *index,
-                        Some(message::ReasoningContent::Encrypted(data.clone())),
-                    ),
-                    ReasoningDetails::Text {
-                        id,
-                        index,
-                        text,
-                        signature,
-                        ..
-                    } => (
-                        id.clone(),
-                        *index,
-                        text.as_ref().map(|text| message::ReasoningContent::Text {
-                            text: text.clone(),
-                            signature: signature.clone(),
-                        }),
-                    ),
-                };
-
-                let Some(parsed_content) = parsed_content else {
-                    continue;
-                };
-                let sort_index = sort_index.unwrap_or(position);
-
-                let entry = grouped_reasoning.entry(reasoning_id.clone());
-                if matches!(entry, std::collections::hash_map::Entry::Vacant(_)) {
-                    reasoning_order.push(reasoning_id);
-                }
-                entry
-                    .or_default()
-                    .push((sort_index, position, parsed_content));
-            }
-
-            if grouped_reasoning.is_empty() {
-                if let Some(reasoning) = reasoning {
-                    content.push(completion::AssistantContent::reasoning(reasoning));
-                }
-            } else {
-                for reasoning_id in reasoning_order {
-                    let Some(mut blocks) = grouped_reasoning.remove(&reasoning_id) else {
-                        continue;
-                    };
-                    blocks.sort_by_key(|(index, position, _)| (*index, *position));
-                    content.push(completion::AssistantContent::Reasoning(
-                        message::Reasoning {
-                            id: reasoning_id,
-                            content: blocks
-                                .into_iter()
-                                .map(|(_, _, content)| content)
-                                .collect::<Vec<_>>(),
-                        },
-                    ));
-                }
-            }
-
-            Ok(content)
-        }
-        _ => Err(CompletionError::ResponseError(
-            "Response did not contain a valid message or tool call".into(),
-        )),
-    }?;
-
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
-    }
-
-    let usage = response
-        .usage
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.prompt_tokens as u64,
-            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-            total_tokens: usage.total_tokens as u64,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
+    crate::completion::codec::response_events(&OpenRouterCompletionCodec::new("", false), response)
 }
 
 /// User content types supported by OpenRouter.
@@ -1554,7 +1591,7 @@ pub enum ToolChoiceFunctionKind {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct OpenrouterCompletionRequest {
+pub(crate) struct OpenrouterCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1567,17 +1604,14 @@ pub(super) struct OpenrouterCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-/// Parameters for building an OpenRouter CompletionRequest
-pub struct OpenRouterRequestParams<'a> {
-    pub model: &'a str,
-    pub request: CompletionRequest,
-    pub strict_tools: bool,
+struct OpenRouterRequestParams<'a> {
+    model: &'a str,
+    request: CompletionRequest,
+    strict_tools: bool,
 }
 
-impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from(params: OpenRouterRequestParams) -> Result<Self, Self::Error> {
+impl OpenrouterCompletionRequest {
+    fn from_params(params: OpenRouterRequestParams) -> Result<Self, CompletionError> {
         let OpenRouterRequestParams {
             model,
             request: req,
@@ -1637,19 +1671,6 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
     }
 }
 
-impl TryFrom<(&str, CompletionRequest)> for OpenrouterCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
-            model: &model,
-            request: req,
-            strict_tools: false,
-        })
-    }
-}
-
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     pub(crate) client: Client<T>,
@@ -1705,11 +1726,10 @@ where
                 .clone()
                 .unwrap_or_else(|| self.model.clone());
             let preamble = completion_request.preamble.clone();
-            let request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
-                model: request_model.as_ref(),
-                request: completion_request,
-                strict_tools: self.strict_tools,
-            })?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &OpenRouterCompletionCodec::new(request_model.clone(), self.strict_tools),
+                completion_request,
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(
@@ -1815,9 +1835,11 @@ mod tests {
             output_schema: None,
         };
 
-        let openrouter_request =
-            OpenrouterCompletionRequest::try_from(("openai/gpt-4o-mini", request))
-                .expect("request conversion should succeed");
+        let openrouter_request = crate::completion::CompletionCodec::encode_request(
+            &OpenRouterCompletionCodec::new("openai/gpt-4o-mini", false),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized =
             serde_json::to_value(openrouter_request).expect("serialization should succeed");
 
@@ -1839,9 +1861,11 @@ mod tests {
             output_schema: None,
         };
 
-        let openrouter_request =
-            OpenrouterCompletionRequest::try_from(("openai/gpt-4o-mini", request))
-                .expect("request conversion should succeed");
+        let openrouter_request = crate::completion::CompletionCodec::encode_request(
+            &OpenRouterCompletionCodec::new("openai/gpt-4o-mini", false),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized =
             serde_json::to_value(openrouter_request).expect("serialization should succeed");
 

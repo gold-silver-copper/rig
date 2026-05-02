@@ -6,7 +6,8 @@ use crate::model_event::ModelEvent;
 use crate::model_event::ToolCallDeltaContent;
 use crate::providers::cohere::CompletionModel;
 use crate::providers::cohere::completion::{
-    AssistantContent, CohereCompletionRequest, Message, ToolCall, ToolCallFunction, ToolType, Usage,
+    AssistantContent, CohereCompletionRequestCodec, Message, ToolCall, ToolCallFunction, ToolType,
+    Usage,
 };
 use crate::providers::internal::tool_call::ProviderToolCall;
 use crate::telemetry::SpanCombinator;
@@ -100,7 +101,10 @@ where
         &self,
         request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
-        let mut request = CohereCompletionRequest::try_from((self.model.as_ref(), request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &CohereCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -279,7 +283,7 @@ where
             yield Ok(ModelEvent::Done);
         }.instrument(span);
 
-        Ok(crate::model_event::result_stream(Box::pin(stream)))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 

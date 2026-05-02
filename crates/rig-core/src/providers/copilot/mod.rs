@@ -487,127 +487,155 @@ pub struct ChatChoice {
     pub finish_reason: Option<String>,
 }
 
+pub(crate) struct CopilotChatCompletionCodec;
+
+impl crate::completion::CompletionResponseCodec for CopilotChatCompletionCodec {
+    type Response = ChatCompletionResponse;
+    type RawFinal = CopilotCompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let choice = response.choices.first().ok_or_else(|| {
+            CompletionError::ResponseError("Response contained no choices".to_owned())
+        })?;
+
+        let content = match &choice.message {
+            openai::completion::Message::Assistant {
+                content,
+                tool_calls,
+                ..
+            } => {
+                let mut content = content
+                    .iter()
+                    .filter_map(|c| {
+                        let s = match c {
+                            openai::completion::AssistantContent::Text { text } => text,
+                            openai::completion::AssistantContent::Refusal { refusal } => refusal,
+                        };
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(completion::AssistantContent::text(s))
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
+                Ok(content)
+            }
+            _ => Err(CompletionError::ResponseError(
+                "Response did not contain a valid message or tool call".into(),
+            )),
+        }?;
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.prompt_tokens as u64,
+                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+                total_tokens: usage.total_tokens as u64,
+                cached_input_tokens: usage
+                    .prompt_tokens_details
+                    .as_ref()
+                    .map(|d| d.cached_tokens as u64)
+                    .unwrap_or(0),
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(
+            CopilotCompletionResponse::Chat(response),
+            content,
+            usage,
+            None,
+        )
+    }
+}
+
 fn chat_completion_response_events(
     response: ChatCompletionResponse,
 ) -> Result<ModelEventStream<CopilotCompletionResponse>, CompletionError> {
-    let choice = response.choices.first().ok_or_else(|| {
-        CompletionError::ResponseError("Response contained no choices".to_owned())
-    })?;
+    crate::completion::codec::response_events(&CopilotChatCompletionCodec, response)
+}
 
-    let content = match &choice.message {
-        openai::completion::Message::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let mut content = content
-                .iter()
-                .filter_map(|c| {
-                    let s = match c {
-                        openai::completion::AssistantContent::Text { text } => text,
-                        openai::completion::AssistantContent::Refusal { refusal } => refusal,
-                    };
-                    if s.is_empty() {
-                        None
-                    } else {
-                        Some(completion::AssistantContent::text(s))
-                    }
-                })
-                .collect::<Vec<_>>();
+pub(crate) struct CopilotResponsesCompletionCodec;
 
-            content.extend(tool_calls.iter().map(|call| {
-                completion::AssistantContent::tool_call(
-                    &call.id,
-                    &call.function.name,
-                    call.function.arguments.clone(),
-                )
-            }));
-            Ok(content)
+impl crate::completion::CompletionResponseCodec for CopilotResponsesCompletionCodec {
+    type Response = responses_api::CompletionResponse;
+    type RawFinal = CopilotCompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        if response.output.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no parts".to_owned(),
+            ));
         }
-        _ => Err(CompletionError::ResponseError(
-            "Response did not contain a valid message or tool call".into(),
-        )),
-    }?;
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+        let message_id = response.output.iter().find_map(|item| match item {
+            responses_api::Output::Message(msg) => Some(msg.id.clone()),
+            _ => None,
+        });
+
+        let content: Vec<completion::AssistantContent> = response
+            .output
+            .iter()
+            .cloned()
+            .flat_map(<Vec<completion::AssistantContent>>::from)
+            .collect();
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                cached_input_tokens: usage
+                    .input_tokens_details
+                    .as_ref()
+                    .map(|d| d.cached_tokens)
+                    .unwrap_or(0),
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(
+            CopilotCompletionResponse::Responses(Box::new(response)),
+            content,
+            usage,
+            message_id,
+        )
     }
-
-    let usage = response
-        .usage
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.prompt_tokens as u64,
-            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-            total_tokens: usage.total_tokens as u64,
-            cached_input_tokens: usage
-                .prompt_tokens_details
-                .as_ref()
-                .map(|d| d.cached_tokens as u64)
-                .unwrap_or(0),
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        CopilotCompletionResponse::Chat(response),
-        content,
-        usage,
-        None,
-    ))
 }
 
 fn responses_completion_response_events(
     response: responses_api::CompletionResponse,
 ) -> Result<ModelEventStream<CopilotCompletionResponse>, CompletionError> {
-    if response.output.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no parts".to_owned(),
-        ));
-    }
-
-    let message_id = response.output.iter().find_map(|item| match item {
-        responses_api::Output::Message(msg) => Some(msg.id.clone()),
-        _ => None,
-    });
-
-    let content: Vec<completion::AssistantContent> = response
-        .output
-        .iter()
-        .cloned()
-        .flat_map(<Vec<completion::AssistantContent>>::from)
-        .collect();
-
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
-    }
-
-    let usage = response
-        .usage
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            total_tokens: usage.total_tokens,
-            cached_input_tokens: usage
-                .input_tokens_details
-                .as_ref()
-                .map(|d| d.cached_tokens)
-                .unwrap_or(0),
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        CopilotCompletionResponse::Responses(Box::new(response)),
-        content,
-        usage,
-        message_id,
-    ))
+    crate::completion::codec::response_events(&CopilotResponsesCompletionCodec, response)
 }
 
 #[derive(Debug, Deserialize)]
@@ -683,19 +711,24 @@ where
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<openai::completion::CompletionRequest, CompletionError> {
-        openai::completion::CompletionRequest::try_from(openai::completion::OpenAIRequestParams {
-            model: self.model.clone(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })
+        crate::completion::CompletionCodec::encode_request(
+            &openai::completion::codec::ChatCompletionCodec::new(
+                self.model.clone(),
+                self.strict_tools,
+                self.tool_result_array_content,
+            ),
+            completion_request,
+        )
     }
 
     fn responses_request(
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<ResponsesRequest, CompletionError> {
-        ResponsesRequest::try_from((self.model.clone(), completion_request))
+        crate::completion::CompletionCodec::encode_request(
+            &responses_api::codec::ResponsesCompletionCodec::new(self.model.clone(), Vec::new()),
+            completion_request,
+        )
     }
 
     async fn completion_chat(
@@ -1088,7 +1121,7 @@ where
             span,
         );
 
-        Ok(crate::model_event::result_stream(Box::pin(stream)))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 

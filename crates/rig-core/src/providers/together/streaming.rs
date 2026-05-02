@@ -5,7 +5,7 @@ use crate::json_utils;
 use crate::model_event::ModelEventStream;
 use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
-use crate::providers::together::completion::TogetherAICompletionRequest;
+use crate::providers::together::completion::TogetherAICompletionRequestCodec;
 
 use tracing::{Instrument, Level, enabled, info_span};
 
@@ -18,10 +18,10 @@ where
         completion_request: CompletionRequest,
     ) -> Result<ModelEventStream<openai::StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
-        let mut request = TogetherAICompletionRequest::try_from((
-            self.model.to_string().as_ref(),
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &TogetherAICompletionRequestCodec::new(self.model.as_str()),
             completion_request,
-        ))?;
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

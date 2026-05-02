@@ -523,7 +523,7 @@ where
         }
         .await
         .map(|response| {
-            crate::model_event::events_from_parts(
+            crate::completion::codec::events_from_parts(
                 response.raw_response,
                 response.choice,
                 response.usage,
@@ -741,8 +741,11 @@ data: [DONE]"#;
             additional_params: None,
             output_schema: None,
         };
-        let mut request = ResponsesRequest::try_from(("gpt-5.4".to_string(), completion_request))
-            .expect("request");
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &responses_api::codec::ResponsesCompletionCodec::new("gpt-5.4", Vec::new()),
+            completion_request,
+        )
+        .expect("request");
 
         let instructions = normalize_system_messages_into_instructions(&mut request)
             .expect("normalize")

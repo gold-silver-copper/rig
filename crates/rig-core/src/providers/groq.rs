@@ -156,7 +156,7 @@ pub enum ReasoningFormat {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct GroqCompletionRequest {
+pub(crate) struct GroqCompletionRequest {
     model: String,
     pub messages: Vec<OpenAIMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -177,10 +177,8 @@ pub(super) struct StreamOptions {
     pub(super) include_usage: bool,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, mut req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl GroqCompletionRequest {
+    fn from_completion_request(model: &str, mut req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Groq");
         }
@@ -242,6 +240,27 @@ impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
             stream: false,
             stream_options: None,
         })
+    }
+}
+
+pub(crate) struct GroqCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> GroqCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for GroqCompletionRequestCodec<'_> {
+    type Request = GroqCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        GroqCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -382,8 +401,10 @@ where
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-            let request =
-                GroqCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &GroqCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if tracing::enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -475,7 +496,10 @@ where
 
         span.record("gen_ai.system_instructions", &request.preamble);
 
-        let mut request = GroqCompletionRequest::try_from((self.model.as_ref(), request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &GroqCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
 
         request.stream = true;
         request.stream_options = Some(StreamOptions {

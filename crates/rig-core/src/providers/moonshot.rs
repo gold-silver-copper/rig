@@ -307,7 +307,7 @@ pub const KIMI_K2: &str = "kimi-k2";
 pub const KIMI_K2_5: &str = "kimi-k2.5";
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct MoonshotCompletionRequest {
+pub(crate) struct MoonshotCompletionRequest {
     model: String,
     pub messages: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,10 +322,8 @@ pub(super) struct MoonshotCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl MoonshotCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Moonshot");
         }
@@ -382,6 +380,27 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
             tool_choice,
             additional_params: req.additional_params,
         })
+    }
+}
+
+pub(crate) struct MoonshotCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> MoonshotCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for MoonshotCompletionRequestCodec<'_> {
+    type Request = MoonshotCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        MoonshotCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -520,8 +539,10 @@ where
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-            let request =
-                MoonshotCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &MoonshotCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if tracing::enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -605,7 +626,10 @@ where
         };
 
         span.record("gen_ai.system_instructions", &request.preamble);
-        let mut request = MoonshotCompletionRequest::try_from((self.model.as_ref(), request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &MoonshotCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),
@@ -717,8 +741,11 @@ mod tests {
             output_schema: None,
         };
 
-        let converted =
-            MoonshotCompletionRequest::try_from(("kimi-k2-thinking", request)).expect("convert");
+        let converted = crate::completion::CompletionCodec::encode_request(
+            &MoonshotCompletionRequestCodec::new("kimi-k2-thinking"),
+            request,
+        )
+        .expect("convert");
         let assistant = converted
             .messages
             .first()
@@ -748,8 +775,11 @@ mod tests {
             output_schema: None,
         };
 
-        let converted =
-            MoonshotCompletionRequest::try_from(("kimi-k2.5", request)).expect("convert");
+        let converted = crate::completion::CompletionCodec::encode_request(
+            &MoonshotCompletionRequestCodec::new("kimi-k2.5"),
+            request,
+        )
+        .expect("convert");
         assert!(matches!(
             converted.tool_choice,
             Some(crate::providers::openai::completion::ToolChoice::Auto)

@@ -381,71 +381,77 @@ impl From<crate::completion::ToolDefinition> for ToolDefinition {
     }
 }
 
-fn completion_response_events(
-    response: CompletionResponse,
-) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
-    let choice = response.choices.first().ok_or_else(|| {
-        CompletionError::ResponseError("Response contained no choices".to_owned())
-    })?;
-    let content = match &choice.message {
-        Message::Assistant {
-            content,
-            tool_calls,
-            reasoning_content,
-            ..
-        } => {
-            let mut content = if content.trim().is_empty() {
-                vec![]
-            } else {
-                vec![completion::AssistantContent::text(content)]
-            };
+pub(crate) struct DeepseekCompletionCodec;
 
-            content.extend(tool_calls.iter().map(|call| {
-                completion::AssistantContent::tool_call(
-                    &call.id,
-                    &call.function.name,
-                    call.function.arguments.clone(),
-                )
-            }));
+impl crate::completion::CompletionResponseCodec for DeepseekCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
 
-            if let Some(reasoning_content) = reasoning_content {
-                content.push(completion::AssistantContent::reasoning(reasoning_content));
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let choice = response.choices.first().ok_or_else(|| {
+            CompletionError::ResponseError("Response contained no choices".to_owned())
+        })?;
+        let content = match &choice.message {
+            Message::Assistant {
+                content,
+                tool_calls,
+                reasoning_content,
+                ..
+            } => {
+                let mut content = if content.trim().is_empty() {
+                    vec![]
+                } else {
+                    vec![completion::AssistantContent::text(content)]
+                };
+
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
+
+                if let Some(reasoning_content) = reasoning_content {
+                    content.push(completion::AssistantContent::reasoning(reasoning_content));
+                }
+
+                Ok(content)
             }
+            _ => Err(CompletionError::ResponseError(
+                "Response did not contain a valid message or tool call".into(),
+            )),
+        }?;
 
-            Ok(content)
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
         }
-        _ => Err(CompletionError::ResponseError(
-            "Response did not contain a valid message or tool call".into(),
-        )),
-    }?;
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+        let usage = completion::Usage {
+            input_tokens: response.usage.prompt_tokens as u64,
+            output_tokens: response.usage.completion_tokens as u64,
+            total_tokens: response.usage.total_tokens as u64,
+            cached_input_tokens: response
+                .usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens)
+                .map(|c| c as u64)
+                .unwrap_or(0),
+            cache_creation_input_tokens: 0,
+        };
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
-
-    let usage = completion::Usage {
-        input_tokens: response.usage.prompt_tokens as u64,
-        output_tokens: response.usage.completion_tokens as u64,
-        total_tokens: response.usage.total_tokens as u64,
-        cached_input_tokens: response
-            .usage
-            .prompt_tokens_details
-            .as_ref()
-            .and_then(|d| d.cached_tokens)
-            .map(|c| c as u64)
-            .unwrap_or(0),
-        cache_creation_input_tokens: 0,
-    };
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct DeepseekCompletionRequest {
+pub(crate) struct DeepseekCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -458,10 +464,8 @@ pub(super) struct DeepseekCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl DeepseekCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for DeepSeek");
         }
@@ -507,6 +511,27 @@ impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
             tool_choice,
             additional_params: req.additional_params,
         })
+    }
+}
+
+pub(crate) struct DeepseekCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> DeepseekCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for DeepseekCompletionRequestCodec<'_> {
+    type Request = DeepseekCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        DeepseekCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -558,8 +583,10 @@ where
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-            let request =
-                DeepseekCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &DeepseekCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -605,7 +632,10 @@ where
                                     serde_json::to_string_pretty(&response)?
                                 );
                             }
-                            completion_response_events(response)
+                            crate::completion::codec::response_events(
+                                &DeepseekCompletionCodec,
+                                response,
+                            )
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -627,8 +657,10 @@ where
     ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
     {
         let preamble = completion_request.preamble.clone();
-        let mut request =
-            DeepseekCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &DeepseekCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

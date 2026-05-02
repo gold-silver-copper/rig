@@ -175,64 +175,70 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-fn completion_response_events(
-    response: CompletionResponse,
-) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
-    let choice = response.choices.first().ok_or_else(|| {
-        CompletionError::ResponseError("Response contained no choices".to_owned())
-    })?;
+pub(crate) struct HyperbolicCompletionCodec;
 
-    let content = match &choice.message {
-        Message::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let mut content = content
-                .iter()
-                .map(|c| match c {
-                    AssistantContent::Text { text } => completion::AssistantContent::text(text),
-                    AssistantContent::Refusal { refusal } => {
-                        completion::AssistantContent::text(refusal)
-                    }
-                })
-                .collect::<Vec<_>>();
+impl crate::completion::CompletionResponseCodec for HyperbolicCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
 
-            content.extend(tool_calls.iter().map(|call| {
-                completion::AssistantContent::tool_call(
-                    &call.id,
-                    &call.function.name,
-                    call.function.arguments.clone(),
-                )
-            }));
-            Ok(content)
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let choice = response.choices.first().ok_or_else(|| {
+            CompletionError::ResponseError("Response contained no choices".to_owned())
+        })?;
+
+        let content = match &choice.message {
+            Message::Assistant {
+                content,
+                tool_calls,
+                ..
+            } => {
+                let mut content = content
+                    .iter()
+                    .map(|c| match c {
+                        AssistantContent::Text { text } => completion::AssistantContent::text(text),
+                        AssistantContent::Refusal { refusal } => {
+                            completion::AssistantContent::text(refusal)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
+                Ok(content)
+            }
+            _ => Err(CompletionError::ResponseError(
+                "Response did not contain a valid message or tool call".into(),
+            )),
+        }?;
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
         }
-        _ => Err(CompletionError::ResponseError(
-            "Response did not contain a valid message or tool call".into(),
-        )),
-    }?;
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.prompt_tokens as u64,
+                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+                total_tokens: usage.total_tokens as u64,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
-
-    let usage = response
-        .usage
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.prompt_tokens as u64,
-            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-            total_tokens: usage.total_tokens as u64,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -243,7 +249,7 @@ pub struct Choice {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct HyperbolicCompletionRequest {
+pub(crate) struct HyperbolicCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -252,10 +258,8 @@ pub(super) struct HyperbolicCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl HyperbolicCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Hyperbolic");
         }
@@ -297,6 +301,27 @@ impl TryFrom<(&str, CompletionRequest)> for HyperbolicCompletionRequest {
             temperature: req.temperature,
             additional_params: req.additional_params,
         })
+    }
+}
+
+pub(crate) struct HyperbolicCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> HyperbolicCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for HyperbolicCompletionRequestCodec<'_> {
+    type Request = HyperbolicCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        HyperbolicCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -360,8 +385,10 @@ where
             };
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
-            let request =
-                HyperbolicCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &HyperbolicCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if tracing::enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -395,7 +422,10 @@ where
                                 );
                             }
 
-                            completion_response_events(response)
+                            crate::completion::codec::response_events(
+                                &HyperbolicCompletionCodec,
+                                response,
+                            )
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -434,8 +464,10 @@ where
         };
 
         span.record("gen_ai.system_instructions", &completion_request.preamble);
-        let mut request =
-            HyperbolicCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &HyperbolicCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

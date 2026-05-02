@@ -7,64 +7,72 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VertexGenerateContentOutput(pub vertexai::model::GenerateContentResponse);
 
+pub(crate) struct VertexCompletionCodec;
+
+impl rig_core::completion::CompletionResponseCodec for VertexCompletionCodec {
+    type Response = VertexGenerateContentOutput;
+    type RawFinal = VertexGenerateContentOutput;
+
+    fn decode_response(
+        &self,
+        value: Self::Response,
+    ) -> Result<rig_core::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let response = &value.0;
+
+        let candidate = response.candidates.first().ok_or_else(|| {
+            CompletionError::ProviderError("No candidates in response".to_string())
+        })?;
+
+        let content = candidate
+            .content
+            .as_ref()
+            .ok_or_else(|| CompletionError::ProviderError("No content in candidate".to_string()))?;
+
+        let mut assistant_contents = Vec::new();
+
+        for part in content.parts.iter() {
+            if let Some(function_call) = part.function_call() {
+                let args_json = function_call
+                    .args
+                    .as_ref()
+                    .map(|s| serde_json::Value::Object(s.clone()))
+                    .unwrap_or_else(|| serde_json::json!({}));
+
+                assistant_contents.push(AssistantContent::ToolCall(ToolCall::new(
+                    function_call.name.clone(),
+                    ToolFunction::new(function_call.name.clone(), args_json),
+                )));
+            } else if let Some(text) = part.text() {
+                assistant_contents.push(AssistantContent::Text(Text { text: text.clone() }));
+            }
+        }
+
+        if assistant_contents.is_empty() {
+            return Err(CompletionError::ProviderError(
+                "No text or tool call content found in response".to_string(),
+            ));
+        }
+
+        let usage = response
+            .usage_metadata
+            .as_ref()
+            .map(|usage| Usage {
+                input_tokens: usage.prompt_token_count as u64,
+                output_tokens: usage.candidates_token_count as u64,
+                total_tokens: usage.total_token_count as u64,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        rig_core::completion::codec::turn_from_parts(value, assistant_contents, usage, None)
+    }
+}
+
 pub(crate) fn completion_response_events(
     value: VertexGenerateContentOutput,
 ) -> Result<ModelEventStream<VertexGenerateContentOutput>, CompletionError> {
-    let response = &value.0;
-
-    let candidate = response
-        .candidates
-        .first()
-        .ok_or_else(|| CompletionError::ProviderError("No candidates in response".to_string()))?;
-
-    let content = candidate
-        .content
-        .as_ref()
-        .ok_or_else(|| CompletionError::ProviderError("No content in candidate".to_string()))?;
-
-    let mut assistant_contents = Vec::new();
-
-    for part in content.parts.iter() {
-        if let Some(function_call) = part.function_call() {
-            let args_json = function_call
-                .args
-                .as_ref()
-                .map(|s| serde_json::Value::Object(s.clone()))
-                .unwrap_or_else(|| serde_json::json!({}));
-
-            assistant_contents.push(AssistantContent::ToolCall(ToolCall::new(
-                function_call.name.clone(),
-                ToolFunction::new(function_call.name.clone(), args_json),
-            )));
-        } else if let Some(text) = part.text() {
-            assistant_contents.push(AssistantContent::Text(Text { text: text.clone() }));
-        }
-    }
-
-    if assistant_contents.is_empty() {
-        return Err(CompletionError::ProviderError(
-            "No text or tool call content found in response".to_string(),
-        ));
-    }
-
-    let usage = response
-        .usage_metadata
-        .as_ref()
-        .map(|usage| Usage {
-            input_tokens: usage.prompt_token_count as u64,
-            output_tokens: usage.candidates_token_count as u64,
-            total_tokens: usage.total_token_count as u64,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(rig_core::model_event::events_from_parts(
-        value,
-        assistant_contents,
-        usage,
-        None,
-    ))
+    rig_core::completion::codec::response_events(&VertexCompletionCodec, value)
 }
 
 #[cfg(test)]

@@ -231,48 +231,54 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-fn completion_response_events(
-    response: CompletionResponse,
-) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
-    let Choice { message, .. } = response.choices.first().ok_or_else(|| {
-        CompletionError::ResponseError("Response contained no choices".to_owned())
-    })?;
+pub(crate) struct GaladrielCompletionCodec;
 
-    let mut content = message
-        .content
-        .as_ref()
-        .map(|c| vec![completion::AssistantContent::text(c)])
-        .unwrap_or_default();
+impl crate::completion::CompletionResponseCodec for GaladrielCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
 
-    content.extend(message.tool_calls.iter().map(|call| {
-        completion::AssistantContent::tool_call(
-            &call.function.name,
-            &call.function.name,
-            call.function.arguments.clone(),
-        )
-    }));
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let Choice { message, .. } = response.choices.first().ok_or_else(|| {
+            CompletionError::ResponseError("Response contained no choices".to_owned())
+        })?;
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+        let mut content = message
+            .content
+            .as_ref()
+            .map(|c| vec![completion::AssistantContent::text(c)])
+            .unwrap_or_default();
+
+        content.extend(message.tool_calls.iter().map(|call| {
+            completion::AssistantContent::tool_call(
+                &call.function.name,
+                &call.function.name,
+                call.function.arguments.clone(),
+            )
+        }));
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.prompt_tokens as u64,
+                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+                total_tokens: usage.total_tokens as u64,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
-
-    let usage = response
-        .usage
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.prompt_tokens as u64,
-            output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-            total_tokens: usage.total_tokens as u64,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -430,7 +436,7 @@ pub struct Function {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct GaladrielCompletionRequest {
+pub(crate) struct GaladrielCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -443,10 +449,8 @@ pub(super) struct GaladrielCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for GaladrielCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl GaladrielCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Galadriel");
         }
@@ -491,6 +495,27 @@ impl TryFrom<(&str, CompletionRequest)> for GaladrielCompletionRequest {
             tool_choice,
             additional_params: req.additional_params,
         })
+    }
+}
+
+pub(crate) struct GaladrielCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> GaladrielCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for GaladrielCompletionRequestCodec<'_> {
+    type Request = GaladrielCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        GaladrielCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -558,8 +583,10 @@ where
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-            let request =
-                GaladrielCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &GaladrielCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -601,7 +628,10 @@ where
                                     usage.total_tokens - usage.prompt_tokens,
                                 );
                             }
-                            completion_response_events(response)
+                            crate::completion::codec::response_events(
+                                &GaladrielCompletionCodec,
+                                response,
+                            )
                         }
                         ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
@@ -622,8 +652,10 @@ where
         completion_request: CompletionRequest,
     ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
-        let mut request =
-            GaladrielCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &GaladrielCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

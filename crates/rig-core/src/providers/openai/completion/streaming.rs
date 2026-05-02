@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{Level, enabled, info_span};
 
-use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
+use crate::completion::{CompletionCodec, CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::json_utils::{self, merge};
 use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
     CompatibleToolCallChunk,
 };
-use crate::providers::openai::completion::{GenericCompletionModel, OpenAIRequestParams, Usage};
+use crate::providers::openai::completion::{GenericCompletionModel, Usage};
 
 // ================================================================
 // OpenAI Completion Streaming API
@@ -94,12 +94,7 @@ where
         &self,
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
-        let request = super::CompletionRequest::try_from(OpenAIRequestParams {
-            model: self.model.clone(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })?;
+        let request = self.completion_codec().encode_request(completion_request)?;
         let request_messages = serde_json::to_string(&request.messages)?;
         let mut request_as_json = serde_json::to_value(request)?;
 

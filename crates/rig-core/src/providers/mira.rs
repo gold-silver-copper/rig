@@ -212,7 +212,7 @@ impl ProviderClient for Client {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct MiraCompletionRequest {
+pub(crate) struct MiraCompletionRequest {
     model: String,
     pub messages: Vec<RawMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -222,10 +222,8 @@ pub(super) struct MiraCompletionRequest {
     pub stream: bool,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl MiraCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Mira");
         }
@@ -303,6 +301,27 @@ impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
     }
 }
 
+pub(crate) struct MiraCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> MiraCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for MiraCompletionRequestCodec<'_> {
+    type Request = MiraCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        MiraCompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     client: Client<T>,
@@ -372,8 +391,10 @@ where
                 tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
             }
 
-            let request =
-                MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &MiraCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if tracing::enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -433,7 +454,7 @@ where
                     }
                 }
 
-                completion_response_events(response)
+                crate::completion::codec::response_events(&MiraCompletionCodec, response)
             };
 
             async_block.instrument(span).await
@@ -479,8 +500,10 @@ where
         if completion_request.additional_params.is_some() {
             tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
         }
-        let mut request =
-            MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &MiraCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
         request.stream = true;
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -510,45 +533,52 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-fn completion_response_events(
-    response: CompletionResponse,
-) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
-    let (content, usage) = match &response {
-        CompletionResponse::Structured { choices, usage, .. } => {
-            let choice = choices.first().ok_or_else(|| {
-                CompletionError::ResponseError("Response contained no choices".to_owned())
-            })?;
+pub(crate) struct MiraCompletionCodec;
 
-            let usage = usage
-                .as_ref()
-                .map(|usage| completion::Usage {
-                    input_tokens: usage.prompt_tokens as u64,
-                    output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-                    total_tokens: usage.total_tokens as u64,
-                    cached_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                })
-                .unwrap_or_default();
+impl crate::completion::CompletionResponseCodec for MiraCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
 
-            let message = message::Message::try_from(choice.message.clone())?;
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let (content, usage) = match &response {
+            CompletionResponse::Structured { choices, usage, .. } => {
+                let choice = choices.first().ok_or_else(|| {
+                    CompletionError::ResponseError("Response contained no choices".to_owned())
+                })?;
 
-            let content = match message {
-                Message::Assistant { content, .. } => {
-                    if content.is_empty() {
-                        return Err(CompletionError::ResponseError(
-                            "Response contained empty content".to_owned(),
-                        ));
-                    }
+                let usage = usage
+                    .as_ref()
+                    .map(|usage| completion::Usage {
+                        input_tokens: usage.prompt_tokens as u64,
+                        output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
+                        total_tokens: usage.total_tokens as u64,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    })
+                    .unwrap_or_default();
 
-                    for c in content.iter() {
-                        if !matches!(c, AssistantContent::Text(_)) {
-                            tracing::warn!(target: "rig",
-                                "Unsupported content type encountered: {:?}. The Mira provider currently only supports text content", c
-                            );
+                let message = message::Message::try_from(choice.message.clone())?;
+
+                let content = match message {
+                    Message::Assistant { content, .. } => {
+                        if content.is_empty() {
+                            return Err(CompletionError::ResponseError(
+                                "Response contained empty content".to_owned(),
+                            ));
                         }
-                    }
 
-                    content.iter().map(|c| {
+                        for c in content.iter() {
+                            if !matches!(c, AssistantContent::Text(_)) {
+                                tracing::warn!(target: "rig",
+                                    "Unsupported content type encountered: {:?}. The Mira provider currently only supports text content", c
+                                );
+                            }
+                        }
+
+                        content.iter().map(|c| {
                         match c {
                             AssistantContent::Text(text) => Ok(completion::AssistantContent::text(&text.text)),
                             other => Err(CompletionError::ResponseError(
@@ -556,40 +586,39 @@ fn completion_response_events(
                             ))
                         }
                     }).collect::<Result<Vec<_>, _>>()?
-                }
-                Message::User { .. } => {
-                    tracing::warn!(target: "rig", "Received user message in response where assistant message was expected");
-                    return Err(CompletionError::ResponseError(
+                    }
+                    Message::User { .. } => {
+                        tracing::warn!(target: "rig", "Received user message in response where assistant message was expected");
+                        return Err(CompletionError::ResponseError(
                         "Received user message in response where assistant message was expected"
                             .to_owned(),
                     ));
-                }
-                Message::System { .. } => {
-                    tracing::warn!(target: "rig", "Received system message in response where assistant message was expected");
-                    return Err(CompletionError::ResponseError(
+                    }
+                    Message::System { .. } => {
+                        tracing::warn!(target: "rig", "Received system message in response where assistant message was expected");
+                        return Err(CompletionError::ResponseError(
                         "Received system message in response where assistant message was expected"
                             .to_owned(),
                     ));
-                }
-            };
+                    }
+                };
 
-            (content, usage)
+                (content, usage)
+            }
+            CompletionResponse::Simple(text) => (
+                vec![completion::AssistantContent::text(text)],
+                completion::Usage::new(),
+            ),
+        };
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
         }
-        CompletionResponse::Simple(text) => (
-            vec![completion::AssistantContent::text(text)],
-            completion::Usage::new(),
-        ),
-    };
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -809,7 +838,10 @@ mod tests {
         };
 
         let completion_response =
-            crate::model_event::collect(completion_response_events(mira_response).unwrap())
+            crate::model_event::collect(
+                crate::completion::codec::response_events(&MiraCompletionCodec, mira_response)
+                    .unwrap(),
+            )
                 .await
                 .unwrap();
 

@@ -848,11 +848,10 @@ where
 mod tests {
     use super::TypedPromptResponse;
     use crate::{
-        OneOrMany,
         agent::AgentBuilder,
         completion::{
-            AssistantContent, CompletionError, CompletionModel, CompletionRequest,
-            CompletionResponse, Message, Prompt, Usage,
+            AssistantContent, CompletionError, CompletionModel, CompletionRequest, Message, Prompt,
+            Usage,
         },
         message::UserContent,
         model_event::ModelEventStream,

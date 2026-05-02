@@ -244,7 +244,7 @@ impl CompletionModel {
             }
         });
 
-        Ok(rig_core::model_event::result_stream(stream))
+        Ok(rig_core::completion::codec::result_stream(stream))
     }
 }
 

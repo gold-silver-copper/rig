@@ -16,7 +16,7 @@
 use super::InputAudio;
 use super::completion::ToolChoice;
 use super::responses_api::streaming::StreamingResponse;
-use crate::completion::{CompletionError, GetTokenUsage};
+use crate::completion::{CompletionCodec, CompletionError, GetTokenUsage};
 use crate::http_client;
 use crate::http_client::HttpClientExt;
 use crate::json_utils;
@@ -36,6 +36,7 @@ use std::convert::Infallible;
 use std::ops::Add;
 use std::str::FromStr;
 
+pub(crate) mod codec;
 pub mod streaming;
 #[cfg(all(not(target_family = "wasm"), feature = "websocket"))]
 pub mod websocket;
@@ -784,12 +785,11 @@ pub enum ResponseStatus {
     Incomplete,
 }
 
-/// Attempt to try and create a `NewCompletionRequest` from a model name and [`crate::completion::CompletionRequest`]
-impl TryFrom<(String, crate::completion::CompletionRequest)> for CompletionRequest {
-    type Error = CompletionError;
-    fn try_from(
-        (model, mut req): (String, crate::completion::CompletionRequest),
-    ) -> Result<Self, Self::Error> {
+impl CompletionRequest {
+    pub(crate) fn from_model(
+        model: String,
+        mut req: crate::completion::CompletionRequest,
+    ) -> Result<Self, CompletionError> {
         let model = req.model.clone().unwrap_or(model);
         let input = {
             let mut partial_history = vec![];
@@ -976,10 +976,7 @@ where
         &self,
         completion_request: crate::completion::CompletionRequest,
     ) -> Result<CompletionRequest, CompletionError> {
-        let mut req = CompletionRequest::try_from((self.model.clone(), completion_request))?;
-        req.tools.extend(self.tools.clone());
-
-        Ok(req)
+        self.completion_codec().encode_request(completion_request)
     }
 }
 
@@ -1445,49 +1442,7 @@ where
 pub(crate) fn completion_response_events(
     response: CompletionResponse,
 ) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
-    if response.output.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no parts".to_owned(),
-        ));
-    }
-
-    let message_id = response.output.iter().find_map(|item| match item {
-        Output::Message(msg) => Some(msg.id.clone()),
-        _ => None,
-    });
-
-    let content: Vec<completion::AssistantContent> = response
-        .output
-        .iter()
-        .cloned()
-        .flat_map(<Vec<completion::AssistantContent>>::from)
-        .collect();
-
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
-    }
-
-    let usage = response
-        .usage
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            total_tokens: usage.total_tokens,
-            cached_input_tokens: usage
-                .input_tokens_details
-                .as_ref()
-                .map(|d| d.cached_tokens)
-                .unwrap_or(0),
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, message_id,
-    ))
+    codec::ResponsesCompletionCodec::response_to_turn(response)?.into_events()
 }
 
 /// An OpenAI Responses API message.

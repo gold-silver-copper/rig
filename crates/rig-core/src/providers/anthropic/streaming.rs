@@ -10,7 +10,9 @@ use super::completion::{
     SystemContent, ToolChoice, ToolDefinition, Usage, apply_cache_control,
     split_system_messages_from_history,
 };
-use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
+use crate::completion::{
+    CompletionError, CompletionRequest, CompletionStreamCodec, GetTokenUsage, ModelTurnAccumulator,
+};
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::json_utils::merge_inplace;
@@ -292,13 +294,10 @@ where
 
         // Use our SSE decoder to directly handle Server-Sent Events format
         let stream = stream! {
-            let mut current_tool_call: Option<ToolCallState> = None;
-            let mut current_thinking: Option<ThinkingState> = None;
+            let mut codec = AnthropicStreamEventCodec::default();
             let mut sse_stream = Box::pin(stream);
             let mut input_tokens = 0;
             let mut final_usage = None;
-
-            let mut text_content = String::new();
 
             while let Some(sse_result) = sse_stream.next().await {
                 match sse_result {
@@ -336,11 +335,13 @@ where
                                     _ => {}
                                 }
 
-                                if let Some(result) = handle_event(&event, &mut current_tool_call, &mut current_thinking) {
-                                    if let Ok(ModelEvent::TextDelta { text }) = &result {
-                                        text_content += text;
+                                match codec.decode_stream_chunk(event) {
+                                    Ok(events) => {
+                                        for event in events {
+                                            yield Ok(event);
+                                        }
                                     }
-                                    yield result;
+                                    Err(err) => yield Err(err),
                                 }
                             },
                             Err(e) => {
@@ -362,17 +363,18 @@ where
             // Ensure event source is closed when stream ends
             sse_stream.close();
 
-            let response = StreamingResponse {
-                usage: final_usage.unwrap_or_default()
-            };
-            if let Some(usage) = response.token_usage() {
-                yield Ok(ModelEvent::Usage { usage });
+            codec.set_final_usage(final_usage.unwrap_or_default());
+            match codec.finish_events() {
+                Ok(events) => {
+                    for event in events {
+                        yield Ok(event);
+                    }
+                }
+                Err(err) => yield Err(err),
             }
-            yield Ok(ModelEvent::RawResponse { response });
-            yield Ok(ModelEvent::Done);
         }.instrument(span);
 
-        Ok(crate::model_event::result_stream(stream))
+        Ok(crate::completion::codec::result_stream(stream))
     }
 }
 
@@ -390,6 +392,76 @@ fn extract_tools_from_additional_params(
     }
 
     Ok(Vec::new())
+}
+
+#[derive(Default)]
+pub(crate) struct AnthropicStreamEventCodec {
+    current_tool_call: Option<ToolCallState>,
+    current_thinking: Option<ThinkingState>,
+    final_usage: PartialUsage,
+    turn_accumulator: ModelTurnAccumulator<StreamingResponse>,
+}
+
+impl AnthropicStreamEventCodec {
+    fn set_final_usage(&mut self, usage: PartialUsage) {
+        self.final_usage = usage;
+    }
+
+    fn finish_events(mut self) -> Result<Vec<ModelEvent<StreamingResponse>>, CompletionError> {
+        let response = StreamingResponse {
+            usage: self.final_usage,
+        };
+        let mut events = Vec::new();
+        if let Some(usage) = response.token_usage() {
+            events.push(ModelEvent::Usage { usage });
+        }
+        events.push(ModelEvent::RawResponse { response });
+        events.push(ModelEvent::Done);
+
+        for event in &events {
+            self.turn_accumulator.push_ref(event)?;
+        }
+
+        Ok(events)
+    }
+}
+
+impl CompletionStreamCodec for AnthropicStreamEventCodec {
+    type StreamChunk = StreamingEvent;
+    type RawFinal = StreamingResponse;
+
+    fn decode_stream_chunk(
+        &mut self,
+        chunk: Self::StreamChunk,
+    ) -> Result<Vec<ModelEvent<Self::RawFinal>>, CompletionError> {
+        match handle_event(
+            &chunk,
+            &mut self.current_tool_call,
+            &mut self.current_thinking,
+        ) {
+            Some(Ok(event)) => {
+                self.turn_accumulator.push_ref(&event)?;
+                Ok(vec![event])
+            }
+            Some(Err(err)) => Err(err),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn finish_stream(
+        mut self,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let response = StreamingResponse {
+            usage: self.final_usage,
+        };
+        if let Some(usage) = response.token_usage() {
+            self.turn_accumulator.push(ModelEvent::Usage { usage })?;
+        }
+        self.turn_accumulator
+            .push(ModelEvent::RawResponse { response })?;
+        self.turn_accumulator.push(ModelEvent::Done)?;
+        self.turn_accumulator.finish()
+    }
 }
 
 fn handle_event(
@@ -518,6 +590,40 @@ fn handle_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anthropic_stream_codec_decodes_text_delta_and_final_response() {
+        let mut codec = AnthropicStreamEventCodec::default();
+        let events = codec
+            .decode_stream_chunk(StreamingEvent::ContentBlockDelta {
+                index: 0,
+                delta: ContentDelta::TextDelta {
+                    text: "hello".to_string(),
+                },
+            })
+            .expect("text delta should decode");
+
+        assert!(matches!(
+            events.as_slice(),
+            [ModelEvent::TextDelta { text }] if text == "hello"
+        ));
+
+        codec.set_final_usage(PartialUsage {
+            input_tokens: Some(3),
+            output_tokens: 4,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        });
+        let final_events = codec.finish_events().expect("stream should finish");
+        assert!(final_events
+            .iter()
+            .any(|event| matches!(event, ModelEvent::Usage { usage } if usage.input_tokens == 3 && usage.output_tokens == 4)));
+        assert!(
+            final_events
+                .iter()
+                .any(|event| matches!(event, ModelEvent::RawResponse { .. }))
+        );
+    }
 
     #[test]
     fn test_thinking_delta_deserialization() {

@@ -31,7 +31,7 @@ pub const GROK_4: &str = "grok-4-0709";
 // ================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct XAICompletionRequest {
+pub(crate) struct XAICompletionRequest {
     model: String,
     pub input: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,10 +46,8 @@ pub(super) struct XAICompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for XAICompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl XAICompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for xAI");
         }
@@ -99,6 +97,27 @@ impl TryFrom<(&str, CompletionRequest)> for XAICompletionRequest {
     }
 }
 
+pub(crate) struct XAICompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> XAICompletionRequestCodec<'a> {
+    pub(crate) fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for XAICompletionRequestCodec<'_> {
+    type Request = XAICompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        XAICompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 fn extract_tools_from_additional_params(
     additional_params: &mut Value,
 ) -> Result<Vec<Value>, CompletionError> {
@@ -133,41 +152,47 @@ pub struct CompletionResponse {
     pub usage: Option<ResponsesUsage>,
 }
 
-fn completion_response_events(
-    response: CompletionResponse,
-) -> Result<ModelEventStream<CompletionResponse>, CompletionError> {
-    let content: Vec<completion::AssistantContent> = response
-        .output
-        .iter()
-        .cloned()
-        .flat_map(<Vec<completion::AssistantContent>>::from)
-        .collect();
+pub(crate) struct XAICompletionCodec;
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no output".to_owned(),
-        ));
+impl crate::completion::CompletionResponseCodec for XAICompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let content: Vec<completion::AssistantContent> = response
+            .output
+            .iter()
+            .cloned()
+            .flat_map(<Vec<completion::AssistantContent>>::from)
+            .collect();
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no output".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|u| completion::Usage {
+                input_tokens: u.input_tokens,
+                output_tokens: u.output_tokens,
+                total_tokens: u.total_tokens,
+                cached_input_tokens: u
+                    .input_tokens_details
+                    .clone()
+                    .map(|x| x.cached_tokens)
+                    .unwrap_or_default(),
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
-
-    let usage = response
-        .usage
-        .as_ref()
-        .map(|u| completion::Usage {
-            input_tokens: u.input_tokens,
-            output_tokens: u.output_tokens,
-            total_tokens: u.total_tokens,
-            cached_input_tokens: u
-                .input_tokens_details
-                .clone()
-                .map(|x| x.cached_tokens)
-                .unwrap_or_default(),
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
 }
 
 // ================================================================
@@ -227,10 +252,10 @@ where
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-            let request = XAICompletionRequest::try_from((
-                self.model.to_string().as_ref(),
+            let request = crate::completion::CompletionCodec::encode_request(
+                &XAICompletionRequestCodec::new(self.model.as_str()),
                 completion_request,
-            ))?;
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -262,7 +287,10 @@ where
                                 );
                             }
 
-                            completion_response_events(response)
+                            crate::completion::codec::response_events(
+                                &XAICompletionCodec,
+                                response,
+                            )
                         }
                         ApiResponse::Error(error) => {
                             Err(CompletionError::ProviderError(error.message()))
@@ -290,7 +318,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::XAICompletionRequest;
+    use super::XAICompletionRequestCodec;
     use crate::OneOrMany;
     use crate::completion::CompletionRequest;
     use crate::completion::request::Document;
@@ -314,8 +342,11 @@ mod tests {
             output_schema: None,
         };
 
-        let xai_request = XAICompletionRequest::try_from(("grok-4-0709", request))
-            .expect("request conversion should succeed");
+        let xai_request = crate::completion::CompletionCodec::encode_request(
+            &XAICompletionRequestCodec::new("grok-4-0709"),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized = serde_json::to_value(xai_request).expect("serialization should succeed");
         let input = serialized["input"]
             .as_array()

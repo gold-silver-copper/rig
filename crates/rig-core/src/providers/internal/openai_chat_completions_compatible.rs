@@ -13,7 +13,7 @@ use futures::StreamExt;
 use http::Request;
 use tracing_futures::Instrument;
 
-use crate::completion::{CompletionError, GetTokenUsage};
+use crate::completion::{CompletionError, CompletionStreamCodec, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::json_utils;
@@ -195,6 +195,173 @@ pub(crate) fn should_evict_distinct_named_tool_call(
     false
 }
 
+pub(crate) struct CompatibleStreamCodec<P>
+where
+    P: CompatibleStreamProfile,
+{
+    profile: P,
+    tool_calls: HashMap<usize, ProviderToolCall>,
+    final_usage: Option<P::Usage>,
+}
+
+impl<P> CompatibleStreamCodec<P>
+where
+    P: CompatibleStreamProfile,
+{
+    fn new(profile: P) -> Self {
+        Self {
+            profile,
+            tool_calls: HashMap::new(),
+            final_usage: None,
+        }
+    }
+
+    fn finish_events(&mut self) -> Result<Vec<ModelEvent<P::FinalResponse>>, CompletionError> {
+        let mut events = Vec::new();
+        for tool_call in
+            take_finalized_tool_calls(&mut self.tool_calls, DroppedToolCallContext::EndOfStream)
+        {
+            events.push(ModelEvent::from(tool_call));
+        }
+
+        let final_usage = self.final_usage.clone().unwrap_or_default();
+        let final_response = self.profile.build_final_response(final_usage);
+        if let Some(usage) = final_response.token_usage() {
+            events.push(ModelEvent::Usage { usage });
+        }
+        events.push(ModelEvent::RawResponse {
+            response: final_response,
+        });
+        events.push(ModelEvent::Done);
+
+        Ok(events)
+    }
+}
+
+impl<P> CompletionStreamCodec for CompatibleStreamCodec<P>
+where
+    P: CompatibleStreamProfile,
+{
+    type StreamChunk = CompatibleChunk<P::Usage, P::Detail>;
+    type RawFinal = P::FinalResponse;
+
+    fn decode_stream_chunk(
+        &mut self,
+        chunk: Self::StreamChunk,
+    ) -> Result<Vec<ModelEvent<Self::RawFinal>>, CompletionError> {
+        if let Some(usage) = chunk.usage {
+            self.final_usage = Some(usage);
+        }
+
+        let mut events = Vec::new();
+        let Some(choice) = chunk.choice else {
+            return Ok(events);
+        };
+
+        for incoming in choice.tool_calls {
+            if let Some(existing) = self.tool_calls.get(&incoming.index)
+                && self.profile.should_evict(existing, &incoming)
+                && let Some(evicted) = self.tool_calls.remove(&incoming.index)
+            {
+                events.push(ModelEvent::from(finalize_completed_streaming_tool_call(
+                    evicted,
+                )));
+            }
+
+            let existing_tool_call = self
+                .tool_calls
+                .entry(incoming.index)
+                .or_insert_with(ProviderToolCall::empty);
+
+            if let Some(id) = incoming.id.as_ref()
+                && !id.is_empty()
+            {
+                existing_tool_call.id = id.clone();
+            }
+
+            if let Some(name) = incoming.name.as_ref()
+                && !name.is_empty()
+            {
+                existing_tool_call.name = name.clone();
+                events.push(ModelEvent::ToolCallDelta {
+                    id: existing_tool_call.id.clone(),
+                    internal_call_id: existing_tool_call.internal_call_id.clone(),
+                    content: ToolCallDeltaContent::Name(name.clone()),
+                });
+            }
+
+            if let Some(arguments) = incoming.arguments.as_ref()
+                && !arguments.is_empty()
+            {
+                append_tool_call_arguments(existing_tool_call, arguments);
+                events.push(ModelEvent::ToolCallDelta {
+                    id: existing_tool_call.id.clone(),
+                    internal_call_id: existing_tool_call.internal_call_id.clone(),
+                    content: ToolCallDeltaContent::Delta(arguments.clone()),
+                });
+            }
+
+            let emit_completed_tool_call_immediately = self
+                .profile
+                .should_emit_completed_tool_call_immediately(existing_tool_call, &incoming);
+            let finalized_tool_call = emit_completed_tool_call_immediately
+                .then(|| self.tool_calls.get(&incoming.index).cloned())
+                .flatten()
+                .and_then(finalize_pending_tool_call);
+
+            if let Some(tool_call) = finalized_tool_call {
+                self.tool_calls.remove(&incoming.index);
+                events.push(ModelEvent::from(tool_call));
+            }
+        }
+
+        for detail in &choice.details {
+            self.profile
+                .decorate_tool_call(detail, &mut self.tool_calls);
+        }
+
+        if let Some(reasoning) = choice.reasoning
+            && !reasoning.is_empty()
+        {
+            events.push(ModelEvent::ReasoningDelta {
+                id: None,
+                text: reasoning,
+            });
+        }
+
+        if let Some(content) = choice.text
+            && !content.is_empty()
+        {
+            events.push(ModelEvent::TextDelta { text: content });
+        }
+
+        if choice.finish_reason == CompatibleFinishReason::ToolCalls {
+            for tool_call in take_finalized_tool_calls(
+                &mut self.tool_calls,
+                DroppedToolCallContext::ToolCallsFinishReason,
+            ) {
+                events.push(ModelEvent::from(tool_call));
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn finish_stream(
+        self,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let final_usage = self.final_usage.clone().unwrap_or_default();
+        let final_response = self.profile.build_final_response(final_usage);
+        let usage = final_response.token_usage().unwrap_or_default();
+
+        Ok(crate::completion::ModelTurn::new(
+            crate::OneOrMany::one(crate::completion::AssistantContent::text("")),
+            usage,
+        )
+        .with_raw_response(final_response))
+    }
+}
+
 pub(crate) async fn send_compatible_streaming_request<T, P>(
     http_client: T,
     req: Request<Vec<u8>>,
@@ -209,8 +376,7 @@ where
     let mut event_source = GenericEventSource::new(http_client, req);
 
     let stream = stream! {
-        let mut tool_calls: HashMap<usize, ProviderToolCall> = HashMap::new();
-        let mut final_usage = None;
+        let mut codec = CompatibleStreamCodec::new(profile);
         let mut terminated_with_error = false;
 
         while let Some(event_result) = event_source.next().await {
@@ -224,7 +390,7 @@ where
                         continue;
                     }
 
-                    let chunk = match profile.normalize_chunk(&message.data) {
+                    let chunk = match codec.profile.normalize_chunk(&message.data) {
                         Ok(Some(chunk)) => chunk,
                         Ok(None) => continue,
                         Err(error) => {
@@ -240,97 +406,16 @@ where
                         chunk.response_model.as_deref(),
                     );
 
-                    if let Some(usage) = chunk.usage {
-                        final_usage = Some(usage);
-                    }
-
-                    let Some(choice) = chunk.choice else {
-                        continue;
-                    };
-
-                    for incoming in choice.tool_calls {
-                        if let Some(existing) = tool_calls.get(&incoming.index)
-                            && profile.should_evict(existing, &incoming)
-                            && let Some(evicted) = tool_calls.remove(&incoming.index)
-                        {
-                            yield Ok(ModelEvent::from(
-                                finalize_completed_streaming_tool_call(evicted),
-                            ));
+                    match codec.decode_stream_chunk(chunk) {
+                        Ok(events) => {
+                            for event in events {
+                                yield Ok(event);
+                            }
                         }
-
-                        let existing_tool_call = tool_calls
-                            .entry(incoming.index)
-                            .or_insert_with(ProviderToolCall::empty);
-
-                        if let Some(id) = incoming.id.as_ref()
-                            && !id.is_empty()
-                        {
-                            existing_tool_call.id = id.clone();
-                        }
-
-                        if let Some(name) = incoming.name.as_ref()
-                            && !name.is_empty()
-                        {
-                            existing_tool_call.name = name.clone();
-                            yield Ok(ModelEvent::ToolCallDelta {
-                                id: existing_tool_call.id.clone(),
-                                internal_call_id: existing_tool_call.internal_call_id.clone(),
-                                content: ToolCallDeltaContent::Name(name.clone()),
-                            });
-                        }
-
-                        if let Some(arguments) = incoming.arguments.as_ref()
-                            && !arguments.is_empty()
-                        {
-                            append_tool_call_arguments(existing_tool_call, arguments);
-                            yield Ok(ModelEvent::ToolCallDelta {
-                                id: existing_tool_call.id.clone(),
-                                internal_call_id: existing_tool_call.internal_call_id.clone(),
-                                content: ToolCallDeltaContent::Delta(arguments.clone()),
-                            });
-                        }
-
-                        let emit_completed_tool_call_immediately = profile
-                            .should_emit_completed_tool_call_immediately(
-                                existing_tool_call,
-                                &incoming,
-                            );
-                        let finalized_tool_call = emit_completed_tool_call_immediately
-                            .then(|| tool_calls.get(&incoming.index).cloned())
-                            .flatten()
-                            .and_then(finalize_pending_tool_call);
-
-                        if let Some(tool_call) = finalized_tool_call {
-                            tool_calls.remove(&incoming.index);
-                            yield Ok(ModelEvent::from(tool_call));
-                        }
-                    }
-
-                    for detail in &choice.details {
-                        profile.decorate_tool_call(detail, &mut tool_calls);
-                    }
-
-                    if let Some(reasoning) = choice.reasoning
-                        && !reasoning.is_empty()
-                    {
-                        yield Ok(ModelEvent::ReasoningDelta {
-                            id: None,
-                            text: reasoning,
-                        });
-                    }
-
-                    if let Some(content) = choice.text
-                        && !content.is_empty()
-                    {
-                        yield Ok(ModelEvent::TextDelta { text: content });
-                    }
-
-                    if choice.finish_reason == CompatibleFinishReason::ToolCalls {
-                        for tool_call in take_finalized_tool_calls(
-                            &mut tool_calls,
-                            DroppedToolCallContext::ToolCallsFinishReason,
-                        ) {
-                            yield Ok(ModelEvent::from(tool_call));
+                        Err(error) => {
+                            terminated_with_error = true;
+                            yield Err(error);
+                            break;
                         }
                     }
                 }
@@ -352,26 +437,21 @@ where
             return;
         }
 
-        for tool_call in
-            take_finalized_tool_calls(&mut tool_calls, DroppedToolCallContext::EndOfStream)
-        {
-            yield Ok(ModelEvent::from(tool_call));
-        }
-
-        let final_usage = final_usage.unwrap_or_default();
+        let final_usage = codec.final_usage.clone().unwrap_or_default();
         record_usage(&span, &final_usage);
-        let final_response = profile.build_final_response(final_usage);
-        if let Some(usage) = final_response.token_usage() {
-            yield Ok(ModelEvent::Usage { usage });
+
+        match codec.finish_events() {
+            Ok(events) => {
+                for event in events {
+                    yield Ok(event);
+                }
+            }
+            Err(error) => yield Err(error),
         }
-        yield Ok(ModelEvent::RawResponse {
-            response: final_response,
-        });
-        yield Ok(ModelEvent::Done);
     }
     .instrument(instrument_span);
 
-    Ok(crate::model_event::result_stream(Box::pin(stream)))
+    Ok(crate::completion::codec::result_stream(Box::pin(stream)))
 }
 
 fn record_usage<T>(span: &tracing::Span, usage: &T)
@@ -603,10 +683,11 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::sse_bytes_from_data_lines;
     use super::{
-        CompatibleChoice, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
-        CompatibleToolCallChunk, finalize_pending_tool_call, send_compatible_streaming_request,
+        CompatibleChoice, CompatibleChunk, CompatibleFinishReason, CompatibleStreamCodec,
+        CompatibleStreamProfile, CompatibleToolCallChunk, finalize_pending_tool_call,
+        send_compatible_streaming_request,
     };
-    use crate::completion::{CompletionError, GetTokenUsage};
+    use crate::completion::{CompletionError, CompletionStreamCodec, GetTokenUsage};
     use crate::http_client::mock::MockStreamingClient;
     use crate::model_event::{ModelEvent, ToolCallDeltaContent};
     use crate::providers::internal::tool_call::ProviderToolCall;
@@ -664,6 +745,37 @@ mod tests {
             name: name.map(ToOwned::to_owned),
             arguments: arguments.map(ToOwned::to_owned),
         }
+    }
+
+    #[test]
+    fn compatible_stream_codec_decodes_text_and_final_events() {
+        let mut codec = CompatibleStreamCodec::new(FinishReasonCleanupProfile);
+        let events = codec
+            .decode_stream_chunk(test_chunk(CompatibleChoice {
+                finish_reason: CompatibleFinishReason::Other,
+                text: Some("hello".to_string()),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                details: Vec::new(),
+            }))
+            .expect("text chunk should decode");
+
+        assert!(matches!(
+            events.as_slice(),
+            [ModelEvent::TextDelta { text }] if text == "hello"
+        ));
+
+        let final_events = codec.finish_events().expect("stream should finish");
+        assert!(
+            final_events
+                .iter()
+                .any(|event| matches!(event, ModelEvent::RawResponse { .. }))
+        );
+        assert!(
+            final_events
+                .iter()
+                .any(|event| matches!(event, ModelEvent::Done))
+        );
     }
 
     #[derive(Clone, Copy)]

@@ -368,112 +368,121 @@ fn rig_assistant_content_to_grpc_part(
     }
 }
 
+pub(crate) struct GeminiGrpcCompletionCodec;
+
+impl rig_core::completion::CompletionResponseCodec for GeminiGrpcCompletionCodec {
+    type Response = GenerateContentResponse;
+    type RawFinal = GenerateContentResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<rig_core::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let candidate = response.candidates.first().ok_or_else(|| {
+            CompletionError::ResponseError("No response candidates in response".into())
+        })?;
+
+        let content_ref = candidate.content.as_ref().ok_or_else(|| {
+            CompletionError::ResponseError(format!(
+                "Gemini candidate missing content (finish_reason={})",
+                candidate.finish_reason
+            ))
+        })?;
+
+        let mut assistant_contents = Vec::new();
+
+        for part in &content_ref.parts {
+            let assistant_content = match &part.data {
+                Some(proto::part::Data::Text(text)) => {
+                    if part.thought {
+                        completion::AssistantContent::Reasoning(Reasoning::new_with_signature(
+                            text,
+                            encode_optional_base64(&part.thought_signature),
+                        ))
+                    } else {
+                        completion::AssistantContent::text(text)
+                    }
+                }
+                Some(proto::part::Data::InlineData(inline_data)) => {
+                    let mime_type = message::MediaType::from_mime_type(&inline_data.mime_type);
+                    match mime_type {
+                        Some(message::MediaType::Image(media_type)) => {
+                            let b64 =
+                                base64::engine::general_purpose::STANDARD.encode(&inline_data.data);
+                            completion::AssistantContent::image_base64(
+                                b64,
+                                Some(media_type),
+                                Some(message::ImageDetail::default()),
+                            )
+                        }
+                        _ => {
+                            return Err(CompletionError::ResponseError(format!(
+                                "Unsupported media type {mime_type:?}"
+                            )));
+                        }
+                    }
+                }
+                Some(proto::part::Data::FunctionCall(function_call)) => {
+                    let args = function_call
+                        .args
+                        .as_ref()
+                        .map(prost_struct_to_json)
+                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                    let mut tool_call = message::ToolCall::new(
+                        if function_call.id.is_empty() {
+                            function_call.name.clone()
+                        } else {
+                            function_call.id.clone()
+                        },
+                        message::ToolFunction::new(function_call.name.clone(), args),
+                    );
+
+                    if !function_call.id.is_empty() {
+                        tool_call = tool_call.with_call_id(function_call.id.clone());
+                    }
+
+                    tool_call =
+                        tool_call.with_signature(encode_optional_base64(&part.thought_signature));
+
+                    completion::AssistantContent::ToolCall(tool_call)
+                }
+                _ => {
+                    return Err(CompletionError::ResponseError(
+                        "Response did not contain a message or tool call".into(),
+                    ));
+                }
+            };
+
+            assistant_contents.push(assistant_content);
+        }
+
+        if assistant_contents.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage_metadata
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.prompt_token_count as u64,
+                output_tokens: usage.candidates_token_count as u64,
+                total_tokens: usage.total_token_count as u64,
+                cached_input_tokens: usage.cached_content_token_count as u64,
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        rig_core::completion::codec::turn_from_parts(response, assistant_contents, usage, None)
+    }
+}
+
 fn completion_response_events(
     response: GenerateContentResponse,
 ) -> Result<rig_core::model_event::ModelEventStream<GenerateContentResponse>, CompletionError> {
-    let candidate = response.candidates.first().ok_or_else(|| {
-        CompletionError::ResponseError("No response candidates in response".into())
-    })?;
-
-    let content_ref = candidate.content.as_ref().ok_or_else(|| {
-        CompletionError::ResponseError(format!(
-            "Gemini candidate missing content (finish_reason={})",
-            candidate.finish_reason
-        ))
-    })?;
-
-    let mut assistant_contents = Vec::new();
-
-    for part in &content_ref.parts {
-        let assistant_content = match &part.data {
-            Some(proto::part::Data::Text(text)) => {
-                if part.thought {
-                    completion::AssistantContent::Reasoning(Reasoning::new_with_signature(
-                        text,
-                        encode_optional_base64(&part.thought_signature),
-                    ))
-                } else {
-                    completion::AssistantContent::text(text)
-                }
-            }
-            Some(proto::part::Data::InlineData(inline_data)) => {
-                let mime_type = message::MediaType::from_mime_type(&inline_data.mime_type);
-                match mime_type {
-                    Some(message::MediaType::Image(media_type)) => {
-                        let b64 =
-                            base64::engine::general_purpose::STANDARD.encode(&inline_data.data);
-                        completion::AssistantContent::image_base64(
-                            b64,
-                            Some(media_type),
-                            Some(message::ImageDetail::default()),
-                        )
-                    }
-                    _ => {
-                        return Err(CompletionError::ResponseError(format!(
-                            "Unsupported media type {mime_type:?}"
-                        )));
-                    }
-                }
-            }
-            Some(proto::part::Data::FunctionCall(function_call)) => {
-                let args = function_call
-                    .args
-                    .as_ref()
-                    .map(prost_struct_to_json)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                let mut tool_call = message::ToolCall::new(
-                    if function_call.id.is_empty() {
-                        function_call.name.clone()
-                    } else {
-                        function_call.id.clone()
-                    },
-                    message::ToolFunction::new(function_call.name.clone(), args),
-                );
-
-                if !function_call.id.is_empty() {
-                    tool_call = tool_call.with_call_id(function_call.id.clone());
-                }
-
-                tool_call =
-                    tool_call.with_signature(encode_optional_base64(&part.thought_signature));
-
-                completion::AssistantContent::ToolCall(tool_call)
-            }
-            _ => {
-                return Err(CompletionError::ResponseError(
-                    "Response did not contain a message or tool call".into(),
-                ));
-            }
-        };
-
-        assistant_contents.push(assistant_content);
-    }
-
-    if assistant_contents.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
-    }
-
-    let usage = response
-        .usage_metadata
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.prompt_token_count as u64,
-            output_tokens: usage.candidates_token_count as u64,
-            total_tokens: usage.total_token_count as u64,
-            cached_input_tokens: usage.cached_content_token_count as u64,
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
-
-    Ok(rig_core::model_event::events_from_parts(
-        response,
-        assistant_contents,
-        usage,
-        None,
-    ))
+    rig_core::completion::codec::response_events(&GeminiGrpcCompletionCodec, response)
 }
 
 // Implement ProviderResponseExt for telemetry

@@ -137,74 +137,77 @@ pub struct Tokens {
     pub output_tokens: Option<f64>,
 }
 
-fn completion_response_events(
-    response: CompletionResponse,
-) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
-    let (content, _, tool_calls) = response.message()?;
+pub(crate) struct CohereCompletionCodec;
 
-    let model_response = if !tool_calls.is_empty() {
-        let tool_calls = tool_calls
-            .into_iter()
-            .filter_map(|tool_call| {
-                let ToolCallFunction { name, arguments } = tool_call.function?;
-                let id = tool_call.id.unwrap_or_else(|| name.clone());
+impl crate::completion::CompletionResponseCodec for CohereCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
 
-                Some(completion::AssistantContent::tool_call(id, name, arguments))
-            })
-            .collect::<Vec<_>>();
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let (content, _, tool_calls) = response.message()?;
 
-        if tool_calls.is_empty() {
-            return Err(CompletionError::ResponseError(
-                "response contained tool call metadata without any callable tool content"
-                    .to_owned(),
-            ));
-        }
+        let model_response = if !tool_calls.is_empty() {
+            let tool_calls = tool_calls
+                .into_iter()
+                .filter_map(|tool_call| {
+                    let ToolCallFunction { name, arguments } = tool_call.function?;
+                    let id = tool_call.id.unwrap_or_else(|| name.clone());
 
-        tool_calls
-    } else {
-        let content = content
-            .into_iter()
-            .map(|content| match content {
-                AssistantContent::Text { text } => completion::AssistantContent::text(text),
-                AssistantContent::Thinking { thinking } => {
-                    completion::AssistantContent::Reasoning(Reasoning::new(&thinking))
+                    Some(completion::AssistantContent::tool_call(id, name, arguments))
+                })
+                .collect::<Vec<_>>();
+
+            if tool_calls.is_empty() {
+                return Err(CompletionError::ResponseError(
+                    "response contained tool call metadata without any callable tool content"
+                        .to_owned(),
+                ));
+            }
+
+            tool_calls
+        } else {
+            let content = content
+                .into_iter()
+                .map(|content| match content {
+                    AssistantContent::Text { text } => completion::AssistantContent::text(text),
+                    AssistantContent::Thinking { thinking } => {
+                        completion::AssistantContent::Reasoning(Reasoning::new(&thinking))
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if content.is_empty() {
+                return Err(CompletionError::ResponseError(
+                    "Response contained no message or tool call (empty)".to_owned(),
+                ));
+            }
+
+            content
+        };
+
+        let usage = response
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.tokens.as_ref())
+            .map(|tokens| {
+                let input_tokens = tokens.input_tokens.unwrap_or(0.0);
+                let output_tokens = tokens.output_tokens.unwrap_or(0.0);
+
+                completion::Usage {
+                    input_tokens: input_tokens as u64,
+                    output_tokens: output_tokens as u64,
+                    total_tokens: (input_tokens + output_tokens) as u64,
+                    cached_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
                 }
             })
-            .collect::<Vec<_>>();
+            .unwrap_or_default();
 
-        if content.is_empty() {
-            return Err(CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            ));
-        }
-
-        content
-    };
-
-    let usage = response
-        .usage
-        .as_ref()
-        .and_then(|usage| usage.tokens.as_ref())
-        .map(|tokens| {
-            let input_tokens = tokens.input_tokens.unwrap_or(0.0);
-            let output_tokens = tokens.output_tokens.unwrap_or(0.0);
-
-            completion::Usage {
-                input_tokens: input_tokens as u64,
-                output_tokens: output_tokens as u64,
-                total_tokens: (input_tokens + output_tokens) as u64,
-                cached_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-            }
-        })
-        .unwrap_or_default();
-
-    Ok(crate::model_event::events_from_parts(
-        response,
-        model_response,
-        usage,
-        None,
-    ))
+        crate::completion::codec::turn_from_parts(response, model_response, usage, None)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -540,7 +543,7 @@ pub struct CompletionModel<T = reqwest::Client> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct CohereCompletionRequest {
+pub(crate) struct CohereCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     documents: Vec<crate::completion::Document>,
@@ -554,10 +557,8 @@ pub(super) struct CohereCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for CohereCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl CohereCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Cohere");
         }
@@ -607,6 +608,27 @@ impl TryFrom<(&str, CompletionRequest)> for CohereCompletionRequest {
     }
 }
 
+pub(crate) struct CohereCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> CohereCompletionRequestCodec<'a> {
+    pub(crate) fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for CohereCompletionRequestCodec<'_> {
+    type Request = CohereCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        CohereCompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 impl<T> CompletionModel<T>
 where
     T: HttpClientExt,
@@ -636,8 +658,10 @@ where
         completion_request: completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
         async {
-            let request =
-                CohereCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &CohereCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             let llm_span = if tracing::Span::current().is_disabled() {
                 info_span!(
@@ -695,7 +719,10 @@ where
                         );
                     }
 
-                    completion_response_events(json_response)
+                    crate::completion::codec::response_events(
+                        &CohereCompletionCodec,
+                        json_response,
+                    )
                 } else {
                     Err(CompletionError::ProviderError(
                         String::from_utf8_lossy(&body).to_string(),

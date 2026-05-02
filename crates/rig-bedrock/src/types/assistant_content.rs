@@ -80,35 +80,49 @@ impl GetTokenUsage for AwsConverseOutput {
     }
 }
 
+pub(crate) struct BedrockCompletionCodec;
+
+impl rig_core::completion::CompletionResponseCodec for BedrockCompletionCodec {
+    type Response = AwsConverseOutput;
+    type RawFinal = AwsConverseOutput;
+
+    fn decode_response(
+        &self,
+        value: Self::Response,
+    ) -> Result<rig_core::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let message: RigMessage = value
+            .to_owned()
+            .0
+            .output
+            .ok_or(CompletionError::ProviderError(
+                "Model didn't return any output".into(),
+            ))?
+            .as_message()
+            .map_err(|_| {
+                CompletionError::ProviderError(
+                    "Failed to extract message from converse output".into(),
+                )
+            })?
+            .to_owned()
+            .try_into()?;
+
+        let choice = match message.0 {
+            completion::Message::Assistant { content, .. } => Ok(content),
+            _ => Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            )),
+        }?;
+
+        let usage = value.0.usage().map(normalize_usage).unwrap_or_default();
+
+        rig_core::completion::codec::turn_from_parts(value, choice, usage, None)
+    }
+}
+
 pub(crate) fn completion_response_events(
     value: AwsConverseOutput,
 ) -> Result<ModelEventStream<AwsConverseOutput>, CompletionError> {
-    let message: RigMessage = value
-        .to_owned()
-        .0
-        .output
-        .ok_or(CompletionError::ProviderError(
-            "Model didn't return any output".into(),
-        ))?
-        .as_message()
-        .map_err(|_| {
-            CompletionError::ProviderError("Failed to extract message from converse output".into())
-        })?
-        .to_owned()
-        .try_into()?;
-
-    let choice = match message.0 {
-        completion::Message::Assistant { content, .. } => Ok(content),
-        _ => Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        )),
-    }?;
-
-    let usage = value.0.usage().map(normalize_usage).unwrap_or_default();
-
-    Ok(rig_core::model_event::events_from_parts(
-        value, choice, usage, None,
-    ))
+    rig_core::completion::codec::response_events(&BedrockCompletionCodec, value)
 }
 
 pub struct RigAssistantContent(pub AssistantContent);

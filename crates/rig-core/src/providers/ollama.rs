@@ -346,55 +346,63 @@ pub struct CompletionResponse {
     #[serde(default)]
     pub eval_duration: Option<u64>,
 }
-fn completion_response_events(
-    resp: CompletionResponse,
-) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
-    match &resp.message {
-        Message::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let mut assistant_contents = Vec::new();
-            if !content.is_empty() {
-                assistant_contents.push(completion::AssistantContent::text(content));
-            }
-            for tc in tool_calls.iter() {
-                assistant_contents.push(completion::AssistantContent::tool_call(
-                    tc.function.name.clone(),
-                    tc.function.name.clone(),
-                    tc.function.arguments.clone(),
-                ));
-            }
-            if assistant_contents.is_empty() {
-                return Err(CompletionError::ResponseError(
-                    "No content provided".to_owned(),
-                ));
-            }
-            let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
-            let completion_tokens = resp.eval_count.unwrap_or(0);
+pub(crate) struct OllamaCompletionCodec;
 
-            Ok(crate::model_event::events_from_parts(
-                resp,
-                assistant_contents,
-                Usage {
-                    input_tokens: prompt_tokens,
-                    output_tokens: completion_tokens,
-                    total_tokens: prompt_tokens + completion_tokens,
-                    cached_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                },
-                None,
-            ))
+impl crate::completion::CompletionResponseCodec for OllamaCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        resp: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        match &resp.message {
+            Message::Assistant {
+                content,
+                tool_calls,
+                ..
+            } => {
+                let mut assistant_contents = Vec::new();
+                if !content.is_empty() {
+                    assistant_contents.push(completion::AssistantContent::text(content));
+                }
+                for tc in tool_calls.iter() {
+                    assistant_contents.push(completion::AssistantContent::tool_call(
+                        tc.function.name.clone(),
+                        tc.function.name.clone(),
+                        tc.function.arguments.clone(),
+                    ));
+                }
+                if assistant_contents.is_empty() {
+                    return Err(CompletionError::ResponseError(
+                        "No content provided".to_owned(),
+                    ));
+                }
+                let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
+                let completion_tokens = resp.eval_count.unwrap_or(0);
+
+                crate::completion::codec::turn_from_parts(
+                    resp,
+                    assistant_contents,
+                    Usage {
+                        input_tokens: prompt_tokens,
+                        output_tokens: completion_tokens,
+                        total_tokens: prompt_tokens + completion_tokens,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    },
+                    None,
+                )
+            }
+            _ => Err(CompletionError::ResponseError(
+                "Chat response does not include an assistant message".into(),
+            )),
         }
-        _ => Err(CompletionError::ResponseError(
-            "Chat response does not include an assistant message".into(),
-        )),
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct OllamaCompletionRequest {
+pub(crate) struct OllamaCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -412,10 +420,8 @@ pub(super) struct OllamaCompletionRequest {
     options: serde_json::Value,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for OllamaCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl OllamaCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         if req.tool_choice.is_some() {
             tracing::warn!("WARNING: `tool_choice` not supported for Ollama");
@@ -497,6 +503,27 @@ impl TryFrom<(&str, CompletionRequest)> for OllamaCompletionRequest {
     }
 }
 
+pub(crate) struct OllamaCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> OllamaCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for OllamaCompletionRequestCodec<'_> {
+    type Request = OllamaCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        OllamaCompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     client: Client<T>,
@@ -575,8 +602,10 @@ where
             };
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
-            let request =
-                OllamaCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &OllamaCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if tracing::enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -623,7 +652,7 @@ where
                     );
                 }
 
-                completion_response_events(response)
+                crate::completion::codec::response_events(&OllamaCompletionCodec, response)
             };
 
             tracing::Instrument::instrument(async_block, span).await
@@ -656,7 +685,10 @@ where
 
         span.record("gen_ai.system_instructions", &request.preamble);
 
-        let mut request = OllamaCompletionRequest::try_from((self.model.as_ref(), request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
         request.stream = true;
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -759,7 +791,7 @@ where
             }
         }.instrument(span);
 
-        Ok(crate::model_event::result_stream(Box::pin(stream)))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 
@@ -1230,9 +1262,11 @@ mod tests {
 
         let chat_resp: CompletionResponse =
             serde_json::from_str(&sample_text).expect("Invalid JSON structure");
-        let conv = crate::model_event::collect(completion_response_events(chat_resp).unwrap())
-            .await
-            .unwrap();
+        let conv = crate::model_event::collect(
+            crate::completion::codec::response_events(&OllamaCompletionCodec, chat_resp).unwrap(),
+        )
+        .await
+        .unwrap();
         assert!(
             !conv.choice.is_empty(),
             "Expected non-empty choice in chat response"
@@ -1561,8 +1595,11 @@ mod tests {
         };
 
         // Convert to OllamaCompletionRequest
-        let ollama_request = OllamaCompletionRequest::try_from(("qwen3:8b", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("qwen3:8b"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         // Serialize to JSON
         let serialized =
@@ -1625,8 +1662,11 @@ mod tests {
         };
 
         // Convert to OllamaCompletionRequest
-        let ollama_request = OllamaCompletionRequest::try_from(("llama3.2", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("llama3.2"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         // Serialize to JSON
         let serialized =
@@ -1689,8 +1729,11 @@ mod tests {
             output_schema: Some(schema),
         };
 
-        let ollama_request = OllamaCompletionRequest::try_from(("llama3.1", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("llama3.1"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         let serialized =
             serde_json::to_value(&ollama_request).expect("Failed to serialize request");
@@ -1734,8 +1777,11 @@ mod tests {
             output_schema: None,
         };
 
-        let ollama_request = OllamaCompletionRequest::try_from(("llama3.1", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("llama3.1"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         let serialized =
             serde_json::to_value(&ollama_request).expect("Failed to serialize request");

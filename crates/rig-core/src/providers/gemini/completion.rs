@@ -108,7 +108,10 @@ where
                 tracing::Span::current()
             };
 
-            let request = create_request_body(completion_request)?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &GeminiCompletionCodec,
+                completion_request,
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(
@@ -161,7 +164,7 @@ where
                         );
                     }
 
-                    completion_response_events(response)
+                    crate::completion::codec::response_events(&GeminiCompletionCodec, response)
                 } else {
                     let text = String::from_utf8_lossy(
                         &response
@@ -406,113 +409,127 @@ impl TryFrom<Vec<completion::ToolDefinition>> for Tool {
     }
 }
 
-fn completion_response_events(
-    response: GenerateContentResponse,
-) -> Result<crate::model_event::ModelEventStream<GenerateContentResponse>, CompletionError> {
-    let candidate = response.candidates.first().ok_or_else(|| {
-        CompletionError::ResponseError("No response candidates in response".into())
-    })?;
+pub(crate) struct GeminiCompletionCodec;
 
-    let content = candidate
-        .content
-        .as_ref()
-        .ok_or_else(|| {
-            let reason = candidate
-                .finish_reason
-                .as_ref()
-                .map(|r| format!("finish_reason={r:?}"))
-                .unwrap_or_else(|| "finish_reason=<unknown>".to_string());
-            let message = candidate
-                .finish_message
-                .as_deref()
-                .unwrap_or("no finish message provided");
-            CompletionError::ResponseError(format!(
-                "Gemini candidate missing content ({reason}, finish_message={message})"
-            ))
-        })?
-        .parts
-        .iter()
-        .map(
-            |Part {
-                 thought,
-                 thought_signature,
-                 part,
-                 ..
-             }| {
-                Ok(match part {
-                    PartKind::Text(text) => {
-                        if let Some(thought) = thought
-                            && *thought
-                        {
-                            completion::AssistantContent::Reasoning(Reasoning::new_with_signature(
-                                text,
-                                thought_signature.clone(),
-                            ))
-                        } else {
-                            completion::AssistantContent::text(text)
-                        }
-                    }
-                    PartKind::InlineData(inline_data) => {
-                        let mime_type = message::MediaType::from_mime_type(&inline_data.mime_type);
+impl crate::completion::CompletionCodec for GeminiCompletionCodec {
+    type Request = GenerateContentRequest;
 
-                        match mime_type {
-                            Some(message::MediaType::Image(media_type)) => {
-                                message::AssistantContent::image_base64(
-                                    &inline_data.data,
-                                    Some(media_type),
-                                    Some(message::ImageDetail::default()),
-                                )
-                            }
-                            _ => {
-                                return Err(CompletionError::ResponseError(format!(
-                                    "Unsupported media type {mime_type:?}"
-                                )));
-                            }
-                        }
-                    }
-                    PartKind::FunctionCall(function_call) => {
-                        completion::AssistantContent::ToolCall(
-                            message::ToolCall::new(
-                                function_call.name.clone(),
-                                message::ToolFunction::new(
-                                    function_call.name.clone(),
-                                    function_call.args.clone(),
-                                ),
-                            )
-                            .with_signature(thought_signature.clone()),
-                        )
-                    }
-                    _ => {
-                        return Err(CompletionError::ResponseError(
-                            "Response did not contain a message or tool call".into(),
-                        ));
-                    }
-                })
-            },
-        )
-        .collect::<Result<Vec<_>, _>>()?;
-
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+    fn encode_request(&self, request: CompletionRequest) -> Result<Self::Request, CompletionError> {
+        create_request_body(request)
     }
+}
 
-    let usage = response
-        .usage_metadata
-        .as_ref()
-        .map(|usage| completion::Usage {
-            input_tokens: usage.prompt_token_count as u64,
-            output_tokens: usage.candidates_token_count.unwrap_or(0) as u64,
-            total_tokens: usage.total_token_count as u64,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-        })
-        .unwrap_or_default();
+impl crate::completion::CompletionResponseCodec for GeminiCompletionCodec {
+    type Response = GenerateContentResponse;
+    type RawFinal = GenerateContentResponse;
 
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let candidate = response.candidates.first().ok_or_else(|| {
+            CompletionError::ResponseError("No response candidates in response".into())
+        })?;
+
+        let content = candidate
+            .content
+            .as_ref()
+            .ok_or_else(|| {
+                let reason = candidate
+                    .finish_reason
+                    .as_ref()
+                    .map(|r| format!("finish_reason={r:?}"))
+                    .unwrap_or_else(|| "finish_reason=<unknown>".to_string());
+                let message = candidate
+                    .finish_message
+                    .as_deref()
+                    .unwrap_or("no finish message provided");
+                CompletionError::ResponseError(format!(
+                    "Gemini candidate missing content ({reason}, finish_message={message})"
+                ))
+            })?
+            .parts
+            .iter()
+            .map(
+                |Part {
+                     thought,
+                     thought_signature,
+                     part,
+                     ..
+                 }| {
+                    Ok(match part {
+                        PartKind::Text(text) => {
+                            if let Some(thought) = thought
+                                && *thought
+                            {
+                                completion::AssistantContent::Reasoning(
+                                    Reasoning::new_with_signature(text, thought_signature.clone()),
+                                )
+                            } else {
+                                completion::AssistantContent::text(text)
+                            }
+                        }
+                        PartKind::InlineData(inline_data) => {
+                            let mime_type =
+                                message::MediaType::from_mime_type(&inline_data.mime_type);
+
+                            match mime_type {
+                                Some(message::MediaType::Image(media_type)) => {
+                                    message::AssistantContent::image_base64(
+                                        &inline_data.data,
+                                        Some(media_type),
+                                        Some(message::ImageDetail::default()),
+                                    )
+                                }
+                                _ => {
+                                    return Err(CompletionError::ResponseError(format!(
+                                        "Unsupported media type {mime_type:?}"
+                                    )));
+                                }
+                            }
+                        }
+                        PartKind::FunctionCall(function_call) => {
+                            completion::AssistantContent::ToolCall(
+                                message::ToolCall::new(
+                                    function_call.name.clone(),
+                                    message::ToolFunction::new(
+                                        function_call.name.clone(),
+                                        function_call.args.clone(),
+                                    ),
+                                )
+                                .with_signature(thought_signature.clone()),
+                            )
+                        }
+                        _ => {
+                            return Err(CompletionError::ResponseError(
+                                "Response did not contain a message or tool call".into(),
+                            ));
+                        }
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage_metadata
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.prompt_token_count as u64,
+                output_tokens: usage.candidates_token_count.unwrap_or(0) as u64,
+                total_tokens: usage.total_token_count as u64,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
+    }
 }
 
 pub mod gemini_api_types {
@@ -2276,9 +2293,11 @@ mod tests {
             model_version: None,
         };
 
-        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
-            .await
-            .unwrap();
+        let converted = crate::model_event::collect(
+            crate::completion::codec::response_events(&GeminiCompletionCodec, response).unwrap(),
+        )
+        .await
+        .unwrap();
         let first = converted.choice.first();
         assert!(matches!(
             first,

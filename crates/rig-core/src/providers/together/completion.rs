@@ -130,7 +130,7 @@ pub const WIZARDLM_13B_V1_2: &str = "WizardLM/WizardLM-13B-V1.2";
 // =================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct TogetherAICompletionRequest {
+pub(crate) struct TogetherAICompletionRequest {
     model: String,
     pub messages: Vec<openai::Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,10 +143,8 @@ pub(super) struct TogetherAICompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl TogetherAICompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for TogetherAI");
         }
@@ -203,6 +201,27 @@ impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
     }
 }
 
+pub(crate) struct TogetherAICompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> TogetherAICompletionRequestCodec<'a> {
+    pub(crate) fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for TogetherAICompletionRequestCodec<'_> {
+    type Request = TogetherAICompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        TogetherAICompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     pub(crate) client: Client<T>,
@@ -256,10 +275,10 @@ where
 
             span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-            let request = TogetherAICompletionRequest::try_from((
-                self.model.to_string().as_ref(),
+            let request = crate::completion::CompletionCodec::encode_request(
+                &TogetherAICompletionRequestCodec::new(self.model.as_str()),
                 completion_request,
-            ))?;
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -390,7 +409,10 @@ mod tests {
             output_schema: None,
         };
 
-        let result = TogetherAICompletionRequest::try_from(("meta-llama/test-model", request));
+        let result = crate::completion::CompletionCodec::encode_request(
+            &TogetherAICompletionRequestCodec::new("meta-llama/test-model"),
+            request,
+        );
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
     }
 }

@@ -13,7 +13,7 @@ use crate::json_utils;
 use crate::providers::openai::responses_api::streaming::{
     ResponsesStreamOptions, StreamingResponse, stream_from_event_source_with_options,
 };
-use crate::providers::xai::completion::{CompletionModel, XAICompletionRequest};
+use crate::providers::xai::completion::{CompletionModel, XAICompletionRequestCodec};
 
 impl<T> CompletionModel<T>
 where
@@ -24,8 +24,10 @@ where
         completion_request: CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
-        let mut request =
-            XAICompletionRequest::try_from((self.model.as_str(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &XAICompletionRequestCodec::new(self.model.as_str()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

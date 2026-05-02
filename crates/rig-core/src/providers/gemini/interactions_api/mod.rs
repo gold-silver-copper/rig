@@ -11,8 +11,6 @@ use tracing_futures::Instrument;
 use url::form_urlencoded;
 
 use super::client::InteractionsClient;
-#[cfg(test)]
-use crate::OneOrMany;
 
 /// Streaming helpers for the Interactions API.
 pub mod streaming;
@@ -59,7 +57,10 @@ impl<T> InteractionsCompletionModel<T> {
         completion_request: CompletionRequest,
         stream_override: Option<bool>,
     ) -> Result<CreateInteractionRequest, CompletionError> {
-        create_request_body(self.model.clone(), completion_request, stream_override)
+        crate::completion::CompletionCodec::encode_request(
+            &GeminiInteractionsCompletionCodec::new(self.model.clone(), stream_override),
+            completion_request,
+        )
     }
 }
 
@@ -190,7 +191,10 @@ where
                         );
                     }
 
-                    completion_response_events(response)
+                    crate::completion::codec::response_events(
+                        &GeminiInteractionsCompletionCodec::new(String::new(), None),
+                        response,
+                    )
                 } else {
                     let text = String::from_utf8_lossy(
                         &response
@@ -467,46 +471,72 @@ fn build_interaction_stream_path(interaction_id: &str, last_event_id: Option<&st
     )
 }
 
-fn completion_response_events(
-    response: Interaction,
-) -> Result<crate::model_event::ModelEventStream<Interaction>, CompletionError> {
-    if response.outputs.is_empty() {
-        let status = response.status.as_ref().map(|status| format!("{status:?}"));
-        let message = match status {
-            Some(status) => format!(
-                "Interaction contained no outputs (status: {status}). Use get_interaction for background tasks."
-            ),
-            None => "Interaction contained no outputs".to_string(),
-        };
-        return Err(CompletionError::ResponseError(message));
+pub(crate) struct GeminiInteractionsCompletionCodec {
+    model: String,
+    stream_override: Option<bool>,
+}
+
+impl GeminiInteractionsCompletionCodec {
+    pub(crate) fn new(model: impl Into<String>, stream_override: Option<bool>) -> Self {
+        Self {
+            model: model.into(),
+            stream_override,
+        }
     }
+}
 
-    let content = response
-        .outputs
-        .iter()
-        .cloned()
-        .filter_map(|output| match assistant_content_from_output(output) {
-            Ok(Some(content)) => Some(Ok(content)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+impl crate::completion::CompletionCodec for GeminiInteractionsCompletionCodec {
+    type Request = CreateInteractionRequest;
 
-    if content.is_empty() {
-        return Err(CompletionError::ResponseError(
-            "Response contained no message or tool call (empty)".to_owned(),
-        ));
+    fn encode_request(&self, request: CompletionRequest) -> Result<Self::Request, CompletionError> {
+        create_request_body(self.model.clone(), request, self.stream_override)
     }
+}
 
-    let usage = response
-        .usage
-        .as_ref()
-        .and_then(|usage| usage.token_usage())
-        .unwrap_or_default();
+impl crate::completion::CompletionResponseCodec for GeminiInteractionsCompletionCodec {
+    type Response = Interaction;
+    type RawFinal = Interaction;
 
-    Ok(crate::model_event::events_from_parts(
-        response, content, usage, None,
-    ))
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        if response.outputs.is_empty() {
+            let status = response.status.as_ref().map(|status| format!("{status:?}"));
+            let message = match status {
+                Some(status) => format!(
+                    "Interaction contained no outputs (status: {status}). Use get_interaction for background tasks."
+                ),
+                None => "Interaction contained no outputs".to_string(),
+            };
+            return Err(CompletionError::ResponseError(message));
+        }
+
+        let content = response
+            .outputs
+            .iter()
+            .cloned()
+            .filter_map(|output| match assistant_content_from_output(output) {
+                Ok(Some(content)) => Some(Ok(content)),
+                Ok(None) => None,
+                Err(err) => Some(Err(err)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.token_usage())
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
+    }
 }
 
 fn assistant_content_from_output(
@@ -2513,10 +2543,15 @@ mod tests {
             ..Default::default()
         };
 
-        let response =
-            crate::model_event::collect(completion_response_events(interaction).unwrap())
-                .await
-                .unwrap();
+        let response = crate::model_event::collect(
+            crate::completion::codec::response_events(
+                &GeminiInteractionsCompletionCodec::new(String::new(), None),
+                interaction,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
 
         let choice = response.choice.first();
         match choice {

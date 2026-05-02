@@ -169,7 +169,7 @@ where
         }
         .instrument(span);
 
-        Ok(crate::model_event::result_stream(Box::pin(stream)))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 

@@ -569,7 +569,7 @@ pub const GPT_35_TURBO_INSTRUCT: &str = "gpt-3.5-turbo-instruct";
 pub const GPT_35_TURBO_16K: &str = "gpt-3.5-turbo-16k";
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct AzureOpenAICompletionRequest {
+pub(crate) struct AzureOpenAICompletionRequest {
     model: String,
     pub messages: Vec<openai::Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -582,10 +582,8 @@ pub(super) struct AzureOpenAICompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl AzureOpenAICompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         //FIXME: Must fix!
         if req.tool_choice.is_some() {
@@ -665,6 +663,27 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
     }
 }
 
+pub(crate) struct AzureOpenAICompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> AzureOpenAICompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for AzureOpenAICompletionRequestCodec<'_> {
+    type Request = AzureOpenAICompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        AzureOpenAICompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     client: Client<T>,
@@ -716,8 +735,10 @@ where
                 tracing::Span::current()
             };
 
-            let request =
-                AzureOpenAICompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+            let request = crate::completion::CompletionCodec::encode_request(
+                &AzureOpenAICompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if enabled!(Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
@@ -775,8 +796,10 @@ where
         completion_request: CompletionRequest,
     ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
-        let mut request =
-            AzureOpenAICompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &AzureOpenAICompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

@@ -1,6 +1,9 @@
 //! The streaming module for the OpenAI Responses API.
 //! Please see the `openai_streaming` or `openai_streaming_with_tools` example for more practical usage.
-use crate::completion::{self, CompletionError, GetTokenUsage};
+use crate::completion::{
+    self, CompletionCodec, CompletionError, CompletionStreamCodec, GetTokenUsage, ModelTurn,
+    ModelTurnAccumulator,
+};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::message::ReasoningContent;
@@ -424,6 +427,80 @@ impl ModelEventAccumulator {
     }
 }
 
+struct ResponsesStreamEventCodec {
+    provider_name: &'static str,
+    options: ResponsesStreamOptions,
+    accumulator: ModelEventAccumulator,
+    turn_accumulator: ModelTurnAccumulator<StreamingResponse>,
+}
+
+impl ResponsesStreamEventCodec {
+    fn new(provider_name: &'static str, options: ResponsesStreamOptions) -> Self {
+        Self::with_initial_usage(provider_name, options, ResponsesUsage::new())
+    }
+
+    fn with_initial_usage(
+        provider_name: &'static str,
+        options: ResponsesStreamOptions,
+        initial_usage: ResponsesUsage,
+    ) -> Self {
+        Self {
+            provider_name,
+            options,
+            accumulator: ModelEventAccumulator::new(initial_usage),
+            turn_accumulator: ModelTurnAccumulator::new(),
+        }
+    }
+
+    fn final_usage(&self) -> ResponsesUsage {
+        self.accumulator.final_usage.clone()
+    }
+
+    fn finish_events(self) -> Vec<StreamingModelEvent> {
+        self.accumulator.finish()
+    }
+}
+
+impl CompletionStreamCodec for ResponsesStreamEventCodec {
+    type StreamChunk = StreamingCompletionChunk;
+    type RawFinal = StreamingResponse;
+
+    fn decode_stream_chunk(
+        &mut self,
+        chunk: Self::StreamChunk,
+    ) -> Result<Vec<StreamingModelEvent>, CompletionError> {
+        let events = match chunk {
+            StreamingCompletionChunk::Delta(chunk) => {
+                self.accumulator.decode_item_chunk(chunk.data, self.options)
+            }
+            StreamingCompletionChunk::Response(chunk) => {
+                let ResponseChunk { kind, response, .. } = *chunk;
+                self.accumulator.record_response_chunk(
+                    kind,
+                    response,
+                    self.provider_name,
+                    self.options,
+                )?;
+                Vec::new()
+            }
+        };
+
+        for event in &events {
+            self.turn_accumulator.push_ref(event)?;
+        }
+
+        Ok(events)
+    }
+
+    fn finish_stream(mut self) -> Result<ModelTurn<Self::RawFinal>, CompletionError> {
+        for event in self.accumulator.finish() {
+            self.turn_accumulator.push(event)?;
+        }
+
+        self.turn_accumulator.finish()
+    }
+}
+
 pub(crate) fn model_events_from_sse_body(
     body: &str,
     initial_usage: ResponsesUsage,
@@ -570,9 +647,10 @@ pub(crate) async fn completion_response_from_sse_body(
             .map(Ok::<_, CompletionError>)
             .collect::<Vec<_>>(),
     );
-    let collected =
-        crate::model_event::collect_optional(crate::model_event::result_stream(Box::pin(stream)))
-            .await?;
+    let collected = crate::model_event::collect_optional(crate::completion::codec::result_stream(
+        Box::pin(stream),
+    ))
+    .await?;
 
     if choice_is_empty(&collected.choice) {
         return Err(CompletionError::ResponseError(
@@ -647,7 +725,7 @@ where
     RequestBody: Into<bytes::Bytes> + Clone + WasmCompatSend + 'static,
 {
     let stream = stream! {
-        let mut accumulator = ModelEventAccumulator::new(ResponsesUsage::new());
+        let mut codec = ResponsesStreamEventCodec::new(provider_name, options);
         let span = tracing::Span::current();
 
         let mut terminated_with_error = false;
@@ -676,25 +754,23 @@ where
                         continue;
                     };
 
-                    match data {
-                        StreamingCompletionChunk::Delta(chunk) => {
-                            for choice in accumulator.decode_item_chunk(chunk.data, options) {
-                                yield Ok(choice);
+                    if let StreamingCompletionChunk::Response(chunk) = &data
+                        && matches!(chunk.kind, ResponseChunkKind::ResponseCompleted)
+                    {
+                        span.record("gen_ai.response.id", chunk.response.id.as_str());
+                        span.record("gen_ai.response.model", chunk.response.model.as_str());
+                    }
+
+                    match codec.decode_stream_chunk(data) {
+                        Ok(events) => {
+                            for event in events {
+                                yield Ok(event);
                             }
                         }
-                        StreamingCompletionChunk::Response(chunk) => {
-                            let ResponseChunk { kind, response, .. } = *chunk;
-                            if matches!(kind, ResponseChunkKind::ResponseCompleted) {
-                                span.record("gen_ai.response.id", response.id.as_str());
-                                span.record("gen_ai.response.model", response.model.as_str());
-                            }
-                            if let Err(error) =
-                                accumulator.record_response_chunk(kind, response, provider_name, options)
-                            {
-                                terminated_with_error = true;
-                                yield Err(error);
-                                break;
-                            }
+                        Err(error) => {
+                            terminated_with_error = true;
+                            yield Err(error);
+                            break;
                         }
                     }
                 }
@@ -716,10 +792,10 @@ where
             return;
         }
 
-        let final_usage = accumulator.final_usage.clone();
+        let final_usage = codec.final_usage();
 
-        for tool_call in accumulator.finish() {
-            yield Ok(tool_call)
+        for event in codec.finish_events() {
+            yield Ok(event);
         }
 
         span.record("gen_ai.usage.input_tokens", final_usage.input_tokens);
@@ -734,7 +810,7 @@ where
     }
     .instrument(span);
 
-    crate::model_event::result_stream(Box::pin(stream))
+    crate::completion::codec::result_stream(Box::pin(stream))
 }
 
 /// An item message chunk from OpenAI's Responses API.
@@ -875,8 +951,10 @@ where
         &self,
         completion_request: crate::completion::CompletionRequest,
     ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
-        let mut request = self.create_completion_request(completion_request)?;
-        request.stream = Some(true);
+        let request = self
+            .completion_codec()
+            .streaming()
+            .encode_request(completion_request)?;
 
         if enabled!(Level::TRACE) {
             tracing::trace!(
@@ -924,7 +1002,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{ItemChunkKind, StreamingCompletionChunk, reasoning_choices_from_done_item};
-    use crate::completion::CompletionModel;
+    use crate::completion::{CompletionModel, CompletionStreamCodec};
     use crate::http_client::mock::MockStreamingClient;
     use crate::message::ReasoningContent;
     use crate::model_event::ModelEvent;
@@ -978,6 +1056,61 @@ mod tests {
             tools: Vec::new(),
             additional_parameters: AdditionalParameters::default(),
         }
+    }
+
+    fn sample_usage() -> ResponsesUsage {
+        ResponsesUsage {
+            input_tokens: 3,
+            input_tokens_details: None,
+            output_tokens: 2,
+            output_tokens_details: OutputTokensDetails {
+                reasoning_tokens: 0,
+            },
+            total_tokens: 5,
+        }
+    }
+
+    #[test]
+    fn responses_stream_codec_collects_delta_and_final_usage_into_turn() {
+        let mut codec = super::ResponsesStreamEventCodec::new(
+            "OpenAI",
+            super::ResponsesStreamOptions::strict(),
+        );
+
+        let events = codec
+            .decode_stream_chunk(StreamingCompletionChunk::Delta(super::ItemChunk {
+                item_id: None,
+                output_index: 0,
+                data: ItemChunkKind::OutputTextDelta(super::DeltaTextChunk {
+                    content_index: 0,
+                    sequence_number: 0,
+                    delta: "Hello".to_string(),
+                }),
+            }))
+            .expect("text delta should decode");
+
+        assert!(matches!(
+            events.first(),
+            Some(ModelEvent::TextDelta { text }) if text == "Hello"
+        ));
+
+        let mut response = sample_response(ResponseStatus::Completed);
+        response.usage = Some(sample_usage());
+        codec
+            .decode_stream_chunk(StreamingCompletionChunk::Response(Box::new(
+                super::ResponseChunk {
+                    kind: super::ResponseChunkKind::ResponseCompleted,
+                    response,
+                    sequence_number: 1,
+                },
+            )))
+            .expect("completed response should decode");
+
+        let turn = codec.finish_stream().expect("stream should finish");
+
+        assert_eq!(turn.visible_text(), "Hello");
+        assert_eq!(turn.usage.input_tokens, 3);
+        assert!(turn.raw_response.is_some());
     }
 
     async fn first_error_from_event(
