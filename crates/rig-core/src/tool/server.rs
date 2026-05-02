@@ -213,7 +213,6 @@ impl RmcpToolProvider for RemoteToolProvider {
 
 struct ToolServerState {
     static_tool_names: Vec<String>,
-    remote_tool_names: Vec<String>,
     dynamic_tools: Vec<(usize, Arc<dyn VectorStoreIndexDyn + Send + Sync>)>,
     tools: HashMap<String, RegisteredTool>,
 }
@@ -340,7 +339,6 @@ impl ToolServer {
     pub fn run(self) -> ToolServerHandle {
         ToolServerHandle(Arc::new(RwLock::new(ToolServerState {
             static_tool_names: self.static_tool_names,
-            remote_tool_names: Vec::new(),
             dynamic_tools: self.dynamic_tools,
             tools: self.tools,
         })))
@@ -434,33 +432,47 @@ impl ToolServerHandle {
         tools: Vec<Tool>,
         sink: ::rmcp::service::ServerSink,
     ) -> Result<(), ToolServerError> {
-        self.set_remote_tools_with_provider(tools, Arc::new(RemoteToolProvider::new(sink)))
+        self.replace_remote_tools(Vec::new(), tools, sink)
             .await
+            .map(|_| ())
     }
 
-    async fn set_remote_tools_with_provider(
+    pub async fn replace_remote_tools(
         &self,
+        previous_tool_names: Vec<String>,
+        tools: Vec<Tool>,
+        sink: ::rmcp::service::ServerSink,
+    ) -> Result<Vec<String>, ToolServerError> {
+        self.replace_remote_tools_with_provider(
+            previous_tool_names,
+            tools,
+            Arc::new(RemoteToolProvider::new(sink)),
+        )
+        .await
+    }
+
+    async fn replace_remote_tools_with_provider(
+        &self,
+        previous_tool_names: Vec<String>,
         tools: Vec<Tool>,
         provider: Arc<dyn RmcpToolProvider>,
-    ) -> Result<(), ToolServerError> {
+    ) -> Result<Vec<String>, ToolServerError> {
         let mut state = self.0.write().await;
-        let old_remote_names = std::mem::take(&mut state.remote_tool_names);
-        for name in old_remote_names {
+        for name in previous_tool_names {
             state.static_tool_names.retain(|x| x != &name);
             state.tools.remove(&name);
         }
 
-        let mut remote_tool_names = Vec::new();
+        let mut current_tool_names = Vec::new();
         for tool in tools {
             let name = tool.name.to_string();
             push_unique_tool_name(&mut state.static_tool_names, name.clone());
-            push_unique_tool_name(&mut remote_tool_names, name.clone());
+            push_unique_tool_name(&mut current_tool_names, name.clone());
             state
                 .tools
                 .insert(name, static_registered_tool(tool, provider.clone()));
         }
-        state.remote_tool_names = remote_tool_names;
-        Ok(())
+        Ok(current_tool_names)
     }
 
     pub async fn remove_tool(&self, tool_name: &str) -> Result<(), ToolServerError> {
@@ -861,8 +873,9 @@ mod tests {
             handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("ok")])) },
         });
 
-        handle
-            .set_remote_tools_with_provider(
+        let managed = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
                 vec![test_tool("remote_a"), test_tool("remote_b")],
                 provider.clone(),
             )
@@ -881,7 +894,7 @@ mod tests {
         assert!(names.contains(&"remote_b".to_string()));
 
         handle
-            .set_remote_tools_with_provider(vec![test_tool("remote_c")], provider)
+            .replace_remote_tools_with_provider(managed, vec![test_tool("remote_c")], provider)
             .await
             .expect("remote tools should replace");
 
@@ -904,6 +917,56 @@ mod tests {
         assert!(names.contains(&"remote_c".to_string()));
         assert!(!names.contains(&"remote_a".to_string()));
         assert!(!names.contains(&"remote_b".to_string()));
+    }
+
+    #[tokio::test]
+    async fn remote_tool_replacement_only_removes_tools_owned_by_caller() {
+        let handle = ToolServer::new().local_rmcp_tool(EchoTool).run();
+        let provider_a = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_a"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("a")])) },
+        });
+        let provider_b = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_b"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("b")])) },
+        });
+
+        let managed_a = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("remote_a")],
+                provider_a.clone(),
+            )
+            .await
+            .expect("first remote server should register");
+        let managed_b = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("remote_b")],
+                provider_b.clone(),
+            )
+            .await
+            .expect("second remote server should register");
+
+        let managed_a = handle
+            .replace_remote_tools_with_provider(managed_a, vec![test_tool("remote_a2")], provider_a)
+            .await
+            .expect("first remote server should refresh");
+
+        let names = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"echo".to_string()));
+        assert!(names.contains(&"remote_a2".to_string()));
+        assert!(names.contains(&"remote_b".to_string()));
+        assert!(!names.contains(&"remote_a".to_string()));
+        assert_eq!(managed_a, vec!["remote_a2".to_string()]);
+        assert_eq!(managed_b, vec!["remote_b".to_string()]);
     }
 
     #[test]

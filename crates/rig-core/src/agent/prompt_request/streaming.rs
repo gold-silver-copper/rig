@@ -1290,12 +1290,11 @@ mod tests {
             .await;
         let mut final_response = None;
         while let Some(item) = stream.next().await {
-            match item.expect("stream should not fail") {
-                MultiTurnStreamItem::FinalResponse(response) => {
-                    final_response = Some(response.response().to_string());
-                    break;
-                }
-                _ => {}
+            if let MultiTurnStreamItem::FinalResponse(response) =
+                item.expect("stream should not fail")
+            {
+                final_response = Some(response.response().to_string());
+                break;
             }
         }
 

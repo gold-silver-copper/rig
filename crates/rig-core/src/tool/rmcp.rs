@@ -52,18 +52,14 @@ impl McpClientHandler {
             .map_err(|e| McpClientError::ConnectionError(e.to_string()))?;
 
         let tools = service.peer().list_all_tools().await?;
-        let tool_names = tools
-            .iter()
-            .map(|tool| tool.name.to_string())
-            .collect::<Vec<_>>();
-
         {
             let handler = service.service();
-            handler
+            let mut managed = handler.managed_tool_names.write().await;
+            let tool_names = handler
                 .tool_server_handle
-                .set_remote_tools(tools, service.peer().clone())
+                .replace_remote_tools(managed.clone(), tools, service.peer().clone())
                 .await?;
-            *handler.managed_tool_names.write().await = tool_names;
+            *managed = tool_names;
         }
 
         Ok(service)
@@ -94,7 +90,7 @@ impl ::rmcp::handler::client::ClientHandler for McpClientHandler {
             .collect::<Vec<_>>();
         if let Err(e) = self
             .tool_server_handle
-            .set_remote_tools(tools, context.peer.clone())
+            .replace_remote_tools(managed.clone(), tools, context.peer.clone())
             .await
         {
             tracing::error!("Failed to refresh MCP tools: {e}");

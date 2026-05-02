@@ -91,11 +91,74 @@ where
     type Args = AgentToolArgs;
     type Output = String;
 
+    fn name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| Self::NAME.to_string())
+    }
+
     async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
         crate::completion::ToolDefinition::from(self.rmcp_tool_definition())
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         self.prompt(args.prompt).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        OneOrMany,
+        agent::AgentBuilder,
+        completion::{
+            AssistantContent, CompletionError, CompletionRequest, CompletionResponse, Usage,
+        },
+        streaming::StreamingCompletionResponse,
+    };
+
+    #[derive(Clone, Default)]
+    struct DummyModel;
+
+    #[allow(refining_impl_trait)]
+    impl CompletionModel for DummyModel {
+        type Response = ();
+        type StreamingResponse = ();
+        type Client = ();
+
+        fn make(_: &Self::Client, _: impl Into<String>) -> Self {
+            Self
+        }
+
+        async fn completion(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+            Ok(CompletionResponse {
+                choice: OneOrMany::one(AssistantContent::text("ok")),
+                usage: Usage::new(),
+                raw_response: (),
+                message_id: None,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+            Err(CompletionError::ProviderError(
+                "stream is unused in this test".to_string(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn named_agent_tool_registers_under_advertised_name() {
+        let agent = AgentBuilder::new(DummyModel).name("calculator").build();
+
+        let registered_name = <_ as LocalRmcpTool>::name(&agent);
+        let advertised = agent.definition(String::new()).await;
+
+        assert_eq!(registered_name, "calculator");
+        assert_eq!(advertised.name, registered_name);
     }
 }
