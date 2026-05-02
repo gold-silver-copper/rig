@@ -118,7 +118,7 @@ pub use builder::{AgentBuilder, NoToolConfig, WithBuilderTools, WithToolServerHa
 pub use completion::Agent;
 pub use prompt_request::hooks::{HookAction, PromptHook, ToolCallHookAction};
 pub use prompt_request::streaming::{
-    FinalResponse, MultiTurnStreamItem, StreamingError, StreamingPromptRequest, StreamingResult,
+    AgentEvent, AgentEventStream, FinalResponse, StreamingError, StreamingPromptRequest,
     stream_to_stdout,
 };
 pub use prompt_request::{PromptRequest, PromptResponse, TypedPromptRequest, TypedPromptResponse};

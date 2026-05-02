@@ -29,13 +29,14 @@ use crate::client::{
 use crate::completion::{self, CompletionError, GetTokenUsage};
 use crate::embeddings::{self, EmbeddingError};
 use crate::http_client::{self, HttpClientExt};
+use crate::model_event::ModelEvent;
+use crate::model_event::ModelEventStream;
 use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
     CompatibleToolCallChunk,
 };
 use crate::providers::openai;
 use crate::providers::openai::responses_api::{self, CompletionRequest as ResponsesRequest};
-use crate::streaming::{self, RawStreamingChoice, StreamingCompletionResponse};
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use async_stream::stream;
 use futures::StreamExt;
@@ -450,8 +451,8 @@ pub enum CopilotCompletionResponse {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "api", rename_all = "snake_case")]
 pub enum CopilotStreamingResponse {
-    Chat(openai::completion::streaming::StreamingCompletionResponse),
-    Responses(responses_api::streaming::StreamingCompletionResponse),
+    Chat(openai::completion::streaming::StreamingResponse),
+    Responses(responses_api::streaming::StreamingResponse),
 }
 
 impl GetTokenUsage for CopilotStreamingResponse {
@@ -486,10 +487,16 @@ pub struct ChatChoice {
     pub finish_reason: Option<String>,
 }
 
-impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatCompletionResponse> {
-    type Error = CompletionError;
+pub(crate) struct CopilotChatCompletionCodec;
 
-    fn try_from(response: ChatCompletionResponse) -> Result<Self, Self::Error> {
+impl crate::completion::CompletionResponseCodec for CopilotChatCompletionCodec {
+    type Response = ChatCompletionResponse;
+    type RawFinal = CopilotCompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
@@ -515,18 +522,13 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
                     })
                     .collect::<Vec<_>>();
 
-                content.extend(
-                    tool_calls
-                        .iter()
-                        .map(|call| {
-                            completion::AssistantContent::tool_call(
-                                &call.id,
-                                &call.function.name,
-                                call.function.arguments.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
                 Ok(content)
             }
             _ => Err(CompletionError::ResponseError(
@@ -534,11 +536,11 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
             )),
         }?;
 
-        let choice = crate::OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
                 "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            ));
+        }
 
         let usage = response
             .usage
@@ -556,13 +558,84 @@ impl TryFrom<ChatCompletionResponse> for completion::CompletionResponse<ChatComp
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
+        crate::completion::codec::turn_from_parts(
+            CopilotCompletionResponse::Chat(response),
+            content,
             usage,
-            raw_response: response,
-            message_id: None,
-        })
+            None,
+        )
     }
+}
+
+fn chat_completion_response_events(
+    response: ChatCompletionResponse,
+) -> Result<ModelEventStream<CopilotCompletionResponse>, CompletionError> {
+    crate::completion::codec::response_events(&CopilotChatCompletionCodec, response)
+}
+
+pub(crate) struct CopilotResponsesCompletionCodec;
+
+impl crate::completion::CompletionResponseCodec for CopilotResponsesCompletionCodec {
+    type Response = responses_api::CompletionResponse;
+    type RawFinal = CopilotCompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        if response.output.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no parts".to_owned(),
+            ));
+        }
+
+        let message_id = response.output.iter().find_map(|item| match item {
+            responses_api::Output::Message(msg) => Some(msg.id.clone()),
+            _ => None,
+        });
+
+        let content: Vec<completion::AssistantContent> = response
+            .output
+            .iter()
+            .cloned()
+            .flat_map(<Vec<completion::AssistantContent>>::from)
+            .collect();
+
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        let usage = response
+            .usage
+            .as_ref()
+            .map(|usage| completion::Usage {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                cached_input_tokens: usage
+                    .input_tokens_details
+                    .as_ref()
+                    .map(|d| d.cached_tokens)
+                    .unwrap_or(0),
+                cache_creation_input_tokens: 0,
+            })
+            .unwrap_or_default();
+
+        crate::completion::codec::turn_from_parts(
+            CopilotCompletionResponse::Responses(Box::new(response)),
+            content,
+            usage,
+            message_id,
+        )
+    }
+}
+
+fn responses_completion_response_events(
+    response: responses_api::CompletionResponse,
+) -> Result<ModelEventStream<CopilotCompletionResponse>, CompletionError> {
+    crate::completion::codec::response_events(&CopilotResponsesCompletionCodec, response)
 }
 
 #[derive(Debug, Deserialize)]
@@ -638,25 +711,30 @@ where
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<openai::completion::CompletionRequest, CompletionError> {
-        openai::completion::CompletionRequest::try_from(openai::completion::OpenAIRequestParams {
-            model: self.model.clone(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })
+        crate::completion::CompletionCodec::encode_request(
+            &openai::completion::codec::ChatCompletionCodec::new(
+                self.model.clone(),
+                self.strict_tools,
+                self.tool_result_array_content,
+            ),
+            completion_request,
+        )
     }
 
     fn responses_request(
         &self,
         completion_request: completion::CompletionRequest,
     ) -> Result<ResponsesRequest, CompletionError> {
-        ResponsesRequest::try_from((self.model.clone(), completion_request))
+        crate::completion::CompletionCodec::encode_request(
+            &responses_api::codec::ResponsesCompletionCodec::new(self.model.clone(), Vec::new()),
+            completion_request,
+        )
     }
 
     async fn completion_chat(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CopilotCompletionResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<CopilotCompletionResponse>, CompletionError> {
         let initiator = request_initiator(&completion_request);
         let has_vision = request_has_vision(&completion_request);
         let request = self.chat_request(completion_request)?;
@@ -695,7 +773,6 @@ where
                 let body = http_client::text(response).await?;
                 match serde_json::from_str::<ChatApiResponse<ChatCompletionResponse>>(&body)? {
                     ChatApiResponse::Ok(response) => {
-                        let core = completion::CompletionResponse::try_from(response.clone())?;
                         let span = tracing::Span::current();
                         span.record("gen_ai.response.id", response.id.as_str());
                         span.record("gen_ai.response.model", response.model.as_str());
@@ -715,12 +792,7 @@ where
                             );
                         }
 
-                        Ok(completion::CompletionResponse {
-                            choice: core.choice,
-                            usage: core.usage,
-                            raw_response: CopilotCompletionResponse::Chat(response),
-                            message_id: core.message_id,
-                        })
+                        chat_completion_response_events(response)
                     }
                     ChatApiResponse::Err(err) => Err(CompletionError::ProviderError(
                         err.error_message().to_string(),
@@ -738,7 +810,7 @@ where
     async fn completion_responses(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CopilotCompletionResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<CopilotCompletionResponse>, CompletionError> {
         let initiator = request_initiator(&completion_request);
         let has_vision = request_has_vision(&completion_request);
         let request = self.responses_request(completion_request)?;
@@ -774,7 +846,6 @@ where
             if response.status().is_success() {
                 let body = http_client::text(response).await?;
                 let response = serde_json::from_str::<responses_api::CompletionResponse>(&body)?;
-                let core = completion::CompletionResponse::try_from(response.clone())?;
 
                 let span = tracing::Span::current();
                 span.record("gen_ai.response.id", response.id.as_str());
@@ -792,12 +863,7 @@ where
                     );
                 }
 
-                Ok(completion::CompletionResponse {
-                    choice: core.choice,
-                    usage: core.usage,
-                    raw_response: CopilotCompletionResponse::Responses(Box::new(response)),
-                    message_id: core.message_id,
-                })
+                responses_completion_response_events(response)
             } else {
                 let body = http_client::text(response).await?;
                 Err(CompletionError::ProviderError(body))
@@ -810,7 +876,7 @@ where
     async fn stream_chat(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<CopilotStreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<CopilotStreamingResponse>, CompletionError> {
         let initiator = request_initiator(&completion_request);
         let has_vision = request_has_vision(&completion_request);
         let request = self.chat_request(completion_request)?;
@@ -860,7 +926,7 @@ where
     async fn stream_responses(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<CopilotStreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<CopilotStreamingResponse>, CompletionError> {
         let initiator = request_initiator(&completion_request);
         let has_vision = request_has_vision(&completion_request);
         let mut request = self.responses_request(completion_request)?;
@@ -898,7 +964,7 @@ where
         let stream = tracing_futures::Instrument::instrument(
             stream! {
                 let mut final_usage = responses_api::ResponsesUsage::new();
-                let mut tool_calls: Vec<streaming::RawStreamingChoice<CopilotStreamingResponse>> = Vec::new();
+                let mut tool_calls: Vec<ModelEvent<CopilotStreamingResponse>> = Vec::new();
                 let mut tool_call_internal_ids: HashMap<String, String> = HashMap::new();
                 let span = tracing::Span::current();
 
@@ -926,10 +992,10 @@ where
                                                 .entry(func.id.clone())
                                                 .or_insert_with(|| nanoid::nanoid!())
                                                 .clone();
-                                            yield Ok(RawStreamingChoice::ToolCallDelta {
+                                            yield Ok(ModelEvent::ToolCallDelta {
                                                 id: func.id.clone(),
                                                 internal_call_id,
-                                                content: streaming::ToolCallDeltaContent::Name(func.name.clone()),
+                                                content: crate::model_event::ToolCallDeltaContent::Name(func.name.clone()),
                                             });
                                         }
                                     }
@@ -939,14 +1005,14 @@ where
                                                 .entry(func.id.clone())
                                                 .or_insert_with(|| nanoid::nanoid!())
                                                 .clone();
-                                            let raw_tool_call = streaming::RawStreamingToolCall::new(
+                                            let raw_tool_call = crate::providers::internal::tool_call::ProviderToolCall::new(
                                                 func.id.clone(),
                                                 func.name.clone(),
                                                 func.arguments.clone(),
                                             )
                                             .with_internal_call_id(internal_id)
                                             .with_call_id(func.call_id.clone());
-                                            tool_calls.push(RawStreamingChoice::ToolCall(raw_tool_call));
+                                            tool_calls.push(ModelEvent::from(raw_tool_call));
                                         }
                                         StreamingItemDoneOutput { item: responses_api::Output::Reasoning { summary, id, encrypted_content, .. }, .. } => {
                                             for reasoning_choice in responses_api::streaming::reasoning_choices_from_done_item(
@@ -954,40 +1020,32 @@ where
                                                 summary,
                                                 encrypted_content.as_deref(),
                                             ) {
-                                                match reasoning_choice {
-                                                    RawStreamingChoice::Reasoning { id, content } => {
-                                                        yield Ok(RawStreamingChoice::Reasoning { id, content });
-                                                    }
-                                                    RawStreamingChoice::ReasoningDelta { id, reasoning } => {
-                                                        yield Ok(RawStreamingChoice::ReasoningDelta { id, reasoning });
-                                                    }
-                                                    _ => {}
-                                                }
+                                                yield Ok(reasoning_choice);
                                             }
                                         }
                                         StreamingItemDoneOutput { item: responses_api::Output::Message(msg), .. } => {
-                                            yield Ok(RawStreamingChoice::MessageId(msg.id.clone()));
+                                            yield Ok(ModelEvent::MessageDone { id: Some(msg.id.clone()) });
                                         }
                                         StreamingItemDoneOutput { item: responses_api::Output::Unknown, .. } => {}
                                     },
                                     ItemChunkKind::OutputTextDelta(delta) => {
-                                        yield Ok(RawStreamingChoice::Message(delta.delta.clone()))
+                                        yield Ok(ModelEvent::TextDelta { text: delta.delta.clone() })
                                     }
                                     ItemChunkKind::ReasoningSummaryTextDelta(delta) => {
-                                        yield Ok(RawStreamingChoice::ReasoningDelta { id: None, reasoning: delta.delta.clone() })
+                                        yield Ok(ModelEvent::ReasoningDelta { id: None, text: delta.delta.clone() })
                                     }
                                     ItemChunkKind::RefusalDelta(delta) => {
-                                        yield Ok(RawStreamingChoice::Message(delta.delta.clone()))
+                                        yield Ok(ModelEvent::TextDelta { text: delta.delta.clone() })
                                     }
                                     ItemChunkKind::FunctionCallArgsDelta(delta) => {
                                         let internal_call_id = tool_call_internal_ids
                                             .entry(delta.item_id.clone())
                                             .or_insert_with(|| nanoid::nanoid!())
                                             .clone();
-                                        yield Ok(RawStreamingChoice::ToolCallDelta {
+                                        yield Ok(ModelEvent::ToolCallDelta {
                                             id: delta.item_id.clone(),
                                             internal_call_id,
-                                            content: streaming::ToolCallDeltaContent::Delta(delta.delta.clone())
+                                            content: crate::model_event::ToolCallDeltaContent::Delta(delta.delta.clone())
                                         })
                                     }
                                     _ => continue,
@@ -1036,8 +1094,8 @@ where
                     return;
                 }
 
-                for tool_call in &tool_calls {
-                    yield Ok(tool_call.to_owned())
+                for tool_call in tool_calls {
+                    yield Ok(tool_call)
                 }
 
                 span.record("gen_ai.usage.input_tokens", final_usage.input_tokens);
@@ -1051,16 +1109,19 @@ where
                         .unwrap_or(0),
                 );
 
-                yield Ok(RawStreamingChoice::FinalResponse(
-                    CopilotStreamingResponse::Responses(
-                        responses_api::streaming::StreamingCompletionResponse { usage: final_usage }
-                    )
-                ));
+                let response = CopilotStreamingResponse::Responses(
+                    responses_api::streaming::StreamingResponse { usage: final_usage }
+                );
+                if let Some(usage) = response.token_usage() {
+                    yield Ok(ModelEvent::Usage { usage });
+                }
+                yield Ok(ModelEvent::RawResponse { response });
+                yield Ok(ModelEvent::Done);
             },
             span,
         );
 
-        Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 
@@ -1077,20 +1138,20 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<Self::Response>, CompletionError> {
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
         match self.route() {
             CompletionRoute::ChatCompletions => self.completion_chat(completion_request).await,
             CompletionRoute::Responses => self.completion_responses(completion_request).await,
         }
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         match self.route() {
             CompletionRoute::ChatCompletions => self.stream_chat(completion_request).await,
             CompletionRoute::Responses => self.stream_responses(completion_request).await,
@@ -1351,9 +1412,7 @@ impl CompatibleStreamProfile for CopilotChatCompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        CopilotStreamingResponse::Chat(openai::completion::streaming::StreamingCompletionResponse {
-            usage,
-        })
+        CopilotStreamingResponse::Chat(openai::completion::streaming::StreamingResponse { usage })
     }
 
     fn uses_distinct_tool_call_eviction(&self) -> bool {
@@ -1364,7 +1423,7 @@ impl CompatibleStreamProfile for CopilotChatCompatibleProfile {
 async fn send_copilot_chat_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
-) -> Result<StreamingCompletionResponse<CopilotStreamingResponse>, CompletionError>
+) -> Result<ModelEventStream<CopilotStreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {
@@ -1405,10 +1464,10 @@ mod tests {
     use crate::completion::CompletionModel;
     use crate::http_client::mock::MockStreamingClient;
     use crate::http_client::{self, HttpClientExt, LazyBody, MultipartForm, Request, Response};
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::{
         sse_bytes_from_data_lines, sse_bytes_from_json_events,
     };
-    use crate::streaming::StreamedAssistantContent;
     use bytes::Bytes;
     use futures::StreamExt;
     use std::collections::HashMap;
@@ -1863,11 +1922,14 @@ mod tests {
             .expect("build client");
         let model = client.completion_model("gpt-5.3-codex");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         let err = match stream.next().await.expect("stream should yield an item") {
-            Ok(_) => panic!("stream should surface a provider error"),
-            Err(err) => err,
+            ModelEvent::Error { error } => error,
+            _ => panic!("stream should surface a provider error"),
         };
         assert_eq!(
             err.to_string(),
@@ -1898,13 +1960,16 @@ mod tests {
             .expect("build client");
         let model = client.completion_model("gpt-4o");
         let request = model.completion_request("hello").build();
-        let mut stream = model.stream(request).await.expect("stream should start");
+        let mut stream = model
+            .stream_events(request)
+            .await
+            .expect("stream should start");
 
         let mut saw_error = false;
         while let Some(item) = stream.next().await {
             match item {
-                Ok(StreamedAssistantContent::ToolCallDelta { .. }) => {}
-                Err(err) => {
+                ModelEvent::ToolCallDelta { .. } => {}
+                ModelEvent::Error { error: err } => {
                     assert_eq!(
                         err.to_string(),
                         "ProviderError: Invalid status code: 502 Bad Gateway"
@@ -1912,7 +1977,7 @@ mod tests {
                     saw_error = true;
                     break;
                 }
-                Ok(_) => panic!("unexpected non-error stream item before transport failure"),
+                _ => panic!("unexpected non-error stream item before transport failure"),
             }
         }
 

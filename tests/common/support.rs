@@ -3,11 +3,12 @@
 
 use futures::StreamExt;
 use rig::{
-    agent::{MultiTurnStreamItem, StreamingError, StreamingResult},
+    agent::{AgentEvent, AgentEventStream, StreamingError},
     completion::{AssistantContent, GetTokenUsage, ToolDefinition},
     embeddings::Embedding,
-    streaming::{StreamedAssistantContent, StreamedUserContent, StreamingCompletionResponse},
+    model_event::{ModelEvent, ModelEventStream},
     tool::Tool,
+    wasm_compat::WasmCompatSend,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -396,12 +397,12 @@ pub(crate) fn assert_embeddings_nonempty_and_consistent(
 }
 
 pub(crate) async fn collect_stream_final_response<R>(
-    stream: &mut StreamingResult<R>,
+    stream: &mut AgentEventStream<R>,
 ) -> Result<String, StreamingError> {
     let mut final_response = None;
 
     while let Some(item) = stream.next().await {
-        if let MultiTurnStreamItem::FinalResponse(response) = item? {
+        if let AgentEvent::FinalResponse(response) = item? {
             final_response = Some(response.response().to_owned());
         }
     }
@@ -410,24 +411,25 @@ pub(crate) async fn collect_stream_final_response<R>(
 }
 
 pub(crate) async fn assert_stream_contains_zero_arg_tool_call_named<R>(
-    mut stream: StreamingCompletionResponse<R>,
+    mut stream: ModelEventStream<R>,
     expected_name: &str,
     expect_final_response: bool,
 ) where
-    R: Clone + Unpin + GetTokenUsage,
+    R: Clone + Unpin + GetTokenUsage + WasmCompatSend + 'static,
 {
     let mut saw_final = false;
     let mut saw_matching_tool_call = false;
 
     while let Some(chunk) = stream.next().await {
-        match chunk.expect("stream item should be ok") {
-            StreamedAssistantContent::Final(_) => saw_final = true,
-            StreamedAssistantContent::ToolCall { tool_call, .. } => {
+        match chunk {
+            ModelEvent::RawResponse { .. } => saw_final = true,
+            ModelEvent::ToolCallDone { tool_call, .. } => {
                 if tool_call.function.name == expected_name {
                     assert_eq!(tool_call.function.arguments, json!({}));
                     saw_matching_tool_call = true;
                 }
             }
+            ModelEvent::Error { error } => panic!("stream item should be ok: {error}"),
             _ => {}
         }
     }
@@ -499,19 +501,19 @@ impl RawStreamObservation {
 }
 
 pub(crate) async fn collect_stream_observation<R>(
-    stream: &mut StreamingResult<R>,
+    stream: &mut AgentEventStream<R>,
 ) -> StreamObservation {
     let mut observation = StreamObservation::new();
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(content)) => match content {
-                StreamedAssistantContent::Text(text) => {
-                    observation.all_streamed_text.push_str(&text.text);
-                    observation.final_turn_text.push_str(&text.text);
+            Ok(AgentEvent::Model(event)) => match event {
+                ModelEvent::TextDelta { text } => {
+                    observation.all_streamed_text.push_str(&text);
+                    observation.final_turn_text.push_str(&text);
                     observation.events.push("text");
                 }
-                StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                ModelEvent::ToolCallDone { tool_call, .. } => {
                     observation.tool_calls.push(tool_call.function.name.clone());
                     observation.tool_call_records.push(ToolCallRecord {
                         name: tool_call.function.name,
@@ -520,25 +522,33 @@ pub(crate) async fn collect_stream_observation<R>(
                     });
                     observation.events.push("tool_call");
                 }
-                StreamedAssistantContent::ToolCallDelta { .. } => {
+                ModelEvent::ToolCallStart { .. } | ModelEvent::ToolCallDelta { .. } => {
                     observation.events.push("tool_call_delta");
                 }
-                StreamedAssistantContent::Reasoning(_) => {
+                ModelEvent::ReasoningDone { .. } => {
                     observation.events.push("reasoning");
                 }
-                StreamedAssistantContent::ReasoningDelta { .. } => {
+                ModelEvent::ReasoningDelta { .. } => {
                     observation.events.push("reasoning_delta");
                 }
-                StreamedAssistantContent::Final(_) => {
+                ModelEvent::RawResponse { .. } => {
                     observation.events.push("stream_final");
                 }
+                ModelEvent::Error { error } => {
+                    observation.errors.push(error.to_string());
+                    observation.events.push("error");
+                }
+                ModelEvent::MessageDone { .. }
+                | ModelEvent::Usage { .. }
+                | ModelEvent::ProviderMetadata { .. }
+                | ModelEvent::Done => {}
             },
-            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult { .. })) => {
+            Ok(AgentEvent::ToolResult { .. }) => {
                 observation.tool_results += 1;
                 observation.final_turn_text.clear();
                 observation.events.push("tool_result");
             }
-            Ok(MultiTurnStreamItem::FinalResponse(response)) => {
+            Ok(AgentEvent::FinalResponse(response)) => {
                 observation.final_response_text = Some(response.response().to_owned());
                 observation.got_final_response = true;
                 observation.events.push("final_response");
@@ -555,20 +565,20 @@ pub(crate) async fn collect_stream_observation<R>(
 }
 
 pub(crate) async fn collect_raw_stream_observation<R>(
-    mut stream: StreamingCompletionResponse<R>,
+    mut stream: ModelEventStream<R>,
 ) -> RawStreamObservation
 where
-    R: Clone + Unpin + GetTokenUsage,
+    R: Clone + Unpin + GetTokenUsage + WasmCompatSend + 'static,
 {
     let mut observation = RawStreamObservation::new();
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(StreamedAssistantContent::Text(text)) => {
-                observation.text.push_str(&text.text);
+            ModelEvent::TextDelta { text } => {
+                observation.text.push_str(&text);
                 observation.events.push("text");
             }
-            Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
+            ModelEvent::ToolCallDone { tool_call, .. } => {
                 observation.tool_calls.push(tool_call.clone());
                 observation.tool_call_records.push(ToolCallRecord {
                     name: tool_call.function.name,
@@ -577,23 +587,27 @@ where
                 });
                 observation.events.push("tool_call");
             }
-            Ok(StreamedAssistantContent::ToolCallDelta { .. }) => {
+            ModelEvent::ToolCallStart { .. } | ModelEvent::ToolCallDelta { .. } => {
                 observation.events.push("tool_call_delta");
             }
-            Ok(StreamedAssistantContent::Reasoning(_)) => {
+            ModelEvent::ReasoningDone { .. } => {
                 observation.events.push("reasoning");
             }
-            Ok(StreamedAssistantContent::ReasoningDelta { .. }) => {
+            ModelEvent::ReasoningDelta { .. } => {
                 observation.events.push("reasoning_delta");
             }
-            Ok(StreamedAssistantContent::Final(_)) => {
+            ModelEvent::RawResponse { .. } => {
                 observation.got_final = true;
                 observation.events.push("final");
             }
-            Err(error) => {
+            ModelEvent::Error { error } => {
                 observation.errors.push(error.to_string());
                 observation.events.push("error");
             }
+            ModelEvent::MessageDone { .. }
+            | ModelEvent::Usage { .. }
+            | ModelEvent::ProviderMetadata { .. }
+            | ModelEvent::Done => {}
         }
     }
 

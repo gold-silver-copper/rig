@@ -4,10 +4,10 @@
 
 use super::{
     client::{ApiErrorResponse, ApiResponse},
-    streaming::StreamingCompletionResponse,
+    streaming::StreamingResponse,
 };
 use crate::completion::{
-    CompletionError, CompletionRequest as CoreCompletionRequest, GetTokenUsage,
+    CompletionCodec, CompletionError, CompletionRequest as CoreCompletionRequest, GetTokenUsage,
 };
 use crate::http_client::{self, HttpClientExt};
 use crate::message::{AudioMediaType, DocumentSourceKind, ImageDetail, MimeType};
@@ -22,6 +22,7 @@ use tracing::{Instrument, Level, enabled, info_span};
 
 use std::str::FromStr;
 
+pub(crate) mod codec;
 pub mod streaming;
 
 /// Serializes user content as a plain string when there's a single text item,
@@ -809,93 +810,6 @@ pub struct CompletionResponse {
     pub usage: Option<Usage>,
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
-
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let choice = response.choices.first().ok_or_else(|| {
-            CompletionError::ResponseError("Response contained no choices".to_owned())
-        })?;
-
-        let content = match &choice.message {
-            Message::Assistant {
-                content,
-                tool_calls,
-                reasoning,
-                ..
-            } => {
-                let mut content = content
-                    .iter()
-                    .filter_map(|c| {
-                        let s = match c {
-                            AssistantContent::Text { text } => text,
-                            AssistantContent::Refusal { refusal } => refusal,
-                        };
-                        if s.is_empty() {
-                            None
-                        } else {
-                            Some(completion::AssistantContent::text(s))
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                if let Some(reasoning) = reasoning {
-                    // llama.cpp exposes hidden reasoning on a separate non-standard field.
-                    // Keep it structured here so the non-streaming path matches streaming
-                    // behavior and does not pollute plain-text response surfaces.
-                    content.push(completion::AssistantContent::reasoning(reasoning));
-                }
-
-                content.extend(
-                    tool_calls
-                        .iter()
-                        .map(|call| {
-                            completion::AssistantContent::tool_call(
-                                &call.id,
-                                &call.function.name,
-                                call.function.arguments.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                Ok(content)
-            }
-            _ => Err(CompletionError::ResponseError(
-                "Response did not contain a valid message or tool call".into(),
-            )),
-        }?;
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.prompt_tokens as u64,
-                output_tokens: (usage.total_tokens - usage.prompt_tokens) as u64,
-                total_tokens: usage.total_tokens as u64,
-                cached_input_tokens: usage
-                    .prompt_tokens_details
-                    .as_ref()
-                    .map(|d| d.cached_tokens as u64)
-                    .unwrap_or(0),
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
-    }
-}
-
 impl ProviderResponseExt for CompletionResponse {
     type OutputMessage = Choice;
     type Usage = Usage;
@@ -1102,17 +1016,15 @@ pub struct CompletionRequest {
     additional_params: Option<serde_json::Value>,
 }
 
-pub struct OpenAIRequestParams {
-    pub model: String,
-    pub request: CoreCompletionRequest,
-    pub strict_tools: bool,
-    pub tool_result_array_content: bool,
+pub(crate) struct OpenAIRequestParams {
+    pub(crate) model: String,
+    pub(crate) request: CoreCompletionRequest,
+    pub(crate) strict_tools: bool,
+    pub(crate) tool_result_array_content: bool,
 }
 
-impl TryFrom<OpenAIRequestParams> for CompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from(params: OpenAIRequestParams) -> Result<Self, Self::Error> {
+impl CompletionRequest {
+    pub(crate) fn from_params(params: OpenAIRequestParams) -> Result<Self, CompletionError> {
         let OpenAIRequestParams {
             model,
             request: req,
@@ -1230,19 +1142,7 @@ impl TryFrom<OpenAIRequestParams> for CompletionRequest {
 
         Ok(res)
     }
-}
 
-impl TryFrom<(String, CoreCompletionRequest)> for CompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (String, CoreCompletionRequest)) -> Result<Self, Self::Error> {
-        CompletionRequest::try_from(OpenAIRequestParams {
-            model,
-            request: req,
-            strict_tools: false,
-            tool_result_array_content: false,
-        })
-    }
 }
 
 impl crate::telemetry::ProviderRequestExt for CompletionRequest {
@@ -1302,7 +1202,7 @@ where
     H: Clone + Default + std::fmt::Debug + WasmCompatSend + WasmCompatSync + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = crate::client::Client<Ext, H>;
 
@@ -1310,92 +1210,91 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CoreCompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "openai",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        let request = CompletionRequest::try_from(OpenAIRequestParams {
-            model: self.model.to_owned(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "OpenAI Chat Completions completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/chat/completions")?
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send(req).await?;
-
-            if response.status().is_success() {
-                let text = http_client::text(response).await?;
-
-                match serde_json::from_str::<ApiResponse<CompletionResponse>>(&text)? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record_response_metadata(&response);
-                        span.record_token_usage(&response.usage);
-
-                        if enabled!(Level::TRACE) {
-                            tracing::trace!(
-                                target: "rig::completions",
-                                "OpenAI Chat Completions completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "openai",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+                tracing::Span::current()
+            };
+
+            let request = self.completion_codec().encode_request(completion_request)?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "OpenAI Chat Completions completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/chat/completions")?
+                .body(body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send(req).await?;
+
+                if response.status().is_success() {
+                    let text = http_client::text(response).await?;
+
+                    match serde_json::from_str::<ApiResponse<CompletionResponse>>(&text)? {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record_response_metadata(&response);
+                            span.record_token_usage(&response.usage);
+
+                            if enabled!(Level::TRACE) {
+                                tracing::trace!(
+                                    target: "rig::completions",
+                                    "OpenAI Chat Completions completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+
+                            crate::completion::codec::response_events(
+                                &self.completion_codec(),
+                                response,
+                            )
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    let text = http_client::text(response).await?;
+                    Err(CompletionError::ProviderError(text))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CoreCompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        GenericCompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        GenericCompletionModel::stream_events(self, request).await
     }
 }
 
@@ -1433,7 +1332,7 @@ mod tests {
             output_schema: None,
         };
 
-        let openai_request = CompletionRequest::try_from(OpenAIRequestParams {
+        let openai_request = CompletionRequest::from_params(OpenAIRequestParams {
             model: "gpt-4o-mini".to_string(),
             request,
             strict_tools: false,
@@ -1461,7 +1360,7 @@ mod tests {
             output_schema: None,
         };
 
-        let openai_request = CompletionRequest::try_from(OpenAIRequestParams {
+        let openai_request = CompletionRequest::from_params(OpenAIRequestParams {
             model: "gpt-4o-mini".to_string(),
             request,
             strict_tools: false,
@@ -1643,7 +1542,7 @@ mod tests {
             output_schema: None,
         };
 
-        let openai_request = CompletionRequest::try_from(OpenAIRequestParams {
+        let openai_request = CompletionRequest::from_params(OpenAIRequestParams {
             model: "gpt-4o-mini".to_string(),
             request,
             strict_tools: false,
@@ -1671,7 +1570,7 @@ mod tests {
             output_schema: None,
         };
 
-        let openai_request = CompletionRequest::try_from(OpenAIRequestParams {
+        let openai_request = CompletionRequest::from_params(OpenAIRequestParams {
             model: "gpt-4o-mini".to_string(),
             request,
             strict_tools: false,
@@ -1702,7 +1601,7 @@ mod tests {
             output_schema: None,
         };
 
-        let result = CompletionRequest::try_from(OpenAIRequestParams {
+        let result = CompletionRequest::from_params(OpenAIRequestParams {
             model: "gpt-4o-mini".to_string(),
             request,
             strict_tools: false,
@@ -1750,7 +1649,7 @@ mod tests {
             ),
         };
 
-        let openai_request = CompletionRequest::try_from(OpenAIRequestParams {
+        let openai_request = CompletionRequest::from_params(OpenAIRequestParams {
             model: "gpt-4o-mini".to_string(),
             request,
             strict_tools: false,
@@ -1818,7 +1717,7 @@ mod tests {
             ),
         };
 
-        let openai_request = CompletionRequest::try_from(OpenAIRequestParams {
+        let openai_request = CompletionRequest::from_params(OpenAIRequestParams {
             model: "gpt-4o-mini".to_string(),
             request,
             strict_tools: false,
@@ -1913,8 +1812,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn deserialize_llama_cpp_response_with_reasoning_content() {
+    #[tokio::test]
+    async fn deserialize_llama_cpp_response_with_reasoning_content() {
         let request = r#"
         {
             "choices": [
@@ -1957,8 +1856,15 @@ mod tests {
             panic!("expected successful completion response");
         };
 
-        let response: completion::CompletionResponse<CompletionResponse> =
-            response.try_into().unwrap();
+        let response = crate::model_event::collect(
+            crate::completion::codec::response_events(
+                &codec::ChatCompletionCodec::new("", false, false),
+                response,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(response.choice.len(), 1);
 

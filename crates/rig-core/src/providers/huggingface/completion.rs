@@ -1,7 +1,7 @@
 use super::client::Client;
 use crate::completion::GetTokenUsage;
 use crate::http_client::HttpClientExt;
-use crate::providers::openai::StreamingCompletionResponse;
+use crate::providers::openai::StreamingResponse;
 use crate::telemetry::SpanCombinator;
 use crate::{
     OneOrMany,
@@ -553,10 +553,16 @@ where
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+pub(crate) struct HuggingfaceCompletionCodec;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+impl crate::completion::CompletionResponseCodec for HuggingfaceCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
@@ -574,18 +580,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     })
                     .collect::<Vec<_>>();
 
-                content.extend(
-                    tool_calls
-                        .iter()
-                        .map(|call| {
-                            completion::AssistantContent::tool_call(
-                                &call.id,
-                                &call.function.name,
-                                call.function.arguments.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
                 Ok(content)
             }
             _ => Err(CompletionError::ResponseError(
@@ -593,11 +594,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
                 "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            ));
+        }
 
         let usage = completion::Usage {
             input_tokens: response.usage.prompt_tokens as u64,
@@ -607,17 +608,12 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             cache_creation_input_tokens: 0,
         };
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct HuggingfaceCompletionRequest {
+pub(crate) struct HuggingfaceCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -630,10 +626,8 @@ pub(super) struct HuggingfaceCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for HuggingfaceCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl HuggingfaceCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Huggingface");
         }
@@ -691,6 +685,27 @@ impl TryFrom<(&str, CompletionRequest)> for HuggingfaceCompletionRequest {
     }
 }
 
+pub(crate) struct HuggingfaceCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> HuggingfaceCompletionRequestCodec<'a> {
+    pub(crate) fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for HuggingfaceCompletionRequestCodec<'_> {
+    type Request = HuggingfaceCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        HuggingfaceCompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     pub(crate) client: Client<T>,
@@ -712,7 +727,7 @@ where
     T: HttpClientExt + Clone + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = Client<T>;
 
@@ -720,106 +735,115 @@ where
         Self::new(client.clone(), &model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let request_model = completion_request
-            .model
-            .clone()
-            .unwrap_or_else(|| self.model.clone());
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "huggingface",
-                gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        let model = self.client.subprovider().model_identifier(&request_model);
-        let request = HuggingfaceCompletionRequest::try_from((model.as_ref(), completion_request))?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "Huggingface completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let request = serde_json::to_vec(&request)?;
-
-        let path = self
-            .client
-            .subprovider()
-            .completion_endpoint(&request_model);
-        let request = self
-            .client
-            .post(&path)?
-            .header("Content-Type", "application/json")
-            .body(request)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send(request).await?;
-
-            if response.status().is_success() {
-                let bytes: Vec<u8> = response.into_body().await?;
-                let text = String::from_utf8_lossy(&bytes);
-
-                tracing::debug!(target: "rig", "Huggingface completion error: {}", text);
-
-                match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&bytes)? {
-                    ApiResponse::Ok(response) => {
-                        if enabled!(Level::TRACE) {
-                            tracing::trace!(
-                                target: "rig::completions",
-                                "Huggingface completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-
-                        let span = tracing::Span::current();
-                        span.record_token_usage(&response.usage);
-                        span.record_response_metadata(&response);
-
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.to_string())),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let request_model = completion_request
+                .model
+                .clone()
+                .unwrap_or_else(|| self.model.clone());
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "huggingface",
+                    gen_ai.request.model = &request_model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                let status = response.status();
-                let text: Vec<u8> = response.into_body().await?;
-                let text: String = String::from_utf8_lossy(&text).into();
+                tracing::Span::current()
+            };
 
-                Err(CompletionError::ProviderError(format!(
-                    "{}: {}",
-                    status, text
-                )))
+            let model = self.client.subprovider().model_identifier(&request_model);
+            let request = crate::completion::CompletionCodec::encode_request(
+                &HuggingfaceCompletionRequestCodec::new(model.as_ref()),
+                completion_request,
+            )?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "Huggingface completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let request = serde_json::to_vec(&request)?;
+
+            let path = self
+                .client
+                .subprovider()
+                .completion_endpoint(&request_model);
+            let request = self
+                .client
+                .post(&path)?
+                .header("Content-Type", "application/json")
+                .body(request)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send(request).await?;
+
+                if response.status().is_success() {
+                    let bytes: Vec<u8> = response.into_body().await?;
+                    let text = String::from_utf8_lossy(&bytes);
+
+                    tracing::debug!(target: "rig", "Huggingface completion error: {}", text);
+
+                    match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&bytes)? {
+                        ApiResponse::Ok(response) => {
+                            if enabled!(Level::TRACE) {
+                                tracing::trace!(
+                                    target: "rig::completions",
+                                    "Huggingface completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+
+                            let span = tracing::Span::current();
+                            span.record_token_usage(&response.usage);
+                            span.record_response_metadata(&response);
+
+                            crate::completion::codec::response_events(
+                                &HuggingfaceCompletionCodec,
+                                response,
+                            )
+                        }
+                        ApiResponse::Err(err) => {
+                            Err(CompletionError::ProviderError(err.to_string()))
+                        }
+                    }
+                } else {
+                    let status = response.status();
+                    let text: Vec<u8> = response.into_body().await?;
+                    let text: String = String::from_utf8_lossy(&text).into();
+
+                    Err(CompletionError::ProviderError(format!(
+                        "{}: {}",
+                        status, text
+                    )))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        CompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        CompletionModel::stream_events(self, request).await
     }
 }
 
@@ -843,8 +867,11 @@ mod tests {
             output_schema: None,
         };
 
-        let hf_request = HuggingfaceCompletionRequest::try_from(("mistralai/Mistral-7B", request))
-            .expect("request conversion should succeed");
+        let hf_request = crate::completion::CompletionCodec::encode_request(
+            &HuggingfaceCompletionRequestCodec::new("mistralai/Mistral-7B"),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized = serde_json::to_value(hf_request).expect("serialization should succeed");
 
         assert_eq!(serialized["model"], "meta-llama/Meta-Llama-3.1-8B-Instruct");
@@ -865,8 +892,11 @@ mod tests {
             output_schema: None,
         };
 
-        let hf_request = HuggingfaceCompletionRequest::try_from(("mistralai/Mistral-7B", request))
-            .expect("request conversion should succeed");
+        let hf_request = crate::completion::CompletionCodec::encode_request(
+            &HuggingfaceCompletionRequestCodec::new("mistralai/Mistral-7B"),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized = serde_json::to_value(hf_request).expect("serialization should succeed");
 
         assert_eq!(serialized["model"], "mistralai/Mistral-7B");
@@ -1325,7 +1355,10 @@ mod tests {
             output_schema: None,
         };
 
-        let result = HuggingfaceCompletionRequest::try_from(("meta/test-model", request));
+        let result = crate::completion::CompletionCodec::encode_request(
+            &HuggingfaceCompletionRequestCodec::new("meta/test-model"),
+            request,
+        );
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
     }
 }

@@ -1,16 +1,22 @@
 use google_cloud_aiplatform_v1 as vertexai;
-use rig_core::OneOrMany;
-use rig_core::completion::{CompletionError, CompletionResponse, Usage};
+use rig_core::completion::{CompletionError, Usage};
 use rig_core::message::{AssistantContent, Text, ToolCall, ToolFunction};
+use rig_core::model_event::ModelEventStream;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VertexGenerateContentOutput(pub vertexai::model::GenerateContentResponse);
 
-impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateContentOutput> {
-    type Error = CompletionError;
+pub(crate) struct VertexCompletionCodec;
 
-    fn try_from(value: VertexGenerateContentOutput) -> Result<Self, Self::Error> {
+impl rig_core::completion::CompletionResponseCodec for VertexCompletionCodec {
+    type Response = VertexGenerateContentOutput;
+    type RawFinal = VertexGenerateContentOutput;
+
+    fn decode_response(
+        &self,
+        value: Self::Response,
+    ) -> Result<rig_core::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let response = &value.0;
 
         let candidate = response.candidates.first().ok_or_else(|| {
@@ -24,8 +30,6 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
 
         let mut assistant_contents = Vec::new();
 
-        // vertexai internally uses a wkt::Struct (serde_json::Map<String, serde_json::Value>) in
-        // function calling args. We need to convert that to serde_json::Value for rig_core::completion type matching
         for part in content.parts.iter() {
             if let Some(function_call) = part.function_call() {
                 let args_json = function_call
@@ -49,10 +53,6 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
             ));
         }
 
-        let choice = OneOrMany::many(assistant_contents).map_err(|e| {
-            CompletionError::ProviderError(format!("Failed to create OneOrMany: {e}"))
-        })?;
-
         let usage = response
             .usage_metadata
             .as_ref()
@@ -60,18 +60,19 @@ impl TryFrom<VertexGenerateContentOutput> for CompletionResponse<VertexGenerateC
                 input_tokens: usage.prompt_token_count as u64,
                 output_tokens: usage.candidates_token_count as u64,
                 total_tokens: usage.total_token_count as u64,
-                cached_input_tokens: 0, // unreported at time of writing
+                cached_input_tokens: 0,
                 cache_creation_input_tokens: 0,
             })
             .unwrap_or_default();
 
-        Ok(CompletionResponse {
-            choice,
-            usage,
-            raw_response: value,
-            message_id: None,
-        })
+        rig_core::completion::codec::turn_from_parts(value, assistant_contents, usage, None)
     }
+}
+
+pub(crate) fn completion_response_events(
+    value: VertexGenerateContentOutput,
+) -> Result<ModelEventStream<VertexGenerateContentOutput>, CompletionError> {
+    rig_core::completion::codec::response_events(&VertexCompletionCodec, value)
 }
 
 #[cfg(test)]
@@ -115,14 +116,13 @@ mod tests {
         VertexGenerateContentOutput(response)
     }
 
-    #[test]
-    fn test_text_response_conversion() {
+    #[tokio::test]
+    async fn test_text_response_conversion() {
         let vertex_output = create_text_response("Hello, world!");
-        let completion_response: Result<CompletionResponse<VertexGenerateContentOutput>, _> =
-            vertex_output.try_into();
-
-        assert!(completion_response.is_ok());
-        let response = completion_response.unwrap();
+        let response =
+            rig_core::model_event::collect(completion_response_events(vertex_output).unwrap())
+                .await
+                .unwrap();
         assert_eq!(
             response.choice,
             OneOrMany::one(AssistantContent::Text(Text {
@@ -131,18 +131,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_tool_call_response_conversion() {
+    #[tokio::test]
+    async fn test_tool_call_response_conversion() {
         let args = serde_json::json!({
             "x": 5,
             "y": 3
         });
         let vertex_output = create_tool_call_response("add", args.clone());
-        let completion_response: Result<CompletionResponse<VertexGenerateContentOutput>, _> =
-            vertex_output.try_into();
-
-        assert!(completion_response.is_ok());
-        let response = completion_response.unwrap();
+        let response =
+            rig_core::model_event::collect(completion_response_events(vertex_output).unwrap())
+                .await
+                .unwrap();
 
         match response.choice.first() {
             AssistantContent::ToolCall(ToolCall { id, function, .. }) => {
@@ -154,8 +153,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_usage_metadata_conversion() {
+    #[tokio::test]
+    async fn test_usage_metadata_conversion() {
         let mut response = create_text_response("test").0;
         let usage_metadata = vertexai::model::generate_content_response::UsageMetadata::new()
             .set_prompt_token_count(10)
@@ -164,11 +163,10 @@ mod tests {
         response = response.set_usage_metadata(usage_metadata);
 
         let vertex_output = VertexGenerateContentOutput(response);
-        let completion_response: Result<CompletionResponse<VertexGenerateContentOutput>, _> =
-            vertex_output.try_into();
-
-        assert!(completion_response.is_ok());
-        let response = completion_response.unwrap();
+        let response =
+            rig_core::model_event::collect(completion_response_events(vertex_output).unwrap())
+                .await
+                .unwrap();
         assert_eq!(response.usage.input_tokens, 10);
         assert_eq!(response.usage.output_tokens, 20);
         assert_eq!(response.usage.total_tokens, 30);
@@ -179,8 +177,7 @@ mod tests {
         // Create a response with no candidates
         let response = vertexai::model::GenerateContentResponse::new();
         let vertex_output = VertexGenerateContentOutput(response);
-        let completion_response: Result<CompletionResponse<VertexGenerateContentOutput>, _> =
-            vertex_output.try_into();
+        let completion_response = completion_response_events(vertex_output);
 
         assert!(completion_response.is_err());
     }

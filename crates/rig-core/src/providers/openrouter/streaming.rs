@@ -10,17 +10,14 @@ use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
     CompatibleToolCallChunk,
 };
-use crate::providers::openrouter::{
-    OpenRouterRequestParams, OpenrouterCompletionRequest, ReasoningDetails,
-};
-use crate::streaming;
+use crate::providers::openrouter::ReasoningDetails;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Usage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -125,21 +122,19 @@ impl<T> super::CompletionModel<T>
 where
     T: HttpClientExt + Clone + std::fmt::Debug + Default + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let request_model = completion_request
             .model
             .clone()
             .unwrap_or_else(|| self.model.clone());
         let preamble = completion_request.preamble.clone();
-        let mut request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
-            model: request_model.as_ref(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-        })?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &super::OpenRouterCompletionCodec::new(request_model.clone(), self.strict_tools),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),
@@ -188,7 +183,7 @@ struct OpenRouterCompatibleProfile;
 impl CompatibleStreamProfile for OpenRouterCompatibleProfile {
     type Usage = Usage;
     type Detail = ReasoningDetails;
-    type FinalResponse = StreamingCompletionResponse;
+    type FinalResponse = StreamingResponse;
 
     fn normalize_chunk(
         &self,
@@ -226,13 +221,16 @@ impl CompatibleStreamProfile for OpenRouterCompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        StreamingCompletionResponse { usage }
+        StreamingResponse { usage }
     }
 
     fn decorate_tool_call(
         &self,
         detail: &Self::Detail,
-        tool_calls: &mut std::collections::HashMap<usize, crate::streaming::RawStreamingToolCall>,
+        tool_calls: &mut std::collections::HashMap<
+            usize,
+            crate::providers::internal::tool_call::ProviderToolCall,
+        >,
     ) {
         if let ReasoningDetails::Encrypted { id, data, .. } = detail
             && let Some(id) = id
@@ -250,7 +248,7 @@ impl CompatibleStreamProfile for OpenRouterCompatibleProfile {
 pub async fn send_compatible_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {
@@ -266,8 +264,8 @@ where
 mod tests {
     use super::*;
     use crate::http_client::mock::MockStreamingClient;
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::sse_bytes_from_data_lines;
-    use crate::streaming::StreamedAssistantContent;
     use futures::StreamExt;
     use serde_json::json;
 
@@ -496,9 +494,9 @@ mod tests {
 
         let tool_call = loop {
             match stream.next().await.expect("stream should yield an item") {
-                Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => break tool_call,
-                Ok(_) => continue,
-                Err(err) => panic!("stream should not error: {err}"),
+                ModelEvent::ToolCallDone { tool_call, .. } => break tool_call,
+                ModelEvent::Error { error } => panic!("stream should not error: {error}"),
+                _ => continue,
             }
         };
 

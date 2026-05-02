@@ -27,11 +27,11 @@ use crate::client::{
     ProviderClient,
 };
 use crate::http_client::HttpClientExt;
+use crate::model_event::ModelEventStream;
 use crate::providers::anthropic::client::{
     AnthropicBuilder as AnthropicCompatBuilder, AnthropicKey, finish_anthropic_builder,
 };
 use crate::providers::openai::send_compatible_streaming_request;
-use crate::streaming::StreamingCompletionResponse;
 use crate::{
     completion::{self, CompletionError, CompletionRequest},
     json_utils,
@@ -307,7 +307,7 @@ pub const KIMI_K2: &str = "kimi-k2";
 pub const KIMI_K2_5: &str = "kimi-k2.5";
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct MoonshotCompletionRequest {
+pub(crate) struct MoonshotCompletionRequest {
     model: String,
     pub messages: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,10 +322,8 @@ pub(super) struct MoonshotCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl MoonshotCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Moonshot");
         }
@@ -382,6 +380,27 @@ impl TryFrom<(&str, CompletionRequest)> for MoonshotCompletionRequest {
             tool_choice,
             additional_params: req.additional_params,
         })
+    }
+}
+
+pub(crate) struct MoonshotCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> MoonshotCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for MoonshotCompletionRequestCodec<'_> {
+    type Request = MoonshotCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        MoonshotCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -487,7 +506,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = openai::CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
 
     type Client = Client<T>;
 
@@ -495,92 +514,99 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<openai::CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "moonshot",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        let request =
-            MoonshotCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "MoonShot completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-        let req = self
-            .client
-            .post("/chat/completions")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        let async_block = async move {
-            let response = self.client.send::<_, bytes::Bytes>(req).await?;
-
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
-                    &response_body,
-                )? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record("gen_ai.response.id", response.id.clone());
-                        span.record("gen_ai.response.model", response.model.clone());
-                        if let Some(ref usage) = response.usage {
-                            span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
-                            span.record(
-                                "gen_ai.usage.output_tokens",
-                                usage.total_tokens - usage.prompt_tokens,
-                            );
-                        }
-                        if tracing::enabled!(tracing::Level::TRACE) {
-                            tracing::trace!(target: "rig::completions",
-                                "MoonShot completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.error.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "moonshot",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
-            }
-        };
+                tracing::Span::current()
+            };
 
-        async_block.instrument(span).await
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+
+            let request = crate::completion::CompletionCodec::encode_request(
+                &MoonshotCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "MoonShot completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+            let req = self
+                .client
+                .post("/chat/completions")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
+
+            let async_block = async move {
+                let response = self.client.send::<_, bytes::Bytes>(req).await?;
+
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
+                        &response_body,
+                    )? {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record("gen_ai.response.id", response.id.clone());
+                            span.record("gen_ai.response.model", response.model.clone());
+                            if let Some(ref usage) = response.usage {
+                                span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+                                span.record(
+                                    "gen_ai.usage.output_tokens",
+                                    usage.total_tokens - usage.prompt_tokens,
+                                );
+                            }
+                            if tracing::enabled!(tracing::Level::TRACE) {
+                                tracing::trace!(target: "rig::completions",
+                                    "MoonShot completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+                            openai::completion_response_events(response)
+                        }
+                        ApiResponse::Err(err) => {
+                            Err(CompletionError::ProviderError(err.error.message))
+                        }
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            };
+
+            async_block.instrument(span).await
+        }
+        .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -600,7 +626,10 @@ where
         };
 
         span.record("gen_ai.system_instructions", &request.preamble);
-        let mut request = MoonshotCompletionRequest::try_from((self.model.as_ref(), request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &MoonshotCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),
@@ -712,8 +741,11 @@ mod tests {
             output_schema: None,
         };
 
-        let converted =
-            MoonshotCompletionRequest::try_from(("kimi-k2-thinking", request)).expect("convert");
+        let converted = crate::completion::CompletionCodec::encode_request(
+            &MoonshotCompletionRequestCodec::new("kimi-k2-thinking"),
+            request,
+        )
+        .expect("convert");
         let assistant = converted
             .messages
             .first()
@@ -743,8 +775,11 @@ mod tests {
             output_schema: None,
         };
 
-        let converted =
-            MoonshotCompletionRequest::try_from(("kimi-k2.5", request)).expect("convert");
+        let converted = crate::completion::CompletionCodec::encode_request(
+            &MoonshotCompletionRequestCodec::new("kimi-k2.5"),
+            request,
+        )
+        .expect("convert");
         assert!(matches!(
             converted.tool_choice,
             Some(crate::providers::openai::completion::ToolChoice::Auto)

@@ -1,6 +1,6 @@
 use super::{
     client::{ApiErrorResponse, ApiResponse, Client, Usage},
-    streaming::StreamingCompletionResponse,
+    streaming::StreamingResponse,
 };
 use crate::message::{
     self, AudioMediaType, DocumentMediaType, DocumentSourceKind, ImageDetail, MimeType,
@@ -588,10 +588,41 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+pub(crate) struct OpenRouterCompletionCodec {
+    model: String,
+    strict_tools: bool,
+}
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+impl OpenRouterCompletionCodec {
+    pub(crate) fn new(model: impl Into<String>, strict_tools: bool) -> Self {
+        Self {
+            model: model.into(),
+            strict_tools,
+        }
+    }
+}
+
+impl crate::completion::CompletionCodec for OpenRouterCompletionCodec {
+    type Request = OpenrouterCompletionRequest;
+
+    fn encode_request(&self, request: CompletionRequest) -> Result<Self::Request, CompletionError> {
+        let model = request.model.clone().unwrap_or_else(|| self.model.clone());
+        OpenrouterCompletionRequest::from_params(OpenRouterRequestParams {
+            model: &model,
+            request,
+            strict_tools: self.strict_tools,
+        })
+    }
+}
+
+impl crate::completion::CompletionResponseCodec for OpenRouterCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
@@ -704,11 +735,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
                 "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            ));
+        }
 
         let usage = response
             .usage
@@ -722,13 +753,14 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             })
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
+}
+
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    crate::completion::codec::response_events(&OpenRouterCompletionCodec::new("", false), response)
 }
 
 /// User content types supported by OpenRouter.
@@ -1559,7 +1591,7 @@ pub enum ToolChoiceFunctionKind {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct OpenrouterCompletionRequest {
+pub(crate) struct OpenrouterCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1572,17 +1604,14 @@ pub(super) struct OpenrouterCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-/// Parameters for building an OpenRouter CompletionRequest
-pub struct OpenRouterRequestParams<'a> {
-    pub model: &'a str,
-    pub request: CompletionRequest,
-    pub strict_tools: bool,
+struct OpenRouterRequestParams<'a> {
+    model: &'a str,
+    request: CompletionRequest,
+    strict_tools: bool,
 }
 
-impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from(params: OpenRouterRequestParams) -> Result<Self, Self::Error> {
+impl OpenrouterCompletionRequest {
+    fn from_params(params: OpenRouterRequestParams) -> Result<Self, CompletionError> {
         let OpenRouterRequestParams {
             model,
             request: req,
@@ -1642,19 +1671,6 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
     }
 }
 
-impl TryFrom<(&str, CompletionRequest)> for OpenrouterCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
-        let model = req.model.clone().unwrap_or_else(|| model.to_string());
-        OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
-            model: &model,
-            request: req,
-            strict_tools: false,
-        })
-    }
-}
-
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     pub(crate) client: Client<T>,
@@ -1692,7 +1708,7 @@ where
     T: HttpClientExt + Clone + std::fmt::Debug + Default + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = Client<T>;
 
@@ -1700,100 +1716,102 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let request_model = completion_request
-            .model
-            .clone()
-            .unwrap_or_else(|| self.model.clone());
-        let preamble = completion_request.preamble.clone();
-        let request = OpenrouterCompletionRequest::try_from(OpenRouterRequestParams {
-            model: request_model.as_ref(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-        })?;
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let request_model = completion_request
+                .model
+                .clone()
+                .unwrap_or_else(|| self.model.clone());
+            let preamble = completion_request.preamble.clone();
+            let request = crate::completion::CompletionCodec::encode_request(
+                &OpenRouterCompletionCodec::new(request_model.clone(), self.strict_tools),
+                completion_request,
+            )?;
 
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "OpenRouter completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "OpenRouter completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
 
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "openrouter",
-                gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "openrouter",
+                    gen_ai.request.model = &request_model,
+                    gen_ai.system_instructions = preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
 
-        let body = serde_json::to_vec(&request)?;
+            let body = serde_json::to_vec(&request)?;
 
-        let req = self
-            .client
-            .post("/chat/completions")?
-            .body(body)
-            .map_err(|x| CompletionError::HttpError(x.into()))?;
+            let req = self
+                .client
+                .post("/chat/completions")?
+                .body(body)
+                .map_err(|x| CompletionError::HttpError(x.into()))?;
 
-        async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
+            async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
 
-            if status.is_success() {
-                let parsed: ApiResponse<CompletionResponse> =
-                    serde_json::from_slice(&response_body).map_err(|e| {
+                if status.is_success() {
+                    let parsed: ApiResponse<CompletionResponse> = serde_json::from_slice(
+                        &response_body,
+                    )
+                    .map_err(|e| {
                         CompletionError::ResponseError(format!(
                             "Failed to parse OpenRouter completion response: {}, response body: {}",
                             e,
                             String::from_utf8_lossy(&response_body)
                         ))
                     })?;
-                match parsed {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record_token_usage(&response.usage);
-                        span.record("gen_ai.response.id", &response.id);
-                        span.record("gen_ai.response.model", &response.model);
+                    match parsed {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record_token_usage(&response.usage);
+                            span.record("gen_ai.response.id", &response.id);
+                            span.record("gen_ai.response.model", &response.model);
 
-                        tracing::debug!(target: "rig::completions",
+                            tracing::debug!(target: "rig::completions",
                             "OpenRouter response: {response:?}");
-                        response.try_into()
+                            completion_response_events(response)
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
                     }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
                 }
-            } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
             }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        CompletionModel::stream(self, completion_request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        CompletionModel::stream_events(self, completion_request).await
     }
 }
 
@@ -1817,9 +1835,11 @@ mod tests {
             output_schema: None,
         };
 
-        let openrouter_request =
-            OpenrouterCompletionRequest::try_from(("openai/gpt-4o-mini", request))
-                .expect("request conversion should succeed");
+        let openrouter_request = crate::completion::CompletionCodec::encode_request(
+            &OpenRouterCompletionCodec::new("openai/gpt-4o-mini", false),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized =
             serde_json::to_value(openrouter_request).expect("serialization should succeed");
 
@@ -1841,9 +1861,11 @@ mod tests {
             output_schema: None,
         };
 
-        let openrouter_request =
-            OpenrouterCompletionRequest::try_from(("openai/gpt-4o-mini", request))
-                .expect("request conversion should succeed");
+        let openrouter_request = crate::completion::CompletionCodec::encode_request(
+            &OpenRouterCompletionCodec::new("openai/gpt-4o-mini", false),
+            request,
+        )
+        .expect("request conversion should succeed");
         let serialized =
             serde_json::to_value(openrouter_request).expect("serialization should succeed");
 
@@ -2671,8 +2693,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_completion_response_with_reasoning_details_maps_to_typed_reasoning() {
+    #[tokio::test]
+    async fn test_completion_response_with_reasoning_details_maps_to_typed_reasoning() {
         let json = json!({
             "id": "resp_123",
             "object": "chat.completion",
@@ -2695,8 +2717,9 @@ mod tests {
         });
 
         let response: CompletionResponse = serde_json::from_value(json).unwrap();
-        let converted: completion::CompletionResponse<CompletionResponse> =
-            response.try_into().unwrap();
+        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
+            .await
+            .unwrap();
         let items: Vec<completion::AssistantContent> = converted.choice.into_iter().collect();
 
         assert!(items.iter().any(|item| matches!(
@@ -2781,8 +2804,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_completion_response_reasoning_details_respects_index_ordering() {
+    #[tokio::test]
+    async fn test_completion_response_reasoning_details_respects_index_ordering() {
         let json = json!({
             "id": "resp_ordering",
             "object": "chat.completion",
@@ -2804,8 +2827,9 @@ mod tests {
         });
 
         let response: CompletionResponse = serde_json::from_value(json).unwrap();
-        let converted: completion::CompletionResponse<CompletionResponse> =
-            response.try_into().unwrap();
+        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
+            .await
+            .unwrap();
         let items: Vec<completion::AssistantContent> = converted.choice.into_iter().collect();
         let reasoning_blocks: Vec<_> = items
             .into_iter()
@@ -3075,8 +3099,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_completion_response_reasoning_details_with_multiple_ids_stay_separate() {
+    #[tokio::test]
+    async fn test_completion_response_reasoning_details_with_multiple_ids_stay_separate() {
         let json = json!({
             "id": "resp_multi_id",
             "object": "chat.completion",
@@ -3099,8 +3123,9 @@ mod tests {
         });
 
         let response: CompletionResponse = serde_json::from_value(json).unwrap();
-        let converted: completion::CompletionResponse<CompletionResponse> =
-            response.try_into().unwrap();
+        let converted = crate::model_event::collect(completion_response_events(response).unwrap())
+            .await
+            .unwrap();
         let items: Vec<completion::AssistantContent> = converted.choice.into_iter().collect();
         let reasoning_blocks: Vec<_> = items
             .into_iter()

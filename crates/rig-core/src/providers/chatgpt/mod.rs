@@ -25,10 +25,10 @@ use crate::client::{
 };
 use crate::completion::{self, CompletionError};
 use crate::http_client::{self, HttpClientExt};
+use crate::model_event::ModelEventStream;
 use crate::providers::openai::responses_api::{
     self, CompletionRequest as ResponsesRequest, Include,
 };
-use crate::streaming::StreamingCompletionResponse;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
@@ -438,8 +438,8 @@ where
         let text = http_client::text(response).await?;
         let raw_response = responses_api::streaming::parse_sse_completion_body(&text, "ChatGPT")?;
 
-        match raw_response.clone().try_into() {
-            Ok(response) => Ok(response),
+        match responses_api::completion_response_events(raw_response.clone()) {
+            Ok(events) => crate::model_event::collect(events).await,
             Err(CompletionError::ResponseError(message))
                 if message == "Response contained no parts" =>
             {
@@ -470,62 +470,73 @@ where
     H: Clone + Default + Debug + WasmCompatSend + WasmCompatSync + 'static,
 {
     type Response = responses_api::CompletionResponse;
-    type StreamingResponse = responses_api::streaming::StreamingCompletionResponse;
+    type StreamingResponse = responses_api::streaming::StreamingResponse;
     type Client = Client<H>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<Self::Response>, CompletionError> {
-        let request = self.create_request(completion_request)?;
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let request = self.create_request(completion_request)?;
 
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "chatgpt",
-                gen_ai.request.model = self.model,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-                gen_ai.input.messages = tracing::field::Empty,
-                gen_ai.output.messages = tracing::field::Empty,
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "chatgpt",
+                    gen_ai.request.model = self.model,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                    gen_ai.input.messages = tracing::field::Empty,
+                    gen_ai.output.messages = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
+
+            tracing_futures::Instrument::instrument(
+                async move {
+                    let response = self.completion_from_sse(request).await?;
+                    let span = tracing::Span::current();
+                    span.record("gen_ai.response.id", &response.raw_response.id);
+                    span.record("gen_ai.response.model", &response.raw_response.model);
+                    span.record("gen_ai.usage.output_tokens", response.usage.output_tokens);
+                    span.record("gen_ai.usage.input_tokens", response.usage.input_tokens);
+                    span.record(
+                        "gen_ai.usage.cache_read.input_tokens",
+                        response.usage.cached_input_tokens,
+                    );
+                    Ok(response)
+                },
+                span,
             )
-        } else {
-            tracing::Span::current()
-        };
-
-        tracing_futures::Instrument::instrument(
-            async move {
-                let response = self.completion_from_sse(request).await?;
-                let span = tracing::Span::current();
-                span.record("gen_ai.response.id", &response.raw_response.id);
-                span.record("gen_ai.response.model", &response.raw_response.model);
-                span.record("gen_ai.usage.output_tokens", response.usage.output_tokens);
-                span.record("gen_ai.usage.input_tokens", response.usage.input_tokens);
-                span.record(
-                    "gen_ai.usage.cache_read.input_tokens",
-                    response.usage.cached_input_tokens,
-                );
-                Ok(response)
-            },
-            span,
-        )
+            .await
+        }
         .await
+        .map(|response| {
+            crate::completion::codec::events_from_parts(
+                response.raw_response,
+                response.choice,
+                response.usage,
+                response.message_id,
+            )
+        })
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        Self::stream(self, completion_request).await
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
+        Self::stream_events(self, completion_request).await
     }
 }
 
@@ -534,13 +545,11 @@ where
     Client<H>: HttpClientExt + Clone + Debug + 'static,
     H: Clone + Default + Debug + WasmCompatSend + WasmCompatSync + 'static,
 {
-    pub async fn stream(
+    pub async fn stream_events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<
-        StreamingCompletionResponse<responses_api::streaming::StreamingCompletionResponse>,
-        CompletionError,
-    > {
+    ) -> Result<ModelEventStream<responses_api::streaming::StreamingResponse>, CompletionError>
+    {
         let request = self.create_request(completion_request)?;
 
         if enabled!(Level::TRACE) {
@@ -732,8 +741,11 @@ data: [DONE]"#;
             additional_params: None,
             output_schema: None,
         };
-        let mut request = ResponsesRequest::try_from(("gpt-5.4".to_string(), completion_request))
-            .expect("request");
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &responses_api::codec::ResponsesCompletionCodec::new("gpt-5.4", Vec::new()),
+            completion_request,
+        )
+        .expect("request");
 
         let instructions = normalize_system_messages_into_instructions(&mut request)
             .expect("normalize")

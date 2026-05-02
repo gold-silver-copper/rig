@@ -1,13 +1,16 @@
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::sse::{Event, GenericEventSource};
+use crate::json_utils;
+use crate::model_event::ModelEvent;
+use crate::model_event::ToolCallDeltaContent;
 use crate::providers::cohere::CompletionModel;
 use crate::providers::cohere::completion::{
-    AssistantContent, CohereCompletionRequest, Message, ToolCall, ToolCallFunction, ToolType, Usage,
+    AssistantContent, CohereCompletionRequestCodec, Message, ToolCall, ToolCallFunction, ToolType,
+    Usage,
 };
-use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, ToolCallDeltaContent};
+use crate::providers::internal::tool_call::ProviderToolCall;
 use crate::telemetry::SpanCombinator;
-use crate::{json_utils, streaming};
 use async_stream::stream;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -62,11 +65,11 @@ struct MessageEndDelta {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Option<Usage>,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         let tokens = self
             .usage
@@ -94,12 +97,14 @@ impl<T> CompletionModel<T>
 where
     T: HttpClientExt + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
-        let mut request = CohereCompletionRequest::try_from((self.model.as_ref(), request))?;
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &CohereCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -177,7 +182,7 @@ where
 
                                 text_response += text;
 
-                                yield Ok(RawStreamingChoice::Message(text.clone()));
+                                yield Ok(ModelEvent::TextDelta { text: text.clone() });
                             },
 
                             StreamingEvent::MessageEnd { delta: Some(delta) } => {
@@ -207,7 +212,7 @@ where
                                 let internal_call_id = nanoid::nanoid!();
                                 current_tool_call = Some((id.clone(), internal_call_id.clone(), name.clone(), arguments));
 
-                                yield Ok(RawStreamingChoice::ToolCallDelta {
+                                yield Ok(ModelEvent::ToolCallDelta {
                                     id,
                                     internal_call_id,
                                     content: ToolCallDeltaContent::Name(name),
@@ -224,7 +229,7 @@ where
                                 current_tool_call = Some((tc.0.clone(), tc.1.clone(), tc.2, format!("{}{}", tc.3, arguments)));
 
                                 // Emit the delta so UI can show progress
-                                yield Ok(RawStreamingChoice::ToolCallDelta {
+                                yield Ok(ModelEvent::ToolCallDelta {
                                     id: tc.0,
                                     internal_call_id: tc.1,
                                     content: ToolCallDeltaContent::Delta(arguments),
@@ -244,9 +249,9 @@ where
                                     })
                                 });
 
-                                let raw_tool_call = RawStreamingToolCall::new(tc.0, tc.2, args)
+                                let raw_tool_call = ProviderToolCall::new(tc.0, tc.2, args)
                                     .with_internal_call_id(tc.1);
-                                yield Ok(RawStreamingChoice::ToolCall(raw_tool_call));
+                                yield Ok(ModelEvent::from(raw_tool_call));
 
                                 current_tool_call = None;
                             },
@@ -268,14 +273,17 @@ where
             // Ensure event source is closed when stream ends
             event_source.close();
 
-            yield Ok(RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
+            let response = StreamingResponse {
                 usage: final_usage.unwrap_or_default()
-            }))
+            };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         }.instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-            stream,
-        )))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 

@@ -1,9 +1,10 @@
 use crate::{
-    agent::{Agent, MultiTurnStreamItem, Text},
+    agent::{Agent, AgentEvent},
     completion::{Chat, CompletionError, CompletionModel, PromptError, Usage},
     markers::{Missing, Provided},
     message::Message,
-    streaming::{StreamedAssistantContent, StreamingPrompt},
+    model_event::ModelEvent,
+    streaming::StreamingPrompt,
     wasm_compat::WasmCompatSend,
 };
 use futures::StreamExt;
@@ -82,13 +83,11 @@ where
             };
 
             match chunk {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                    Text { text },
-                ))) => {
+                Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
                     print!("{}", text);
                     acc.push_str(&text);
                 }
-                Ok(MultiTurnStreamItem::FinalResponse(final_response)) => {
+                Ok(AgentEvent::FinalResponse(final_response)) => {
                     self.usage = final_response.usage();
                 }
                 Err(e) => {

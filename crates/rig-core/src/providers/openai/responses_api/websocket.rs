@@ -438,7 +438,8 @@ where
     ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
         self.send(completion_request).await?;
         let response = self.wait_for_completed_response().await?;
-        response.try_into()
+        let events = super::completion_response_events(response)?;
+        crate::model_event::collect(events).await
     }
 
     /// Closes the websocket connection.

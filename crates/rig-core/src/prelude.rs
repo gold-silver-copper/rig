@@ -1,3 +1,4 @@
+pub use crate::agent::{AgentEvent, AgentEventStream};
 pub use crate::client::ProviderClient;
 pub use crate::client::completion::CompletionClient;
 pub use crate::client::embeddings::EmbeddingsClient;
@@ -12,3 +13,4 @@ pub use crate::client::image_generation::ImageGenerationClient;
 pub use crate::client::audio_generation::AudioGenerationClient;
 
 pub use crate::completion::{StructuredOutputError, TypedPrompt};
+pub use crate::model_event::{CompletionCollector, ModelEvent, ModelEventStream};

@@ -3,6 +3,7 @@ use aws_sdk_bedrockruntime::types as aws_bedrock;
 use rig_core::{
     completion::CompletionError,
     message::{AssistantContent, Text},
+    model_event::ModelEventStream,
 };
 use serde::{Deserialize, Serialize};
 
@@ -79,10 +80,16 @@ impl GetTokenUsage for AwsConverseOutput {
     }
 }
 
-impl TryFrom<AwsConverseOutput> for completion::CompletionResponse<AwsConverseOutput> {
-    type Error = CompletionError;
+pub(crate) struct BedrockCompletionCodec;
 
-    fn try_from(value: AwsConverseOutput) -> Result<Self, Self::Error> {
+impl rig_core::completion::CompletionResponseCodec for BedrockCompletionCodec {
+    type Response = AwsConverseOutput;
+    type RawFinal = AwsConverseOutput;
+
+    fn decode_response(
+        &self,
+        value: Self::Response,
+    ) -> Result<rig_core::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let message: RigMessage = value
             .to_owned()
             .0
@@ -108,13 +115,14 @@ impl TryFrom<AwsConverseOutput> for completion::CompletionResponse<AwsConverseOu
 
         let usage = value.0.usage().map(normalize_usage).unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: value,
-            message_id: None,
-        })
+        rig_core::completion::codec::turn_from_parts(value, choice, usage, None)
     }
+}
+
+pub(crate) fn completion_response_events(
+    value: AwsConverseOutput,
+) -> Result<ModelEventStream<AwsConverseOutput>, CompletionError> {
+    rig_core::completion::codec::response_events(&BedrockCompletionCodec, value)
 }
 
 pub struct RigAssistantContent(pub AssistantContent);
@@ -339,8 +347,8 @@ mod tests {
         assert!(out.token_usage().is_none());
     }
 
-    #[test]
-    fn aws_converse_output_to_completion_response() {
+    #[tokio::test]
+    async fn aws_converse_output_to_completion_response() {
         let message = aws_bedrock::Message::builder()
             .role(aws_bedrock::ConversationRole::Assistant)
             .content(aws_bedrock::ContentBlock::Text("txt".into()))
@@ -357,18 +365,19 @@ mod tests {
             converse_output.try_into();
         assert!(converse_output.is_ok());
         let converse_output = converse_output.unwrap();
-        let completion: Result<completion::CompletionResponse<AwsConverseOutput>, _> =
-            AwsConverseOutput(converse_output).try_into();
-        assert!(completion.is_ok());
-        let completion = completion.unwrap();
+        let completion = rig_core::model_event::collect(
+            completion_response_events(AwsConverseOutput(converse_output)).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             completion.choice,
             OneOrMany::one(AssistantContent::Text("txt".into()))
         );
     }
 
-    #[test]
-    fn aws_converse_output_preserves_parallel_tool_calls_in_completion_response() {
+    #[tokio::test]
+    async fn aws_converse_output_preserves_parallel_tool_calls_in_completion_response() {
         let content = vec![
             aws_bedrock::ContentBlock::Text("preface".into()),
             aws_bedrock::ContentBlock::ToolUse(
@@ -389,10 +398,12 @@ mod tests {
             ),
         ];
 
-        let completion: completion::CompletionResponse<AwsConverseOutput> =
-            make_output_with_content(content, None)
-                .try_into()
-                .expect("conversion should succeed");
+        let completion = rig_core::model_event::collect(
+            completion_response_events(make_output_with_content(content, None))
+                .expect("conversion should succeed"),
+        )
+        .await
+        .expect("events should collect");
 
         let choice: Vec<_> = completion.choice.into_iter().collect();
         assert_eq!(choice.len(), 3);

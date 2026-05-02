@@ -7,20 +7,21 @@ use base64::Engine as _;
 use futures::StreamExt;
 use serde_json::{Map, Value};
 
-use rig_core::completion::{CompletionError, CompletionRequest};
-use rig_core::streaming;
+use rig_core::completion::{CompletionError, CompletionRequest, GetTokenUsage};
+use rig_core::message::{ToolCall, ToolFunction};
+use rig_core::model_event::ModelEvent;
 
 use super::Client;
 use super::GenerateContentResponse;
 use super::proto;
 
-pub type StreamingCompletionResponse = GenerateContentResponse;
+pub type StreamingResponse = GenerateContentResponse;
 
-pub(crate) async fn stream(
+pub(crate) async fn stream_events(
     client: Client,
     model: String,
     completion_request: CompletionRequest,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError> {
+) -> Result<rig_core::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
     let request = super::completion::create_grpc_request(model, completion_request)?;
 
     let mut grpc_client = client
@@ -34,8 +35,8 @@ pub(crate) async fn stream(
         .into_inner();
 
     let stream = stream! {
-        let mut last_resp: Option<StreamingCompletionResponse> = None;
-        let mut final_resp: Option<StreamingCompletionResponse> = None;
+        let mut last_resp: Option<StreamingResponse> = None;
+        let mut final_resp: Option<StreamingResponse> = None;
 
         while let Some(item) = response_stream.next().await {
             match item {
@@ -53,12 +54,12 @@ pub(crate) async fn stream(
                                 match &part.data {
                                     Some(proto::part::Data::Text(text)) => {
                                         if part.thought {
-                                            yield Ok(streaming::RawStreamingChoice::ReasoningDelta {
+                                            yield Ok(ModelEvent::ReasoningDelta {
                                                 id: None,
-                                                reasoning: text.clone(),
+                                                text: text.clone(),
                                             });
                                         } else {
-                                            yield Ok(streaming::RawStreamingChoice::Message(text.clone()));
+                                            yield Ok(ModelEvent::TextDelta { text: text.clone() });
                                         }
                                     }
                                     Some(proto::part::Data::FunctionCall(function_call)) => {
@@ -74,18 +75,23 @@ pub(crate) async fn stream(
                                             function_call.id.clone()
                                         };
 
-                                        let mut tool_call = streaming::RawStreamingToolCall::new(
-                                            tool_id,
-                                            function_call.name.clone(),
-                                            args_json,
-                                        )
-                                        .with_signature(encode_signature(&part.thought_signature));
-
-                                        if !function_call.id.is_empty() {
-                                            tool_call = tool_call.with_call_id(function_call.id.clone());
-                                        }
-
-                                        yield Ok(streaming::RawStreamingChoice::ToolCall(tool_call));
+                                        yield Ok(ModelEvent::ToolCallDone {
+                                            tool_call: ToolCall {
+                                                id: tool_id,
+                                                call_id: if function_call.id.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(function_call.id.clone())
+                                                },
+                                                function: ToolFunction {
+                                                    name: function_call.name.clone(),
+                                                    arguments: args_json,
+                                                },
+                                                signature: encode_signature(&part.thought_signature),
+                                                additional_params: None,
+                                            },
+                                            internal_call_id: Some(nanoid::nanoid!()),
+                                        });
                                     }
                                     _ => {}
                                 }
@@ -108,12 +114,14 @@ pub(crate) async fn stream(
         }
 
         let resp = final_resp.or(last_resp).unwrap_or_default();
-        yield Ok(streaming::RawStreamingChoice::FinalResponse(resp));
+        if let Some(usage) = resp.token_usage() {
+            yield Ok(ModelEvent::Usage { usage });
+        }
+        yield Ok(ModelEvent::RawResponse { response: resp });
+        yield Ok(ModelEvent::Done);
     };
 
-    Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-        stream,
-    )))
+    Ok(rig_core::completion::codec::result_stream(Box::pin(stream)))
 }
 
 fn encode_signature(bytes: &[u8]) -> Option<String> {

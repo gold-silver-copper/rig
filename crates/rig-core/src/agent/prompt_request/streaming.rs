@@ -5,7 +5,7 @@ use crate::{
     completion::{Document, GetTokenUsage},
     json_utils,
     message::{AssistantContent, ToolChoice, ToolResult, ToolResultContent, UserContent},
-    streaming::{StreamedAssistantContent, StreamedUserContent},
+    model_event::{CompletionCollector, ModelEvent},
     tool::server::ToolServerHandle,
     wasm_compat::{WasmBoxedFuture, WasmCompatSend},
 };
@@ -19,27 +19,34 @@ use super::ToolCallHookAction;
 use crate::{
     agent::Agent,
     completion::{CompletionError, CompletionModel, PromptError},
-    message::{Message, Text},
+    message::Message,
     tool::ToolSetError,
 };
 
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
-pub type StreamingResult<R> =
-    Pin<Box<dyn Stream<Item = Result<MultiTurnStreamItem<R>, StreamingError>> + Send>>;
+pub type AgentEventStream<R> =
+    Pin<Box<dyn Stream<Item = Result<AgentEvent<R>, StreamingError>> + Send>>;
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-pub type StreamingResult<R> =
-    Pin<Box<dyn Stream<Item = Result<MultiTurnStreamItem<R>, StreamingError>>>>;
+pub type AgentEventStream<R> = Pin<Box<dyn Stream<Item = Result<AgentEvent<R>, StreamingError>>>>;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(tag = "type", rename_all = "camelCase")]
+/// A normalized event emitted by an agent run.
+#[derive(Debug)]
 #[non_exhaustive]
-pub enum MultiTurnStreamItem<R> {
-    /// A streamed assistant content item.
-    StreamAssistantItem(StreamedAssistantContent<R>),
-    /// A streamed user content item (mostly for tool results).
-    StreamUserItem(StreamedUserContent),
-    /// The final result from the stream.
+pub enum AgentEvent<R> {
+    /// A normalized model event emitted during an agent turn.
+    Model(ModelEvent<R>),
+    /// A complete model tool call that the agent is about to handle.
+    ToolCallRequested {
+        tool_call: crate::message::ToolCall,
+        internal_call_id: String,
+    },
+    /// A tool result produced by the agent.
+    ToolResult {
+        tool_result: ToolResult,
+        internal_call_id: String,
+    },
+    /// The final result from the agent run.
     FinalResponse(FinalResponse),
 }
 
@@ -77,29 +84,25 @@ impl FinalResponse {
     }
 }
 
-impl<R> MultiTurnStreamItem<R> {
-    pub(crate) fn stream_item(item: StreamedAssistantContent<R>) -> Self {
-        Self::StreamAssistantItem(item)
-    }
-
-    pub fn final_response(response: &str, aggregated_usage: crate::completion::Usage) -> Self {
-        Self::FinalResponse(FinalResponse {
+impl FinalResponse {
+    pub fn new(response: &str, aggregated_usage: crate::completion::Usage) -> Self {
+        FinalResponse {
             response: response.to_string(),
             aggregated_usage,
             history: None,
-        })
+        }
     }
 
-    pub fn final_response_with_history(
+    pub fn with_history(
         response: &str,
         aggregated_usage: crate::completion::Usage,
         history: Option<Vec<Message>>,
     ) -> Self {
-        Self::FinalResponse(FinalResponse {
+        FinalResponse {
             response: response.to_string(),
             aggregated_usage,
             history,
-        })
+        }
     }
 }
 
@@ -123,6 +126,16 @@ fn merge_reasoning_blocks(
     } else {
         accumulated_reasoning.push(incoming.clone());
     }
+}
+
+fn assistant_text_response(choice: &OneOrMany<AssistantContent>) -> String {
+    let mut response = String::new();
+    for content in choice.iter() {
+        if let AssistantContent::Text(text) = content {
+            response.push_str(&text.text);
+        }
+    }
+    response
 }
 
 /// Build full history for error reporting (input + new messages).
@@ -168,16 +181,6 @@ fn tool_result_to_user_message(
     Message::User {
         content: OneOrMany::one(user_content),
     }
-}
-
-fn assistant_text_from_choice(choice: &OneOrMany<AssistantContent>) -> String {
-    choice
-        .iter()
-        .filter_map(|content| match content {
-            AssistantContent::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .collect()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -351,7 +354,7 @@ where
         }
     }
 
-    async fn send(self) -> StreamingResult<M::StreamingResponse> {
+    async fn send(self) -> AgentEventStream<M::StreamingResponse> {
         let agent_span = if tracing::Span::current().is_disabled() {
             info_span!(
                 "invoke_agent",
@@ -484,7 +487,7 @@ where
                         output_schema.as_ref(),
                     )
                     .await?
-                    .stream(), chat_stream_span
+                    .stream_events(), chat_stream_span
                 )
 
                 .await?;
@@ -492,29 +495,54 @@ where
                 let mut tool_calls = vec![];
                 let mut tool_results = vec![];
                 let mut accumulated_reasoning: Vec<rig::message::Reasoning> = vec![];
+                let mut turn_usage = crate::completion::Usage::new();
+                let mut message_id: Option<String> = None;
+                let mut turn_collector = CompletionCollector::new();
                 // Kept separate from accumulated_reasoning so providers requiring
                 // signatures (e.g. Anthropic) never see unsigned blocks.
                 let mut pending_reasoning_delta_text = String::new();
                 let mut pending_reasoning_delta_id: Option<String> = None;
                 let mut saw_tool_call_this_turn = false;
 
-                while let Some(content) = stream.next().await {
-                    match content {
-                        Ok(StreamedAssistantContent::Text(text)) => {
+                while let Some(mut event) = stream.next().await {
+                    if let ModelEvent::ToolCallDone { internal_call_id, .. } = &mut event
+                        && internal_call_id.is_none()
+                    {
+                        *internal_call_id = Some(nanoid::nanoid!());
+                    }
+
+                    if let Some(ref hook) = self.hook
+                        && let HookAction::Terminate { reason } = hook.on_model_event(&event).await
+                    {
+                        yield Err(cancelled_prompt_error(
+                            chat_history.as_deref(),
+                            new_messages.clone(),
+                            reason,
+                        ).await);
+                        break 'outer;
+                    }
+
+                    match event {
+                        ModelEvent::TextDelta { text } => {
                             if !saw_text_this_turn {
                                 text_delta_response.clear();
                                 saw_text_this_turn = true;
                             }
-                            text_delta_response.push_str(&text.text);
+                            text_delta_response.push_str(&text);
                             if let Some(ref hook) = self.hook &&
-                                let HookAction::Terminate { reason } = hook.on_text_delta(&text.text, &text_delta_response).await {
+                                let HookAction::Terminate { reason } = hook.on_text_delta(&text, &text_delta_response).await {
                                     yield Err(cancelled_prompt_error(chat_history.as_deref(), new_messages.clone(), reason).await);
                                     break 'outer;
                             }
 
-                            yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::Text(text)));
+                            if let Err(error) = turn_collector.push(ModelEvent::TextDelta { text: text.clone() }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::TextDelta { text }));
                         },
-                        Ok(StreamedAssistantContent::ToolCall { tool_call, internal_call_id }) => {
+                        ModelEvent::ToolCallDone { tool_call, internal_call_id } => {
+                            let internal_call_id = internal_call_id.unwrap_or_else(|| nanoid::nanoid!());
                             let tool_span = info_span!(
                                 parent: tracing::Span::current(),
                                 "execute_tool",
@@ -526,7 +554,21 @@ where
                                 gen_ai.tool.call.result = tracing::field::Empty
                             );
 
-                            yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::ToolCall { tool_call: tool_call.clone(), internal_call_id: internal_call_id.clone() }));
+                            yield Ok(AgentEvent::ToolCallRequested {
+                                tool_call: tool_call.clone(),
+                                internal_call_id: internal_call_id.clone(),
+                            });
+                            if let Err(error) = turn_collector.push(ModelEvent::ToolCallDone {
+                                tool_call: tool_call.clone(),
+                                internal_call_id: Some(internal_call_id.clone()),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::ToolCallDone {
+                                tool_call: tool_call.clone(),
+                                internal_call_id: Some(internal_call_id.clone()),
+                            }));
 
                             let tc_result = async {
                                 let tool_span = tracing::Span::current();
@@ -594,7 +636,10 @@ where
                             match tc_result {
                                 Ok(text) => {
                                     let tr = ToolResult { id: tool_call.id, call_id: tool_call.call_id, content: ToolResultContent::from_tool_output(text) };
-                                    yield Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult{ tool_result: tr, internal_call_id }));
+                                    yield Ok(AgentEvent::ToolResult {
+                                        tool_result: tr,
+                                        internal_call_id,
+                                    });
                                 }
                                 Err(e) => {
                                     yield Err(e);
@@ -602,11 +647,11 @@ where
                                 }
                             }
                         },
-                        Ok(StreamedAssistantContent::ToolCallDelta { id, internal_call_id, content }) => {
+                        ModelEvent::ToolCallDelta { id, internal_call_id, content } => {
                             if let Some(ref hook) = self.hook {
                                 let (name, delta) = match &content {
-                                    rig::streaming::ToolCallDeltaContent::Name(n) => (Some(n.as_str()), ""),
-                                    rig::streaming::ToolCallDeltaContent::Delta(d) => (None, d.as_str()),
+                                    rig::model_event::ToolCallDeltaContent::Name(n) => (Some(n.as_str()), ""),
+                                    rig::model_event::ToolCallDeltaContent::Delta(d) => (None, d.as_str()),
                                 };
 
                                 if let HookAction::Terminate { reason } = hook.on_tool_call_delta(&id, &internal_call_id, name, delta)
@@ -615,26 +660,90 @@ where
                                     break 'outer;
                                 }
                             }
+
+                            if let Err(error) = turn_collector.push(ModelEvent::ToolCallDelta {
+                                id: id.clone(),
+                                internal_call_id: internal_call_id.clone(),
+                                content: content.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::ToolCallDelta {
+                                id,
+                                internal_call_id,
+                                content,
+                            }));
                         }
-                        Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+                        ModelEvent::ToolCallStart { id, internal_call_id, call_id, name } => {
+                            if let Some(ref hook) = self.hook
+                                && let HookAction::Terminate { reason } =
+                                    hook.on_tool_call_delta(&id, &internal_call_id, Some(&name), "").await
+                            {
+                                yield Err(cancelled_prompt_error(chat_history.as_deref(), new_messages.clone(), reason).await);
+                                break 'outer;
+                            }
+
+                            if let Err(error) = turn_collector.push(ModelEvent::ToolCallStart {
+                                id: id.clone(),
+                                internal_call_id: internal_call_id.clone(),
+                                call_id: call_id.clone(),
+                                name: name.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::ToolCallStart {
+                                id,
+                                internal_call_id,
+                                call_id,
+                                name,
+                            }));
+                        }
+                        ModelEvent::ReasoningDone { reasoning } => {
                             // Accumulate reasoning for inclusion in chat history with tool calls.
                             // OpenAI Responses API requires reasoning items to be sent back
                             // alongside function_call items in multi-turn conversations.
                             merge_reasoning_blocks(&mut accumulated_reasoning, &reasoning);
-                            yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::Reasoning(reasoning)));
+                            if let Err(error) = turn_collector.push(ModelEvent::ReasoningDone {
+                                reasoning: reasoning.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::ReasoningDone { reasoning }));
                         },
-                        Ok(StreamedAssistantContent::ReasoningDelta { reasoning, id }) => {
+                        ModelEvent::ReasoningDelta { id, text } => {
                             // Deltas lack signatures/encrypted content that full
                             // blocks carry; mixing them into accumulated_reasoning
                             // causes Anthropic to reject with "signature required".
-                            pending_reasoning_delta_text.push_str(&reasoning);
+                            pending_reasoning_delta_text.push_str(&text);
                             if pending_reasoning_delta_id.is_none() {
                                 pending_reasoning_delta_id = id.clone();
                             }
-                            yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::ReasoningDelta { reasoning, id }));
+                            if let Err(error) = turn_collector.push(ModelEvent::ReasoningDelta {
+                                id: id.clone(),
+                                text: text.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::ReasoningDelta { id, text }));
                         },
-                        Ok(StreamedAssistantContent::Final(final_resp)) => {
-                            if let Some(usage) = final_resp.token_usage() { aggregated_usage += usage; };
+                        ModelEvent::Usage { usage } => {
+                            turn_usage = usage;
+                            if let Err(error) = turn_collector.push(ModelEvent::Usage { usage }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::Usage { usage }));
+                        }
+                        ModelEvent::RawResponse { response: final_resp } => {
+                            if turn_usage == crate::completion::Usage::new()
+                                && let Some(usage) = final_resp.token_usage()
+                            {
+                                turn_usage = usage;
+                            }
                             if saw_text_this_turn {
                                 if let Some(ref hook) = self.hook &&
                                      let HookAction::Terminate { reason } = hook.on_stream_completion_response_finish(&current_prompt, &final_resp).await {
@@ -642,16 +751,58 @@ where
                                         break 'outer;
                                     }
 
-                                yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::Final(final_resp)));
                                 saw_text_this_turn = false;
                             }
+                            if let Err(error) = turn_collector.push(ModelEvent::RawResponse {
+                                response: final_resp.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::RawResponse { response: final_resp }));
                         }
-                        Err(e) => {
-                            yield Err(e.into());
+                        ModelEvent::MessageDone { id } => {
+                            if id.is_some() {
+                                message_id = id.clone();
+                            }
+                            if let Err(error) = turn_collector.push(ModelEvent::MessageDone { id: id.clone() }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::MessageDone { id }));
+                        }
+                        ModelEvent::ProviderMetadata { metadata } => {
+                            if let Err(error) = turn_collector.push(ModelEvent::ProviderMetadata {
+                                metadata: metadata.clone(),
+                            }) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::ProviderMetadata { metadata }));
+                        }
+                        ModelEvent::Done => {
+                            if let Err(error) = turn_collector.push(ModelEvent::Done) {
+                                yield Err(error.into());
+                                break 'outer;
+                            }
+                            yield Ok(AgentEvent::Model(ModelEvent::Done));
+                        }
+                        ModelEvent::Error { error } => {
+                            yield Err(error.into());
                             break 'outer;
                         }
                     }
                 }
+
+                aggregated_usage += turn_usage;
+                let assistant_response = match turn_collector.finish_optional() {
+                    Ok(response) => response,
+                    Err(error) => {
+                        yield Err(error.into());
+                        break 'outer;
+                    }
+                };
+                let turn_text_response = assistant_text_response(&assistant_response.choice);
 
                 // Providers like Gemini emit thinking as incremental deltas
                 // without signatures; assemble into a single block so
@@ -664,7 +815,6 @@ where
                     accumulated_reasoning.push(assembled);
                 }
 
-                let turn_text_response = assistant_text_from_choice(&stream.choice);
                 tracing::Span::current().record("gen_ai.completion", &turn_text_response);
 
                 // Add text, reasoning, and tool calls to chat history.
@@ -686,7 +836,7 @@ where
 
                     if let Some(content) = OneOrMany::from_iter_optional(content_items) {
                         new_messages.push(Message::Assistant {
-                            id: stream.message_id.clone(),
+                            id: message_id.clone(),
                             content,
                         });
                     }
@@ -703,7 +853,7 @@ where
                     } else {
                         tracing::warn!(
                             agent_name = agent_name.as_deref().unwrap_or(UNKNOWN_AGENT_NAME),
-                            message_id = ?stream.message_id,
+                            message_id = ?message_id,
                             "Streaming turn completed without assistant text; final response will be empty"
                         );
                     }
@@ -719,11 +869,11 @@ where
                     } else {
                         None
                     };
-                    yield Ok(MultiTurnStreamItem::final_response_with_history(
+                    yield Ok(AgentEvent::FinalResponse(FinalResponse::with_history(
                         &turn_text_response,
                         aggregated_usage,
                         final_messages,
-                    ));
+                    )));
                     break;
                 }
             }
@@ -739,6 +889,11 @@ where
 
         Box::pin(stream.instrument(agent_span))
     }
+
+    /// Sends the streaming prompt request and returns normalized agent events.
+    pub async fn agent_events(self) -> AgentEventStream<M::StreamingResponse> {
+        self.send().await
+    }
 }
 
 impl<M, P> IntoFuture for StreamingPromptRequest<M, P>
@@ -747,7 +902,7 @@ where
     <M as CompletionModel>::StreamingResponse: WasmCompatSend,
     P: PromptHook<M> + 'static,
 {
-    type Output = StreamingResult<M::StreamingResponse>; // what `.await` returns
+    type Output = AgentEventStream<M::StreamingResponse>; // what `.await` returns
     type IntoFuture = WasmBoxedFuture<'static, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -758,26 +913,26 @@ where
 
 /// Helper function to stream a completion request to stdout.
 pub async fn stream_to_stdout<R>(
-    stream: &mut StreamingResult<R>,
+    stream: &mut AgentEventStream<R>,
 ) -> Result<FinalResponse, std::io::Error> {
     let mut final_res = FinalResponse::empty();
     print!("Response: ");
-    while let Some(content) = stream.next().await {
-        match content {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                Text { text },
-            ))) => {
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
                 print!("{text}");
                 std::io::Write::flush(&mut std::io::stdout())?;
             }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(
-                reasoning,
-            ))) => {
+            Ok(AgentEvent::Model(ModelEvent::ReasoningDone { reasoning })) => {
                 let reasoning = reasoning.display_text();
                 print!("{reasoning}");
                 std::io::Write::flush(&mut std::io::stdout())?;
             }
-            Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+            Ok(AgentEvent::Model(ModelEvent::ReasoningDelta { text, .. })) => {
+                print!("{text}");
+                std::io::Write::flush(&mut std::io::stdout())?;
+            }
+            Ok(AgentEvent::FinalResponse(res)) => {
                 final_res = res;
             }
             Err(err) => {
@@ -796,16 +951,16 @@ mod tests {
     use crate::agent::AgentBuilder;
     use crate::client::ProviderClient;
     use crate::client::completion::CompletionClient;
-    use crate::completion::{
-        CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
-    };
+    use crate::completion::{CompletionError, CompletionModel, CompletionRequest, GetTokenUsage};
     use crate::message::{
         AssistantContent, DocumentSourceKind, ImageMediaType, Message, ReasoningContent,
         ToolResultContent, UserContent,
     };
+    use crate::model_event::ModelEvent;
+    use crate::model_event::ModelEventStream;
     use crate::providers::anthropic;
+    use crate::providers::internal::tool_call::ProviderToolCall;
     use crate::streaming::StreamingPrompt;
-    use crate::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
     use futures::StreamExt;
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
@@ -1062,19 +1217,19 @@ mod tests {
             Self::default()
         }
 
-        async fn completion(
+        async fn events(
             &self,
             _request: CompletionRequest,
-        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+        ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
             Err(CompletionError::ProviderError(
                 "completion is unused in this streaming test".to_string(),
             ))
         }
 
-        async fn stream(
+        async fn stream_events(
             &self,
             request: CompletionRequest,
-        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+        ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
             let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst);
             let validation_error = if turn == 0 {
                 None
@@ -1083,26 +1238,34 @@ mod tests {
             };
             let stream = async_stream::stream! {
                 if turn == 0 {
-                    yield Ok(RawStreamingChoice::ToolCall(
-                        RawStreamingToolCall::new(
+                    yield Ok(ModelEvent::from(
+                        ProviderToolCall::new(
                             "tool_call_1".to_string(),
                             "missing_tool".to_string(),
                             serde_json::json!({"input": "value"}),
                         )
                         .with_call_id("call_1".to_string()),
                     ));
-                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(4)));
+                    let response = MockStreamingResponse::new(4);
+                    if let Some(usage) = response.token_usage() {
+                        yield Ok(ModelEvent::Usage { usage });
+                    }
+                    yield Ok(ModelEvent::RawResponse { response });
+                    yield Ok(ModelEvent::Done);
                 } else if let Some(error) = validation_error {
                     yield Err(CompletionError::ProviderError(error));
                 } else {
-                    yield Ok(RawStreamingChoice::Message("done".to_string()));
-                    yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(6)));
+                    yield Ok(ModelEvent::TextDelta { text: "done".to_string() });
+                    let response = MockStreamingResponse::new(6);
+                    if let Some(usage) = response.token_usage() {
+                        yield Ok(ModelEvent::Usage { usage });
+                    }
+                    yield Ok(ModelEvent::RawResponse { response });
+                    yield Ok(ModelEvent::Done);
                 }
             };
 
-            let pinned_stream: crate::streaming::StreamingResult<Self::StreamingResponse> =
-                Box::pin(stream);
-            Ok(StreamingCompletionResponse::stream(pinned_stream))
+            Ok(crate::model_event::result_stream(stream))
         }
     }
 
@@ -1127,22 +1290,16 @@ mod tests {
 
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCall { .. },
-                )) => {
+                Ok(AgentEvent::Model(ModelEvent::ToolCallDone { .. })) => {
                     saw_tool_call = true;
                 }
-                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult {
-                    ..
-                })) => {
+                Ok(AgentEvent::ToolResult { .. }) => {
                     saw_tool_result = true;
                 }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                    text,
-                ))) => {
-                    final_text.push_str(&text.text);
+                Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
+                    final_text.push_str(&text);
                 }
-                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                Ok(AgentEvent::FinalResponse(res)) => {
                     saw_final_response = true;
                     final_response_text = Some(res.response().to_owned());
                     final_history = res.history().map(|history| history.to_vec());
@@ -1193,36 +1350,44 @@ mod tests {
             }
         }
 
-        async fn completion(
+        async fn events(
             &self,
             _request: CompletionRequest,
-        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+        ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
             Err(CompletionError::ProviderError(
                 "completion is unused in this streaming test".to_string(),
             ))
         }
 
-        async fn stream(
+        async fn stream_events(
             &self,
             _request: CompletionRequest,
-        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+        ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
             let scenario = self.scenario;
             let stream = async_stream::stream! {
                 match scenario {
                     FinalResponseScenario::TextThenFinal => {
-                        yield Ok(RawStreamingChoice::Message("hello".to_string()));
-                        yield Ok(RawStreamingChoice::Message(" world".to_string()));
-                        yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(3)));
+                        yield Ok(ModelEvent::TextDelta { text: "hello".to_string() });
+                        yield Ok(ModelEvent::TextDelta { text: " world".to_string() });
+                        let response = MockStreamingResponse::new(3);
+                        if let Some(usage) = response.token_usage() {
+                            yield Ok(ModelEvent::Usage { usage });
+                        }
+                        yield Ok(ModelEvent::RawResponse { response });
+                        yield Ok(ModelEvent::Done);
                     }
                     FinalResponseScenario::FinalOnly => {
-                        yield Ok(RawStreamingChoice::FinalResponse(MockStreamingResponse::new(1)));
+                        let response = MockStreamingResponse::new(1);
+                        if let Some(usage) = response.token_usage() {
+                            yield Ok(ModelEvent::Usage { usage });
+                        }
+                        yield Ok(ModelEvent::RawResponse { response });
+                        yield Ok(ModelEvent::Done);
                     }
                 }
             };
 
-            let pinned_stream: crate::streaming::StreamingResult<Self::StreamingResponse> =
-                Box::pin(stream);
-            Ok(StreamingCompletionResponse::stream(pinned_stream))
+            Ok(crate::model_event::result_stream(stream))
         }
     }
 
@@ -1239,10 +1404,10 @@ mod tests {
 
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                    text,
-                ))) => streamed_text.push_str(&text.text),
-                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
+                    streamed_text.push_str(&text)
+                }
+                Ok(AgentEvent::FinalResponse(res)) => {
                     final_response_text = Some(res.response().to_owned());
                     break;
                 }
@@ -1268,10 +1433,10 @@ mod tests {
 
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                    text,
-                ))) => streamed_text.push_str(&text.text),
-                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
+                    streamed_text.push_str(&text)
+                }
+                Ok(AgentEvent::FinalResponse(res)) => {
                     final_response_text = Some(res.response().to_owned());
                     break;
                 }
@@ -1351,12 +1516,10 @@ mod tests {
         let mut full_content = String::new();
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                    text,
-                ))) => {
-                    full_content.push_str(&text.text);
+                Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
+                    full_content.push_str(&text);
                 }
-                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                Ok(AgentEvent::FinalResponse(_)) => {
                     break;
                 }
                 Err(e) => {
@@ -1413,12 +1576,10 @@ mod tests {
         let mut final_history = None;
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                    text,
-                ))) => {
-                    response_text.push_str(&text.text);
+                Ok(AgentEvent::Model(ModelEvent::TextDelta { text })) => {
+                    response_text.push_str(&text);
                 }
-                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                Ok(AgentEvent::FinalResponse(res)) => {
                     final_history = res.history().map(|h| h.to_vec());
                     break;
                 }

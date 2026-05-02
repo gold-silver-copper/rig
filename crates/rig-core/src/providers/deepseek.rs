@@ -13,6 +13,8 @@ use bytes::Bytes;
 use http::Request;
 use tracing::{Instrument, Level, enabled, info_span};
 
+#[cfg(test)]
+use crate::OneOrMany;
 use crate::client::{
     self, BearerAuth, Capabilities, Capable, DebugExt, ModelLister, Nothing, Provider,
     ProviderBuilder, ProviderClient,
@@ -25,7 +27,6 @@ use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
 };
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     json_utils, message,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
@@ -380,10 +381,16 @@ impl From<crate::completion::ToolDefinition> for ToolDefinition {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+pub(crate) struct DeepseekCompletionCodec;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+impl crate::completion::CompletionResponseCodec for DeepseekCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
@@ -400,18 +407,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     vec![completion::AssistantContent::text(content)]
                 };
 
-                content.extend(
-                    tool_calls
-                        .iter()
-                        .map(|call| {
-                            completion::AssistantContent::tool_call(
-                                &call.id,
-                                &call.function.name,
-                                call.function.arguments.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
+                content.extend(tool_calls.iter().map(|call| {
+                    completion::AssistantContent::tool_call(
+                        &call.id,
+                        &call.function.name,
+                        call.function.arguments.clone(),
+                    )
+                }));
 
                 if let Some(reasoning_content) = reasoning_content {
                     content.push(completion::AssistantContent::reasoning(reasoning_content));
@@ -424,11 +426,11 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             )),
         }?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
                 "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            ));
+        }
 
         let usage = completion::Usage {
             input_tokens: response.usage.prompt_tokens as u64,
@@ -444,17 +446,12 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             cache_creation_input_tokens: 0,
         };
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct DeepseekCompletionRequest {
+pub(crate) struct DeepseekCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -467,10 +464,8 @@ pub(super) struct DeepseekCompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl DeepseekCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for DeepSeek");
         }
@@ -519,6 +514,27 @@ impl TryFrom<(&str, CompletionRequest)> for DeepseekCompletionRequest {
     }
 }
 
+pub(crate) struct DeepseekCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> DeepseekCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for DeepseekCompletionRequestCodec<'_> {
+    type Request = DeepseekCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        DeepseekCompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 /// The struct implementing the `CompletionModel` trait
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
@@ -531,7 +547,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = Client<T>;
 
@@ -542,103 +558,109 @@ where
         }
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<
-        completion::CompletionResponse<CompletionResponse>,
-        crate::completion::CompletionError,
-    > {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "deepseek",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        let request =
-            DeepseekCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "DeepSeek completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-        let req = self
-            .client
-            .post("/chat/completions")?
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record("gen_ai.usage.input_tokens", response.usage.prompt_tokens);
-                        span.record(
-                            "gen_ai.usage.output_tokens",
-                            response.usage.completion_tokens,
-                        );
-                        span.record(
-                            "gen_ai.usage.cache_read.input_tokens",
-                            response
-                                .usage
-                                .prompt_tokens_details
-                                .as_ref()
-                                .and_then(|d| d.cached_tokens)
-                                .unwrap_or(0),
-                        );
-                        if enabled!(Level::TRACE) {
-                            tracing::trace!(target: "rig::completions",
-                                "DeepSeek completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "deepseek",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
+                tracing::Span::current()
+            };
+
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+
+            let request = crate::completion::CompletionCodec::encode_request(
+                &DeepseekCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "DeepSeek completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let body = serde_json::to_vec(&request)?;
+            let req = self
+                .client
+                .post("/chat/completions")?
+                .body(body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)?
+                    {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record("gen_ai.usage.input_tokens", response.usage.prompt_tokens);
+                            span.record(
+                                "gen_ai.usage.output_tokens",
+                                response.usage.completion_tokens,
+                            );
+                            span.record(
+                                "gen_ai.usage.cache_read.input_tokens",
+                                response
+                                    .usage
+                                    .prompt_tokens_details
+                                    .as_ref()
+                                    .and_then(|d| d.cached_tokens)
+                                    .unwrap_or(0),
+                            );
+                            if enabled!(Level::TRACE) {
+                                tracing::trace!(target: "rig::completions",
+                                    "DeepSeek completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+                            crate::completion::codec::response_events(
+                                &DeepseekCompletionCodec,
+                                response,
+                            )
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
         let preamble = completion_request.preamble.clone();
-        let mut request =
-            DeepseekCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &DeepseekCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),
@@ -711,11 +733,11 @@ struct StreamingCompletionChunk {
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Usage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -727,7 +749,7 @@ struct DeepSeekCompatibleProfile;
 impl CompatibleStreamProfile for DeepSeekCompatibleProfile {
     type Usage = Usage;
     type Detail = ();
-    type FinalResponse = StreamingCompletionResponse;
+    type FinalResponse = StreamingResponse;
 
     fn normalize_chunk(
         &self,
@@ -764,7 +786,7 @@ impl CompatibleStreamProfile for DeepSeekCompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        StreamingCompletionResponse { usage }
+        StreamingResponse { usage }
     }
 
     fn uses_distinct_tool_call_eviction(&self) -> bool {
@@ -779,10 +801,7 @@ impl CompatibleStreamProfile for DeepSeekCompatibleProfile {
 pub async fn send_compatible_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
-) -> Result<
-    crate::streaming::StreamingCompletionResponse<StreamingCompletionResponse>,
-    CompletionError,
->
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {

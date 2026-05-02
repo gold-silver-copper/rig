@@ -1,7 +1,6 @@
 //! Google Gemini Interactions API integration.
 //! From <https://ai.google.dev/api/interactions-api>
 
-use crate::OneOrMany;
 use crate::completion::{self, CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::message::{self, MimeType, Reasoning};
@@ -58,7 +57,10 @@ impl<T> InteractionsCompletionModel<T> {
         completion_request: CompletionRequest,
         stream_override: Option<bool>,
     ) -> Result<CreateInteractionRequest, CompletionError> {
-        create_request_body(self.model.clone(), completion_request, stream_override)
+        crate::completion::CompletionCodec::encode_request(
+            &GeminiInteractionsCompletionCodec::new(self.model.clone(), stream_override),
+            completion_request,
+        )
     }
 }
 
@@ -109,110 +111,114 @@ where
     T: HttpClientExt + Clone + std::fmt::Debug + Default + 'static,
 {
     type Response = Interaction;
-    type StreamingResponse = streaming::StreamingCompletionResponse;
+    type StreamingResponse = streaming::StreamingResponse;
     type Client = InteractionsClient<T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<Interaction>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "interactions",
-                gen_ai.operation.name = "interactions",
-                gen_ai.provider.name = "gcp.gemini",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        let request = self.create_completion_request(completion_request, Some(false))?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "Gemini interactions completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-        let request = self
-            .client
-            .post("/v1beta/interactions")?
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send::<_, Vec<u8>>(request).await?;
-
-            if response.status().is_success() {
-                let response_body = response
-                    .into_body()
-                    .await
-                    .map_err(CompletionError::HttpError)?;
-
-                let response_text = String::from_utf8_lossy(&response_body).to_string();
-
-                let response: Interaction =
-                    serde_json::from_slice(&response_body).map_err(|err| {
-                        tracing::error!(
-                            error = %err,
-                            body = %response_text,
-                            "Failed to deserialize Gemini interactions response"
-                        );
-                        CompletionError::JsonError(err)
-                    })?;
-
-                let span = tracing::Span::current();
-                span.record_response_metadata(&response);
-                span.record_token_usage(&response);
-
-                if enabled!(Level::TRACE) {
-                    tracing::trace!(
-                        target: "rig::completions",
-                        "Gemini interactions completion response: {}",
-                        serde_json::to_string_pretty(&response)?
-                    );
-                }
-
-                response.try_into()
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "interactions",
+                    gen_ai.operation.name = "interactions",
+                    gen_ai.provider.name = "gcp.gemini",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                let text = String::from_utf8_lossy(
-                    &response
+                tracing::Span::current()
+            };
+
+            let request = self.create_completion_request(completion_request, Some(false))?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "Gemini interactions completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+            let request = self
+                .client
+                .post("/v1beta/interactions")?
+                .body(body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send::<_, Vec<u8>>(request).await?;
+
+                if response.status().is_success() {
+                    let response_body = response
                         .into_body()
                         .await
-                        .map_err(CompletionError::HttpError)?,
-                )
-                .into();
+                        .map_err(CompletionError::HttpError)?;
 
-                Err(CompletionError::ProviderError(text))
+                    let response_text = String::from_utf8_lossy(&response_body).to_string();
+
+                    let response: Interaction =
+                        serde_json::from_slice(&response_body).map_err(|err| {
+                            tracing::error!(
+                                error = %err,
+                                body = %response_text,
+                                "Failed to deserialize Gemini interactions response"
+                            );
+                            CompletionError::JsonError(err)
+                        })?;
+
+                    let span = tracing::Span::current();
+                    span.record_response_metadata(&response);
+                    span.record_token_usage(&response);
+
+                    if enabled!(Level::TRACE) {
+                        tracing::trace!(
+                            target: "rig::completions",
+                            "Gemini interactions completion response: {}",
+                            serde_json::to_string_pretty(&response)?
+                        );
+                    }
+
+                    crate::completion::codec::response_events(
+                        &GeminiInteractionsCompletionCodec::new(String::new(), None),
+                        response,
+                    )
+                } else {
+                    let text = String::from_utf8_lossy(
+                        &response
+                            .into_body()
+                            .await
+                            .map_err(CompletionError::HttpError)?,
+                    )
+                    .into();
+
+                    Err(CompletionError::ProviderError(text))
+                }
             }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        InteractionsCompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        InteractionsCompletionModel::stream_events(self, request).await
     }
 }
 
@@ -465,10 +471,36 @@ fn build_interaction_stream_path(interaction_id: &str, last_event_id: Option<&st
     )
 }
 
-impl TryFrom<Interaction> for completion::CompletionResponse<Interaction> {
-    type Error = CompletionError;
+pub(crate) struct GeminiInteractionsCompletionCodec {
+    model: String,
+    stream_override: Option<bool>,
+}
 
-    fn try_from(response: Interaction) -> Result<Self, Self::Error> {
+impl GeminiInteractionsCompletionCodec {
+    pub(crate) fn new(model: impl Into<String>, stream_override: Option<bool>) -> Self {
+        Self {
+            model: model.into(),
+            stream_override,
+        }
+    }
+}
+
+impl crate::completion::CompletionCodec for GeminiInteractionsCompletionCodec {
+    type Request = CreateInteractionRequest;
+
+    fn encode_request(&self, request: CompletionRequest) -> Result<Self::Request, CompletionError> {
+        create_request_body(self.model.clone(), request, self.stream_override)
+    }
+}
+
+impl crate::completion::CompletionResponseCodec for GeminiInteractionsCompletionCodec {
+    type Response = Interaction;
+    type RawFinal = Interaction;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         if response.outputs.is_empty() {
             let status = response.status.as_ref().map(|status| format!("{status:?}"));
             let message = match status {
@@ -491,11 +523,11 @@ impl TryFrom<Interaction> for completion::CompletionResponse<Interaction> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
                 "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            ));
+        }
 
         let usage = response
             .usage
@@ -503,12 +535,7 @@ impl TryFrom<Interaction> for completion::CompletionResponse<Interaction> {
             .and_then(|usage| usage.token_usage())
             .unwrap_or_default();
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
 }
 
@@ -2499,8 +2526,8 @@ mod tests {
         assert!(format!("{err}").contains("call_id"));
     }
 
-    #[test]
-    fn test_response_function_call_mapping() {
+    #[tokio::test]
+    async fn test_response_function_call_mapping() {
         let interaction = Interaction {
             id: "interaction-1".to_string(),
             outputs: vec![Content::FunctionCall(FunctionCallContent {
@@ -2516,8 +2543,15 @@ mod tests {
             ..Default::default()
         };
 
-        let response: completion::CompletionResponse<Interaction> =
-            interaction.try_into().expect("conversion should succeed");
+        let response = crate::model_event::collect(
+            crate::completion::codec::response_events(
+                &GeminiInteractionsCompletionCodec::new(String::new(), None),
+                interaction,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
 
         let choice = response.choice.first();
         match choice {

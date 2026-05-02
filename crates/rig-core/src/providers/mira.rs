@@ -13,9 +13,9 @@ use crate::client::{
 };
 use crate::http_client::{self, HttpClientExt};
 use crate::message::{Document, DocumentSourceKind};
+use crate::model_event::ModelEventStream;
 use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
-use crate::streaming::StreamingCompletionResponse;
 use crate::{
     OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
@@ -212,7 +212,7 @@ impl ProviderClient for Client {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct MiraCompletionRequest {
+pub(crate) struct MiraCompletionRequest {
     model: String,
     pub messages: Vec<RawMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -222,10 +222,8 @@ pub(super) struct MiraCompletionRequest {
     pub stream: bool,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl MiraCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Mira");
         }
@@ -303,6 +301,27 @@ impl TryFrom<(&str, CompletionRequest)> for MiraCompletionRequest {
     }
 }
 
+pub(crate) struct MiraCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> MiraCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for MiraCompletionRequestCodec<'_> {
+    type Request = MiraCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        MiraCompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     client: Client<T>,
@@ -324,7 +343,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
 
     type Client = Client<T>;
 
@@ -332,115 +351,121 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "mira",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "mira",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
 
-        if !completion_request.tools.is_empty() {
-            tracing::warn!(target: "rig::completions",
-                "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
-                len = completion_request.tools.len()
-            );
-        }
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
-        }
-
-        if completion_request.additional_params.is_some() {
-            tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
-        }
-
-        let request = MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Mira completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/v1/chat/completions")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        let async_block = async move {
-            let response = self
-                .client
-                .send::<_, bytes::Bytes>(req)
-                .await
-                .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
-
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if !status.is_success() {
-                let status = status.as_u16();
-                let error_text = String::from_utf8_lossy(&response_body).to_string();
-                return Err(CompletionError::ProviderError(format!(
-                    "API error: {status} - {error_text}"
-                )));
-            }
-
-            let response: CompletionResponse = serde_json::from_slice(&response_body)?;
-
-            if tracing::enabled!(tracing::Level::TRACE) {
-                tracing::trace!(target: "rig::completions",
-                    "Mira completion response: {}",
-                    serde_json::to_string_pretty(&response)?
+            if !completion_request.tools.is_empty() {
+                tracing::warn!(target: "rig::completions",
+                    "Tool calls are not supported by Mira AI. {len} tools will be ignored.",
+                    len = completion_request.tools.len()
                 );
             }
 
-            if let CompletionResponse::Structured {
-                id, model, usage, ..
-            } = &response
-            {
-                let span = tracing::Span::current();
-                span.record("gen_ai.response.model", model);
-                span.record("gen_ai.response.id", id);
-                if let Some(usage) = usage {
-                    span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
-                    span.record(
-                        "gen_ai.usage.output_tokens",
-                        usage.total_tokens - usage.prompt_tokens,
-                    );
-                }
+            if completion_request.tool_choice.is_some() {
+                tracing::warn!("WARNING: `tool_choice` not supported on Mira AI");
             }
 
-            response.try_into()
-        };
+            if completion_request.additional_params.is_some() {
+                tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
+            }
 
-        async_block.instrument(span).await
+            let request = crate::completion::CompletionCodec::encode_request(
+                &MiraCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Mira completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/v1/chat/completions")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
+
+            let async_block = async move {
+                let response = self
+                    .client
+                    .send::<_, bytes::Bytes>(req)
+                    .await
+                    .map_err(|e| CompletionError::ProviderError(e.to_string()))?;
+
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if !status.is_success() {
+                    let status = status.as_u16();
+                    let error_text = String::from_utf8_lossy(&response_body).to_string();
+                    return Err(CompletionError::ProviderError(format!(
+                        "API error: {status} - {error_text}"
+                    )));
+                }
+
+                let response: CompletionResponse = serde_json::from_slice(&response_body)?;
+
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(target: "rig::completions",
+                        "Mira completion response: {}",
+                        serde_json::to_string_pretty(&response)?
+                    );
+                }
+
+                if let CompletionResponse::Structured {
+                    id, model, usage, ..
+                } = &response
+                {
+                    let span = tracing::Span::current();
+                    span.record("gen_ai.response.model", model);
+                    span.record("gen_ai.response.id", id);
+                    if let Some(usage) = usage {
+                        span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+                        span.record(
+                            "gen_ai.usage.output_tokens",
+                            usage.total_tokens - usage.prompt_tokens,
+                        );
+                    }
+                }
+
+                crate::completion::codec::response_events(&MiraCompletionCodec, response)
+            };
+
+            async_block.instrument(span).await
+        }
+        .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -475,8 +500,10 @@ where
         if completion_request.additional_params.is_some() {
             tracing::warn!("WARNING: Additional parameters not supported on Mira AI");
         }
-        let mut request =
-            MiraCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &MiraCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
         request.stream = true;
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -506,10 +533,16 @@ impl From<ApiErrorResponse> for CompletionError {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+pub(crate) struct MiraCompletionCodec;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+impl crate::completion::CompletionResponseCodec for MiraCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let (content, usage) = match &response {
             CompletionResponse::Structured { choices, usage, .. } => {
                 let choice = choices.first().ok_or_else(|| {
@@ -527,7 +560,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                     })
                     .unwrap_or_default();
 
-                // Convert RawMessage to message::Message
                 let message = message::Message::try_from(choice.message.clone())?;
 
                 let content = match message {
@@ -538,7 +570,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                             ));
                         }
 
-                        // Log warning for unsupported content types
                         for c in content.iter() {
                             if !matches!(c, AssistantContent::Text(_)) {
                                 tracing::warn!(target: "rig",
@@ -548,25 +579,27 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         }
 
                         content.iter().map(|c| {
-                            match c {
-                                AssistantContent::Text(text) => Ok(completion::AssistantContent::text(&text.text)),
-                                other => Err(CompletionError::ResponseError(
-                                    format!("Unsupported content type: {other:?}. The Mira provider currently only supports text content")
-                                ))
-                            }
-                        }).collect::<Result<Vec<_>, _>>()?
+                        match c {
+                            AssistantContent::Text(text) => Ok(completion::AssistantContent::text(&text.text)),
+                            other => Err(CompletionError::ResponseError(
+                                format!("Unsupported content type: {other:?}. The Mira provider currently only supports text content")
+                            ))
+                        }
+                    }).collect::<Result<Vec<_>, _>>()?
                     }
                     Message::User { .. } => {
                         tracing::warn!(target: "rig", "Received user message in response where assistant message was expected");
                         return Err(CompletionError::ResponseError(
-                            "Received user message in response where assistant message was expected".to_owned()
-                        ));
+                        "Received user message in response where assistant message was expected"
+                            .to_owned(),
+                    ));
                     }
                     Message::System { .. } => {
                         tracing::warn!(target: "rig", "Received system message in response where assistant message was expected");
                         return Err(CompletionError::ResponseError(
-                            "Received system message in response where assistant message was expected".to_owned(),
-                        ));
+                        "Received system message in response where assistant message was expected"
+                            .to_owned(),
+                    ));
                     }
                 };
 
@@ -578,18 +611,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             ),
         };
 
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
+        if content.is_empty() {
+            return Err(CompletionError::ResponseError(
                 "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
+            ));
+        }
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
 }
 
@@ -788,8 +816,8 @@ mod tests {
         assert_eq!(original_message, converted_message);
     }
 
-    #[test]
-    fn test_completion_response_conversion() {
+    #[tokio::test]
+    async fn test_completion_response_conversion() {
         let mira_response = CompletionResponse::Structured {
             id: "resp_123".to_string(),
             object: "chat.completion".to_string(),
@@ -809,8 +837,13 @@ mod tests {
             }),
         };
 
-        let completion_response: completion::CompletionResponse<CompletionResponse> =
-            mira_response.try_into().unwrap();
+        let completion_response =
+            crate::model_event::collect(
+                crate::completion::codec::response_events(&MiraCompletionCodec, mira_response)
+                    .unwrap(),
+            )
+                .await
+                .unwrap();
 
         assert_eq!(
             completion_response.choice.first(),

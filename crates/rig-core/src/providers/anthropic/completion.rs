@@ -1,7 +1,7 @@
 //! Anthropic completion api implementation
 
 use crate::completion::CompletionRequest;
-use crate::providers::anthropic::streaming::StreamingCompletionResponse;
+use crate::providers::anthropic::streaming::StreamingResponse;
 use crate::{
     OneOrMany,
     client::Provider,
@@ -207,31 +207,82 @@ pub enum SystemContent {
     },
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+#[derive(Debug, Clone)]
+struct AnthropicCompletionCodec {
+    model: String,
+    default_max_tokens: Option<u64>,
+    prompt_caching: bool,
+    automatic_caching: bool,
+    automatic_caching_ttl: Option<CacheTtl>,
+}
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        let content = response
+impl AnthropicCompletionCodec {
+    fn new<Ext, T>(model: &GenericCompletionModel<Ext, T>) -> Self
+    where
+        Ext: AnthropicCompatibleProvider,
+    {
+        Self {
+            model: model.model.clone(),
+            default_max_tokens: model.default_max_tokens,
+            prompt_caching: model.prompt_caching,
+            automatic_caching: model.automatic_caching,
+            automatic_caching_ttl: model.automatic_caching_ttl.clone(),
+        }
+    }
+}
+
+impl crate::completion::CompletionCodec for AnthropicCompletionCodec {
+    type Request = AnthropicCompletionRequest;
+
+    fn encode_request(
+        &self,
+        mut request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        let request_model = request.model.clone().unwrap_or_else(|| self.model.clone());
+
+        if request.max_tokens.is_none() {
+            if let Some(tokens) = self.default_max_tokens {
+                request.max_tokens = Some(tokens);
+            } else {
+                return Err(CompletionError::RequestError(
+                    "`max_tokens` must be set for Anthropic".into(),
+                ));
+            }
+        }
+
+        AnthropicCompletionRequest::from_params(AnthropicRequestParams {
+            model: &request_model,
+            request,
+            prompt_caching: self.prompt_caching,
+            automatic_caching: self.automatic_caching,
+            automatic_caching_ttl: self.automatic_caching_ttl.clone(),
+        })
+    }
+}
+
+impl crate::completion::CompletionResponseCodec for AnthropicCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let mut content = response
             .content
             .iter()
             .map(|content| content.clone().try_into())
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = if content.is_empty() {
-            // Anthropic documents empty `end_turn` responses after tool-result round trips.
-            // The generic completion response still requires at least one assistant item, so
-            // normalize that terminal no-op into the same empty-text sentinel used by streaming.
+        if content.is_empty() {
             if response.stop_reason.as_deref() == Some("end_turn") {
-                OneOrMany::one(completion::AssistantContent::text(""))
+                content.push(completion::AssistantContent::text(""));
             } else {
                 return Err(CompletionError::ResponseError(
                     EMPTY_RESPONSE_ERROR.to_owned(),
                 ));
             }
-        } else {
-            OneOrMany::many(content)
-                .map_err(|_| CompletionError::ResponseError(EMPTY_RESPONSE_ERROR.to_owned()))?
-        };
+        }
 
         let usage = completion::Usage {
             input_tokens: response.usage.input_tokens,
@@ -244,13 +295,21 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             cache_creation_input_tokens: response.usage.cache_creation_input_tokens.unwrap_or(0),
         };
 
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id: None,
-        })
+        crate::completion::codec::turn_from_parts(response, content, usage, None)
     }
+}
+
+fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    let codec = AnthropicCompletionCodec {
+        model: String::new(),
+        default_max_tokens: None,
+        prompt_caching: false,
+        automatic_caching: false,
+        automatic_caching_ttl: None,
+    };
+    crate::completion::codec::response_events(&codec, response)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -1226,21 +1285,16 @@ pub(super) fn split_system_messages_from_history(
     (system, remaining)
 }
 
-/// Parameters for building an AnthropicCompletionRequest
-pub struct AnthropicRequestParams<'a> {
-    pub model: &'a str,
-    pub request: CompletionRequest,
-    pub prompt_caching: bool,
-    /// Add a top-level `cache_control` field for Anthropic's automatic caching mode.
-    pub automatic_caching: bool,
-    /// TTL for the top-level cache_control. `None` omits the `ttl` field (API default is 5 min).
-    pub automatic_caching_ttl: Option<CacheTtl>,
+struct AnthropicRequestParams<'a> {
+    model: &'a str,
+    request: CompletionRequest,
+    prompt_caching: bool,
+    automatic_caching: bool,
+    automatic_caching_ttl: Option<CacheTtl>,
 }
 
-impl TryFrom<AnthropicRequestParams<'_>> for AnthropicCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from(params: AnthropicRequestParams<'_>) -> Result<Self, Self::Error> {
+impl AnthropicCompletionRequest {
+    fn from_params(params: AnthropicRequestParams<'_>) -> Result<Self, CompletionError> {
         let AnthropicRequestParams {
             model,
             request: mut req,
@@ -1367,131 +1421,118 @@ where
     Ext: AnthropicCompatibleProvider + Clone + WasmCompatSend + WasmCompatSync + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
     type Client = crate::client::Client<Ext, T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
-        mut completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let request_model = completion_request
-            .model
-            .clone()
-            .unwrap_or_else(|| self.model.clone());
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = Ext::PROVIDER_NAME,
-                gen_ai.request.model = &request_model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_creation.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        // Check if max_tokens is set, required for Anthropic
-        if completion_request.max_tokens.is_none() {
-            if let Some(tokens) = self.default_max_tokens {
-                completion_request.max_tokens = Some(tokens);
-            } else {
-                return Err(CompletionError::RequestError(
-                    "`max_tokens` must be set for Anthropic".into(),
-                ));
-            }
-        }
-
-        let request = AnthropicCompletionRequest::try_from(AnthropicRequestParams {
-            model: &request_model,
-            request: completion_request,
-            prompt_caching: self.prompt_caching,
-            automatic_caching: self.automatic_caching,
-            automatic_caching_ttl: self.automatic_caching_ttl.clone(),
-        })?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "Anthropic completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        async move {
-            let request: Vec<u8> = serde_json::to_vec(&request)?;
-
-            let req = self
-                .client
-                .post("/v1/messages")?
-                .body(request)
-                .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-            let response = self
-                .client
-                .send::<_, Bytes>(req)
-                .await
-                .map_err(CompletionError::HttpError)?;
-
-            if response.status().is_success() {
-                match serde_json::from_slice::<ApiResponse<CompletionResponse>>(
-                    response
-                        .into_body()
-                        .await
-                        .map_err(CompletionError::HttpError)?
-                        .to_vec()
-                        .as_slice(),
-                )? {
-                    ApiResponse::Message(completion) => {
-                        let span = tracing::Span::current();
-                        span.record_response_metadata(&completion);
-                        span.record_token_usage(&completion.usage);
-                        if enabled!(Level::TRACE) {
-                            tracing::trace!(
-                                target: "rig::completions",
-                                "Anthropic completion response: {}",
-                                serde_json::to_string_pretty(&completion)?
-                            );
-                        }
-                        completion.try_into()
-                    }
-                    ApiResponse::Error(ApiErrorResponse { message }) => {
-                        Err(CompletionError::ResponseError(message))
-                    }
-                }
-            } else {
-                let text: String = String::from_utf8_lossy(
-                    &response
-                        .into_body()
-                        .await
-                        .map_err(CompletionError::HttpError)?,
+        completion_request: completion::CompletionRequest,
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let request_model = completion_request
+                .model
+                .clone()
+                .unwrap_or_else(|| self.model.clone());
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = Ext::PROVIDER_NAME,
+                    gen_ai.request.model = &request_model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_creation.input_tokens = tracing::field::Empty,
                 )
-                .into();
-                Err(CompletionError::ProviderError(text))
+            } else {
+                tracing::Span::current()
+            };
+
+            let request = crate::completion::CompletionCodec::encode_request(
+                &AnthropicCompletionCodec::new(self),
+                completion_request,
+            )?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "Anthropic completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            async move {
+                let request: Vec<u8> = serde_json::to_vec(&request)?;
+
+                let req = self
+                    .client
+                    .post("/v1/messages")?
+                    .body(request)
+                    .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+                let response = self
+                    .client
+                    .send::<_, Bytes>(req)
+                    .await
+                    .map_err(CompletionError::HttpError)?;
+
+                if response.status().is_success() {
+                    match serde_json::from_slice::<ApiResponse<CompletionResponse>>(
+                        response
+                            .into_body()
+                            .await
+                            .map_err(CompletionError::HttpError)?
+                            .to_vec()
+                            .as_slice(),
+                    )? {
+                        ApiResponse::Message(completion) => {
+                            let span = tracing::Span::current();
+                            span.record_response_metadata(&completion);
+                            span.record_token_usage(&completion.usage);
+                            if enabled!(Level::TRACE) {
+                                tracing::trace!(
+                                    target: "rig::completions",
+                                    "Anthropic completion response: {}",
+                                    serde_json::to_string_pretty(&completion)?
+                                );
+                            }
+                            completion_response_events(completion)
+                        }
+                        ApiResponse::Error(ApiErrorResponse { message }) => {
+                            Err(CompletionError::ResponseError(message))
+                        }
+                    }
+                } else {
+                    let text: String = String::from_utf8_lossy(
+                        &response
+                            .into_body()
+                            .await
+                            .map_err(CompletionError::HttpError)?,
+                    )
+                    .into();
+                    Err(CompletionError::ProviderError(text))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        GenericCompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        GenericCompletionModel::stream_events(self, request).await
     }
 }
 
@@ -1528,6 +1569,35 @@ mod tests {
     fn unknown_model_uses_conservative_default_max_tokens_fallback() {
         assert_eq!(default_max_tokens_for_model("claude-unknown"), None);
         assert_eq!(default_max_tokens_with_fallback("claude-unknown"), 2_048);
+    }
+
+    #[test]
+    fn anthropic_codec_applies_default_max_tokens_when_encoding_request() {
+        let codec = AnthropicCompletionCodec {
+            model: CLAUDE_SONNET_4_6.to_string(),
+            default_max_tokens: Some(64_000),
+            prompt_caching: false,
+            automatic_caching: false,
+            automatic_caching_ttl: None,
+        };
+        let request = CompletionRequest {
+            model: None,
+            preamble: Some("You are helpful.".to_string()),
+            chat_history: OneOrMany::one(completion::Message::user("hello")),
+            documents: Vec::new(),
+            tools: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        };
+
+        let encoded = crate::completion::CompletionCodec::encode_request(&codec, request)
+            .expect("request should encode");
+
+        assert_eq!(encoded.model, CLAUDE_SONNET_4_6);
+        assert_eq!(encoded.max_tokens, 64_000);
     }
 
     #[test]
@@ -2327,8 +2397,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn empty_end_turn_response_normalizes_to_empty_text_choice() {
+    #[tokio::test]
+    async fn empty_end_turn_response_normalizes_to_empty_text_choice() {
         let response = CompletionResponse {
             content: vec![],
             id: "msg_123".to_string(),
@@ -2344,9 +2414,11 @@ mod tests {
             },
         };
 
-        let parsed: completion::CompletionResponse<CompletionResponse> = response
-            .try_into()
-            .expect("empty end_turn should not error");
+        let parsed = crate::model_event::collect(
+            completion_response_events(response).expect("empty end_turn should not error"),
+        )
+        .await
+        .expect("events should collect");
 
         assert_eq!(parsed.choice.len(), 1);
         assert!(matches!(
@@ -2372,8 +2444,10 @@ mod tests {
             },
         };
 
-        let err = completion::CompletionResponse::<CompletionResponse>::try_from(response)
-            .expect_err("empty non-end_turn should remain an error");
+        let err = match completion_response_events(response) {
+            Ok(_) => panic!("empty non-end_turn should remain an error"),
+            Err(err) => err,
+        };
 
         assert!(matches!(
             err,

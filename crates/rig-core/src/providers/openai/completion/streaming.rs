@@ -3,15 +3,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{Level, enabled, info_span};
 
-use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
+use crate::completion::{CompletionCodec, CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::json_utils::{self, merge};
 use crate::providers::internal::openai_chat_completions_compatible::{
     self, CompatibleChoiceData, CompatibleChunk, CompatibleFinishReason, CompatibleStreamProfile,
     CompatibleToolCallChunk,
 };
-use crate::providers::openai::completion::{GenericCompletionModel, OpenAIRequestParams, Usage};
-use crate::streaming;
+use crate::providers::openai::completion::{GenericCompletionModel, Usage};
 
 // ================================================================
 // OpenAI Completion Streaming API
@@ -76,11 +75,11 @@ struct StreamingCompletionChunk {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Usage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -91,17 +90,11 @@ where
     crate::client::Client<Ext, H>: HttpClientExt + Clone + 'static,
     Ext: crate::client::Provider + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
-        let request = super::CompletionRequest::try_from(OpenAIRequestParams {
-            model: self.model.clone(),
-            request: completion_request,
-            strict_tools: self.strict_tools,
-            tool_result_array_content: self.tool_result_array_content,
-        })?;
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
+        let request = self.completion_codec().encode_request(completion_request)?;
         let request_messages = serde_json::to_string(&request.messages)?;
         let mut request_as_json = serde_json::to_value(request)?;
 
@@ -157,7 +150,7 @@ struct OpenAICompatibleProfile;
 impl CompatibleStreamProfile for OpenAICompatibleProfile {
     type Usage = Usage;
     type Detail = ();
-    type FinalResponse = StreamingCompletionResponse;
+    type FinalResponse = StreamingResponse;
 
     fn normalize_chunk(
         &self,
@@ -195,7 +188,7 @@ impl CompatibleStreamProfile for OpenAICompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        StreamingCompletionResponse { usage }
+        StreamingResponse { usage }
     }
 
     fn uses_distinct_tool_call_eviction(&self) -> bool {
@@ -206,7 +199,7 @@ impl CompatibleStreamProfile for OpenAICompatibleProfile {
 pub async fn send_compatible_streaming_request<T>(
     http_client: T,
     req: Request<Vec<u8>>,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {
@@ -221,6 +214,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::{
         assert_zero_arg_tool_call_is_emitted, sse_bytes_from_data_lines,
     };
@@ -425,8 +419,8 @@ mod tests {
 
         let mut final_usage = None;
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::Final(res) = chunk.unwrap() {
-                final_usage = Some(res.usage);
+            if let ModelEvent::RawResponse { response } = chunk {
+                final_usage = Some(response.usage);
                 break;
             }
         }
@@ -462,8 +456,8 @@ mod tests {
 
         let mut final_response = None;
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::Final(res) = chunk.unwrap() {
-                final_response = Some(res);
+            if let ModelEvent::RawResponse { response } = chunk {
+                final_response = Some(response);
                 break;
             }
         }
@@ -524,11 +518,7 @@ mod tests {
 
         let mut collected_tool_calls = Vec::new();
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::ToolCall {
-                tool_call,
-                internal_call_id: _,
-            } = chunk.unwrap()
-            {
+            if let ModelEvent::ToolCallDone { tool_call, .. } = chunk {
                 collected_tool_calls.push(tool_call);
             }
         }
@@ -588,11 +578,7 @@ mod tests {
 
         let mut collected_tool_calls = Vec::new();
         while let Some(chunk) = stream.next().await {
-            if let streaming::StreamedAssistantContent::ToolCall {
-                tool_call,
-                internal_call_id: _,
-            } = chunk.unwrap()
-            {
+            if let ModelEvent::ToolCallDone { tool_call, .. } = chunk {
                 collected_tool_calls.push(tool_call);
             }
         }

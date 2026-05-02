@@ -16,13 +16,13 @@ use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
 use crate::http_client::HttpClientExt;
 use crate::http_client::Request;
 use crate::http_client::sse::{Event, GenericEventSource};
-use crate::streaming;
+use crate::model_event::ModelEvent;
 use crate::telemetry::SpanCombinator;
 use serde_json::{Map, Value};
 
 /// Final metadata yielded by an Interactions streaming response.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Option<InteractionUsage>,
     pub interaction: Option<Interaction>,
 }
@@ -35,7 +35,7 @@ pub type InteractionEventStream =
 pub type InteractionEventStream =
     Pin<Box<dyn Stream<Item = Result<InteractionSseEvent, CompletionError>>>>;
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.as_ref().and_then(|usage| usage.token_usage())
     }
@@ -45,11 +45,10 @@ impl<T> InteractionsCompletionModel<T>
 where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -158,16 +157,19 @@ where
 
             event_source.close();
 
-            yield Ok(streaming::RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
+            let response = StreamingResponse {
                 usage: final_usage.or_else(|| final_interaction.as_ref().and_then(|i| i.usage.clone())),
                 interaction: final_interaction,
-            }));
+            };
+            if let Some(usage) = response.token_usage() {
+                yield Ok(ModelEvent::Usage { usage });
+            }
+            yield Ok(ModelEvent::RawResponse { response });
+            yield Ok(ModelEvent::Done);
         }
         .instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-            stream,
-        )))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 
@@ -215,15 +217,13 @@ where
     Box::pin(stream)
 }
 
-fn content_start_to_choice(
-    content: Content,
-) -> Option<streaming::RawStreamingChoice<StreamingCompletionResponse>> {
+fn content_start_to_choice(content: Content) -> Option<ModelEvent<StreamingResponse>> {
     match content {
         Content::Text(TextContent { text, .. }) => {
             if text.is_empty() {
                 None
             } else {
-                Some(streaming::RawStreamingChoice::Message(text))
+                Some(ModelEvent::TextDelta { text })
             }
         }
         Content::FunctionCall(FunctionCallContent {
@@ -233,8 +233,8 @@ fn content_start_to_choice(
         }) => {
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
-            Some(streaming::RawStreamingChoice::ToolCall(
-                streaming::RawStreamingToolCall::new(
+            Some(ModelEvent::from(
+                crate::providers::internal::tool_call::ProviderToolCall::new(
                     name.clone(),
                     name,
                     arguments.unwrap_or(Value::Object(Map::new())),
@@ -246,13 +246,11 @@ fn content_start_to_choice(
     }
 }
 
-fn content_delta_to_choice(
-    delta: ContentDelta,
-) -> Option<streaming::RawStreamingChoice<StreamingCompletionResponse>> {
+fn content_delta_to_choice(delta: ContentDelta) -> Option<ModelEvent<StreamingResponse>> {
     match delta {
         ContentDelta::Text(TextDelta {
             text: Some(text), ..
-        }) => Some(streaming::RawStreamingChoice::Message(text)),
+        }) => Some(ModelEvent::TextDelta { text }),
         ContentDelta::FunctionCall(FunctionCallDelta {
             name,
             arguments,
@@ -260,8 +258,8 @@ fn content_delta_to_choice(
         }) => {
             let name = name?;
             let call_id = id.unwrap_or_else(|| name.clone());
-            Some(streaming::RawStreamingChoice::ToolCall(
-                streaming::RawStreamingToolCall::new(
+            Some(ModelEvent::from(
+                crate::providers::internal::tool_call::ProviderToolCall::new(
                     name.clone(),
                     name,
                     arguments.unwrap_or(Value::Object(Map::new())),
@@ -274,10 +272,7 @@ fn content_delta_to_choice(
                 ThoughtSummaryContent::Text(text) => text.text,
                 _ => return None,
             };
-            Some(streaming::RawStreamingChoice::ReasoningDelta {
-                id: None,
-                reasoning: text,
-            })
+            Some(ModelEvent::ReasoningDelta { id: None, text })
         }
         _ => None,
     }
@@ -306,7 +301,7 @@ mod tests {
 
         let choice = content_delta_to_choice(delta).expect("choice should exist");
         match choice {
-            crate::streaming::RawStreamingChoice::Message(text) => {
+            ModelEvent::TextDelta { text } => {
                 assert_eq!(text, "Hello");
             }
             other => panic!("unexpected choice: {other:?}"),
@@ -333,9 +328,9 @@ mod tests {
 
         let choice = content_delta_to_choice(delta).expect("choice should exist");
         match choice {
-            crate::streaming::RawStreamingChoice::ToolCall(call) => {
-                assert_eq!(call.name, "get_weather");
-                assert_eq!(call.call_id.as_deref(), Some("call-1"));
+            ModelEvent::ToolCallDone { tool_call, .. } => {
+                assert_eq!(tool_call.function.name, "get_weather");
+                assert_eq!(tool_call.call_id.as_deref(), Some("call-1"));
             }
             other => panic!("unexpected choice: {other:?}"),
         }

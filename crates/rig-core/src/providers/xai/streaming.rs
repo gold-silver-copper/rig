@@ -11,23 +11,23 @@ use crate::http_client::HttpClientExt;
 use crate::http_client::sse::GenericEventSource;
 use crate::json_utils;
 use crate::providers::openai::responses_api::streaming::{
-    ResponsesStreamOptions, StreamingCompletionResponse, stream_from_event_source_with_options,
+    ResponsesStreamOptions, StreamingResponse, stream_from_event_source_with_options,
 };
-use crate::providers::xai::completion::{CompletionModel, XAICompletionRequest};
-use crate::streaming;
+use crate::providers::xai::completion::{CompletionModel, XAICompletionRequestCodec};
 
 impl<T> CompletionModel<T>
 where
     T: HttpClientExt + Clone + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
-        let mut request =
-            XAICompletionRequest::try_from((self.model.as_str(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &XAICompletionRequestCodec::new(self.model.as_str()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),
@@ -78,7 +78,7 @@ where
 pub(crate) async fn send_xai_streaming_request<T>(
     http_client: T,
     req: http::Request<Vec<u8>>,
-) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {
@@ -97,10 +97,10 @@ where
 mod tests {
     use super::send_xai_streaming_request;
     use crate::message::ReasoningContent;
+    use crate::model_event::ModelEvent;
     use crate::providers::internal::openai_chat_completions_compatible::test_support::sse_bytes_from_json_events;
     use crate::providers::openai::responses_api::ReasoningSummary;
     use crate::providers::openai::responses_api::streaming::reasoning_choices_from_done_item;
-    use crate::streaming::{RawStreamingChoice, StreamedAssistantContent};
 
     #[test]
     fn reasoning_done_item_emits_summary_then_encrypted() {
@@ -112,29 +112,36 @@ mod tests {
                 text: "s2".to_string(),
             },
         ];
-        let choices = reasoning_choices_from_done_item("xr_1", &summary, Some("enc"));
+        let choices: Vec<ModelEvent<()>> =
+            reasoning_choices_from_done_item("xr_1", &summary, Some("enc"));
 
         assert_eq!(choices.len(), 3);
         assert!(matches!(
             choices.first(),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Summary(text),
-            }) if id == "xr_1" && text == "s1"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("xr_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Summary(text)) if text == "s1"
+                    )
         ));
         assert!(matches!(
             choices.get(1),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Summary(text),
-            }) if id == "xr_1" && text == "s2"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("xr_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Summary(text)) if text == "s2"
+                    )
         ));
         assert!(matches!(
             choices.get(2),
-            Some(RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: ReasoningContent::Encrypted(data),
-            }) if id == "xr_1" && data == "enc"
+            Some(ModelEvent::ReasoningDone { reasoning })
+                if reasoning.id.as_deref() == Some("xr_1")
+                    && matches!(
+                        reasoning.content.first(),
+                        Some(ReasoningContent::Encrypted(data)) if data == "enc"
+                    )
         ));
     }
 
@@ -193,13 +200,8 @@ mod tests {
             .await
             .expect("stream should start");
 
-        match stream
-            .next()
-            .await
-            .expect("stream should yield an item")
-            .expect("first stream item should be ok")
-        {
-            StreamedAssistantContent::ToolCall { tool_call, .. } => {
+        match stream.next().await.expect("stream should yield an item") {
+            ModelEvent::ToolCallDone { tool_call, .. } => {
                 assert_eq!(tool_call.id, "fc_123");
                 assert_eq!(tool_call.call_id.as_deref(), Some("call_123"));
                 assert_eq!(tool_call.function.name, "example_tool");
@@ -211,8 +213,10 @@ mod tests {
         let err = stream
             .next()
             .await
-            .expect("stream should yield terminal error")
-            .expect_err("stream should surface a provider error");
+            .expect("stream should yield terminal error");
+        let ModelEvent::Error { error: err } = err else {
+            panic!("stream should surface a provider error");
+        };
         assert_eq!(
             err.to_string(),
             "ProviderError: server_error: response stream failed"

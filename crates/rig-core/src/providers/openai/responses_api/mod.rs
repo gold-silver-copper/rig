@@ -15,8 +15,8 @@
 //! ```
 use super::InputAudio;
 use super::completion::ToolChoice;
-use super::responses_api::streaming::StreamingCompletionResponse;
-use crate::completion::{CompletionError, GetTokenUsage};
+use super::responses_api::streaming::StreamingResponse;
+use crate::completion::{CompletionCodec, CompletionError, GetTokenUsage};
 use crate::http_client;
 use crate::http_client::HttpClientExt;
 use crate::json_utils;
@@ -36,6 +36,7 @@ use std::convert::Infallible;
 use std::ops::Add;
 use std::str::FromStr;
 
+pub(crate) mod codec;
 pub mod streaming;
 #[cfg(all(not(target_family = "wasm"), feature = "websocket"))]
 pub mod websocket;
@@ -784,12 +785,11 @@ pub enum ResponseStatus {
     Incomplete,
 }
 
-/// Attempt to try and create a `NewCompletionRequest` from a model name and [`crate::completion::CompletionRequest`]
-impl TryFrom<(String, crate::completion::CompletionRequest)> for CompletionRequest {
-    type Error = CompletionError;
-    fn try_from(
-        (model, mut req): (String, crate::completion::CompletionRequest),
-    ) -> Result<Self, Self::Error> {
+impl CompletionRequest {
+    pub(crate) fn from_model(
+        model: String,
+        mut req: crate::completion::CompletionRequest,
+    ) -> Result<Self, CompletionError> {
         let model = req.model.clone().unwrap_or(model);
         let input = {
             let mut partial_history = vec![];
@@ -976,10 +976,7 @@ where
         &self,
         completion_request: crate::completion::CompletionRequest,
     ) -> Result<CompletionRequest, CompletionError> {
-        let mut req = CompletionRequest::try_from((self.model.clone(), completion_request))?;
-        req.tools.extend(self.tools.clone());
-
-        Ok(req)
+        self.completion_codec().encode_request(completion_request)
     }
 }
 
@@ -1344,7 +1341,7 @@ where
     H: Clone + Default + std::fmt::Debug + WasmCompatSend + WasmCompatSync + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = crate::client::Client<Ext, H>;
 
@@ -1352,147 +1349,100 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: crate::completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<Self::Response>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = tracing::field::Empty,
-                gen_ai.request.model = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-                gen_ai.input.messages = tracing::field::Empty,
-                gen_ai.output.messages = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.provider.name", "openai");
-        span.record("gen_ai.request.model", &self.model);
-        let request = self.create_completion_request(completion_request)?;
-        let body = serde_json::to_vec(&request)?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(
-                target: "rig::completions",
-                "OpenAI Responses completion request: {request}",
-                request = serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let req = self
-            .client
-            .post("/responses")?
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        async move {
-            let response = self.client.send(req).await?;
-
-            if response.status().is_success() {
-                let t = http_client::text(response).await?;
-                let response = serde_json::from_str::<Self::Response>(&t)?;
-                let span = tracing::Span::current();
-                span.record("gen_ai.response.id", &response.id);
-                span.record("gen_ai.response.model", &response.model);
-                if let Some(ref usage) = response.usage {
-                    span.record("gen_ai.usage.output_tokens", usage.output_tokens);
-                    span.record("gen_ai.usage.input_tokens", usage.input_tokens);
-                    let cached_tokens = usage
-                        .input_tokens_details
-                        .as_ref()
-                        .map(|d| d.cached_tokens)
-                        .unwrap_or(0);
-                    span.record("gen_ai.usage.cache_read.input_tokens", cached_tokens);
-                }
-                if enabled!(Level::TRACE) {
-                    tracing::trace!(
-                        target: "rig::completions",
-                        "OpenAI Responses completion response: {response}",
-                        response = serde_json::to_string_pretty(&response)?
-                    );
-                }
-                response.try_into()
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = tracing::field::Empty,
+                    gen_ai.request.model = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                    gen_ai.input.messages = tracing::field::Empty,
+                    gen_ai.output.messages = tracing::field::Empty,
+                )
             } else {
-                let text = http_client::text(response).await?;
-                Err(CompletionError::ProviderError(text))
+                tracing::Span::current()
+            };
+
+            span.record("gen_ai.provider.name", "openai");
+            span.record("gen_ai.request.model", &self.model);
+            let request = self.create_completion_request(completion_request)?;
+            let body = serde_json::to_vec(&request)?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(
+                    target: "rig::completions",
+                    "OpenAI Responses completion request: {request}",
+                    request = serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let req = self
+                .client
+                .post("/responses")?
+                .body(body)
+                .map_err(|e| CompletionError::HttpError(e.into()))?;
+
+            async move {
+                let response = self.client.send(req).await?;
+
+                if response.status().is_success() {
+                    let t = http_client::text(response).await?;
+                    let response = serde_json::from_str::<Self::Response>(&t)?;
+                    let span = tracing::Span::current();
+                    span.record("gen_ai.response.id", &response.id);
+                    span.record("gen_ai.response.model", &response.model);
+                    if let Some(ref usage) = response.usage {
+                        span.record("gen_ai.usage.output_tokens", usage.output_tokens);
+                        span.record("gen_ai.usage.input_tokens", usage.input_tokens);
+                        let cached_tokens = usage
+                            .input_tokens_details
+                            .as_ref()
+                            .map(|d| d.cached_tokens)
+                            .unwrap_or(0);
+                        span.record("gen_ai.usage.cache_read.input_tokens", cached_tokens);
+                    }
+                    if enabled!(Level::TRACE) {
+                        tracing::trace!(
+                            target: "rig::completions",
+                            "OpenAI Responses completion response: {response}",
+                            response = serde_json::to_string_pretty(&response)?
+                        );
+                    }
+                    completion_response_events(response)
+                } else {
+                    let text = http_client::text(response).await?;
+                    Err(CompletionError::ProviderError(text))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: crate::completion::CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
-        GenericResponsesCompletionModel::stream(self, request).await
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
+        GenericResponsesCompletionModel::stream_events(self, request).await
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
-
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-        if response.output.is_empty() {
-            return Err(CompletionError::ResponseError(
-                "Response contained no parts".to_owned(),
-            ));
-        }
-
-        // Extract the msg_ ID from the first Output::Message item
-        let message_id = response.output.iter().find_map(|item| match item {
-            Output::Message(msg) => Some(msg.id.clone()),
-            _ => None,
-        });
-
-        let content: Vec<completion::AssistantContent> = response
-            .output
-            .iter()
-            .cloned()
-            .flat_map(<Vec<completion::AssistantContent>>::from)
-            .collect();
-
-        let choice = OneOrMany::many(content).map_err(|_| {
-            CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            )
-        })?;
-
-        let usage = response
-            .usage
-            .as_ref()
-            .map(|usage| completion::Usage {
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                total_tokens: usage.total_tokens,
-                cached_input_tokens: usage
-                    .input_tokens_details
-                    .as_ref()
-                    .map(|d| d.cached_tokens)
-                    .unwrap_or(0),
-                cache_creation_input_tokens: 0,
-            })
-            .unwrap_or_default();
-
-        Ok(completion::CompletionResponse {
-            choice,
-            usage,
-            raw_response: response,
-            message_id,
-        })
-    }
+pub(crate) fn completion_response_events(
+    response: CompletionResponse,
+) -> Result<crate::model_event::ModelEventStream<CompletionResponse>, CompletionError> {
+    codec::ResponsesCompletionCodec::response_to_turn(response)?.into_events()
 }
 
 /// An OpenAI Responses API message.

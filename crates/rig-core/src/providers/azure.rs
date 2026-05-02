@@ -29,7 +29,7 @@ use crate::client::{
 use crate::completion::GetTokenUsage;
 use crate::http_client::multipart::Part;
 use crate::http_client::{self, HttpClientExt, MultipartForm, bearer_auth_header};
-use crate::streaming::StreamingCompletionResponse;
+use crate::model_event::ModelEventStream;
 use crate::transcription::TranscriptionError;
 use crate::{
     completion::{self, CompletionError, CompletionRequest},
@@ -569,7 +569,7 @@ pub const GPT_35_TURBO_INSTRUCT: &str = "gpt-3.5-turbo-instruct";
 pub const GPT_35_TURBO_16K: &str = "gpt-3.5-turbo-16k";
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct AzureOpenAICompletionRequest {
+pub(crate) struct AzureOpenAICompletionRequest {
     model: String,
     pub messages: Vec<openai::Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -582,10 +582,8 @@ pub(super) struct AzureOpenAICompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl AzureOpenAICompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         //FIXME: Must fix!
         if req.tool_choice.is_some() {
@@ -665,6 +663,27 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
     }
 }
 
+pub(crate) struct AzureOpenAICompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> AzureOpenAICompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for AzureOpenAICompletionRequestCodec<'_> {
+    type Request = AzureOpenAICompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        AzureOpenAICompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     client: Client<T>,
@@ -686,94 +705,101 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = openai::CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
     type Client = Client<T>;
 
     fn make(client: &Self::Client, model: impl Into<String>) -> Self {
         Self::new(client.clone(), model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<openai::CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "azure.openai",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = &completion_request.preamble,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        let request =
-            AzureOpenAICompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Azure OpenAI completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post_chat_completion(&self.model)?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
-                    &response_body,
-                )? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record_response_metadata(&response);
-                        span.record_token_usage(&response.usage);
-                        if enabled!(Level::TRACE) {
-                            tracing::trace!(target: "rig::completions",
-                                "Azure OpenAI completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "azure.openai",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = &completion_request.preamble,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
+                tracing::Span::current()
+            };
+
+            let request = crate::completion::CompletionCodec::encode_request(
+                &AzureOpenAICompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Azure OpenAI completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post_chat_completion(&self.model)?
+                .body(body)
+                .map_err(http_client::Error::from)?;
+
+            async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
+                        &response_body,
+                    )? {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record_response_metadata(&response);
+                            span.record_token_usage(&response.usage);
+                            if enabled!(Level::TRACE) {
+                                tracing::trace!(target: "rig::completions",
+                                    "Azure OpenAI completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+                            openai::completion_response_events(response)
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let preamble = completion_request.preamble.clone();
-        let mut request =
-            AzureOpenAICompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &AzureOpenAICompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
 
         let params = json_utils::merge(
             request.additional_params.unwrap_or(serde_json::json!({})),

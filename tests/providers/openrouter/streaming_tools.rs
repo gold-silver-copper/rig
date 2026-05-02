@@ -60,7 +60,10 @@ async fn raw_stream_decorates_reasoning_tool_call_metadata() {
         }))
         .build();
 
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model
+        .stream_events(request)
+        .await
+        .expect("stream should start");
     let observation = collect_raw_stream_observation(stream).await;
     assert!(
         observation.errors.is_empty(),
@@ -103,7 +106,7 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
 
     let observation = collect_raw_stream_observation(
         model
-            .stream(request)
+            .stream_events(request)
             .await
             .expect("raw stream should start"),
     )
@@ -128,7 +131,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
 
     let first_turn = collect_raw_stream_observation(
         model
-            .stream(request)
+            .stream_events(request)
             .await
             .expect("raw stream should start"),
     )
@@ -159,7 +162,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
 
     let second_turn = collect_raw_stream_observation(
         model
-            .stream(followup_request)
+            .stream_events(followup_request)
             .await
             .expect("raw followup stream should start"),
     )

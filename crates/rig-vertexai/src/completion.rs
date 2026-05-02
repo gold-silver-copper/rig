@@ -2,13 +2,13 @@
 
 use super::Client;
 use crate::types::{
-    completion_request::VertexCompletionRequest, completion_response::VertexGenerateContentOutput,
+    completion_request::VertexCompletionRequest,
+    completion_response::{VertexGenerateContentOutput, completion_response_events},
 };
 use rig_core::completion::{
-    CompletionError, CompletionModel as CompletionModelTrait, CompletionRequest,
-    CompletionResponse, GetTokenUsage,
+    CompletionError, CompletionModel as CompletionModelTrait, CompletionRequest, GetTokenUsage,
 };
-use rig_core::streaming::StreamingCompletionResponse;
+use rig_core::model_event::ModelEventStream;
 use serde::{Deserialize, Serialize};
 
 /// `gemini-1.5-pro`
@@ -78,69 +78,70 @@ impl CompletionModelTrait for CompletionModel {
         Self::new(client.clone(), model.into())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         request: CompletionRequest,
-    ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-        tracing::debug!(
-            target: "rig_core::vertexai",
-            "Vertex AI completion request: {request:?}"
-        );
+    ) -> Result<rig_core::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            tracing::debug!(
+                target: "rig_core::vertexai",
+                "Vertex AI completion request: {request:?}"
+            );
 
-        let vertex_request = VertexCompletionRequest(request);
+            let vertex_request = VertexCompletionRequest(request);
 
-        let contents = vertex_request.contents()?;
-        let generation_config = vertex_request.generation_config();
-        let system_instruction = vertex_request.system_instruction();
-        let tools = vertex_request.tools();
-        let tool_config = vertex_request.tool_config();
-        let model_path = self.model_path()?;
+            let contents = vertex_request.contents()?;
+            let generation_config = vertex_request.generation_config();
+            let system_instruction = vertex_request.system_instruction();
+            let tools = vertex_request.tools();
+            let tool_config = vertex_request.tool_config();
+            let model_path = self.model_path()?;
 
-        let mut request_builder = self
-            .client
-            .get_inner()
-            .await
-            .map_err(|error| CompletionError::ProviderError(error.to_string()))?
-            .generate_content()
-            .set_model(&model_path)
-            .set_contents(contents);
+            let mut request_builder = self
+                .client
+                .get_inner()
+                .await
+                .map_err(|error| CompletionError::ProviderError(error.to_string()))?
+                .generate_content()
+                .set_model(&model_path)
+                .set_contents(contents);
 
-        if let Some(config) = generation_config {
-            request_builder = request_builder.set_generation_config(config);
+            if let Some(config) = generation_config {
+                request_builder = request_builder.set_generation_config(config);
+            }
+
+            if let Some(system_instruction) = system_instruction {
+                request_builder = request_builder.set_system_instruction(system_instruction);
+            }
+
+            if let Some(tools) = tools {
+                request_builder = request_builder.set_tools([tools]);
+            }
+
+            if let Some(tool_config) = tool_config {
+                request_builder = request_builder.set_tool_config(tool_config);
+            }
+
+            let response = request_builder
+                .send()
+                .await
+                .map_err(|e| CompletionError::ProviderError(format!("Vertex AI API error: {e}")))?;
+
+            tracing::debug!(
+                target: "rig_core::vertexai",
+                "Vertex AI completion response: {response:?}"
+            );
+
+            let vertex_output = VertexGenerateContentOutput(response);
+            completion_response_events(vertex_output)
         }
-
-        if let Some(system_instruction) = system_instruction {
-            request_builder = request_builder.set_system_instruction(system_instruction);
-        }
-
-        if let Some(tools) = tools {
-            request_builder = request_builder.set_tools([tools]);
-        }
-
-        if let Some(tool_config) = tool_config {
-            request_builder = request_builder.set_tool_config(tool_config);
-        }
-
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| CompletionError::ProviderError(format!("Vertex AI API error: {e}")))?;
-
-        tracing::debug!(
-            target: "rig_core::vertexai",
-            "Vertex AI completion response: {response:?}"
-        );
-
-        let vertex_output = VertexGenerateContentOutput(response);
-        let completion_response = vertex_output.try_into()?;
-
-        Ok(completion_response)
+        .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         _request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         Err(CompletionError::ProviderError(
             "Streaming is not supported for Vertex AI in this integration".to_string(),
         ))

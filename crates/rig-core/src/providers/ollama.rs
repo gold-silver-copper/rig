@@ -45,14 +45,13 @@ use crate::completion::{GetTokenUsage, Usage};
 use crate::http_client::{self, HttpClientExt};
 use crate::message::DocumentSourceKind;
 use crate::model::{Model, ModelList, ModelListingError};
-use crate::streaming::RawStreamingChoice;
+use crate::model_event::ModelEvent;
 use crate::{
     OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
     embeddings::{self, EmbeddingError},
     json_utils, message,
     message::{ImageDetail, Text},
-    streaming,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
 use async_stream::try_stream;
@@ -347,24 +346,26 @@ pub struct CompletionResponse {
     #[serde(default)]
     pub eval_duration: Option<u64>,
 }
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
-    fn try_from(resp: CompletionResponse) -> Result<Self, Self::Error> {
-        match resp.message {
-            // Process only if an assistant message is present.
+pub(crate) struct OllamaCompletionCodec;
+
+impl crate::completion::CompletionResponseCodec for OllamaCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        resp: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        match &resp.message {
             Message::Assistant {
                 content,
-                thinking,
                 tool_calls,
                 ..
             } => {
                 let mut assistant_contents = Vec::new();
-                // Add the assistant's text content if any.
                 if !content.is_empty() {
-                    assistant_contents.push(completion::AssistantContent::text(&content));
+                    assistant_contents.push(completion::AssistantContent::text(content));
                 }
-                // Process tool_calls following Ollama's chat response definition.
-                // Each ToolCall has an id, a type, and a function field.
                 for tc in tool_calls.iter() {
                     assistant_contents.push(completion::AssistantContent::tool_call(
                         tc.function.name.clone(),
@@ -372,44 +373,26 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         tc.function.arguments.clone(),
                     ));
                 }
-                let choice = OneOrMany::many(assistant_contents).map_err(|_| {
-                    CompletionError::ResponseError("No content provided".to_owned())
-                })?;
+                if assistant_contents.is_empty() {
+                    return Err(CompletionError::ResponseError(
+                        "No content provided".to_owned(),
+                    ));
+                }
                 let prompt_tokens = resp.prompt_eval_count.unwrap_or(0);
                 let completion_tokens = resp.eval_count.unwrap_or(0);
 
-                let raw_response = CompletionResponse {
-                    model: resp.model,
-                    created_at: resp.created_at,
-                    done: resp.done,
-                    done_reason: resp.done_reason,
-                    total_duration: resp.total_duration,
-                    load_duration: resp.load_duration,
-                    prompt_eval_count: resp.prompt_eval_count,
-                    prompt_eval_duration: resp.prompt_eval_duration,
-                    eval_count: resp.eval_count,
-                    eval_duration: resp.eval_duration,
-                    message: Message::Assistant {
-                        content,
-                        thinking,
-                        images: None,
-                        name: None,
-                        tool_calls,
-                    },
-                };
-
-                Ok(completion::CompletionResponse {
-                    choice,
-                    usage: Usage {
+                crate::completion::codec::turn_from_parts(
+                    resp,
+                    assistant_contents,
+                    Usage {
                         input_tokens: prompt_tokens,
                         output_tokens: completion_tokens,
                         total_tokens: prompt_tokens + completion_tokens,
                         cached_input_tokens: 0,
                         cache_creation_input_tokens: 0,
                     },
-                    raw_response,
-                    message_id: None,
-                })
+                    None,
+                )
             }
             _ => Err(CompletionError::ResponseError(
                 "Chat response does not include an assistant message".into(),
@@ -419,7 +402,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct OllamaCompletionRequest {
+pub(crate) struct OllamaCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -437,10 +420,8 @@ pub(super) struct OllamaCompletionRequest {
     options: serde_json::Value,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for OllamaCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl OllamaCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         let model = req.model.clone().unwrap_or_else(|| model.to_string());
         if req.tool_choice.is_some() {
             tracing::warn!("WARNING: `tool_choice` not supported for Ollama");
@@ -522,6 +503,27 @@ impl TryFrom<(&str, CompletionRequest)> for OllamaCompletionRequest {
     }
 }
 
+pub(crate) struct OllamaCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> OllamaCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for OllamaCompletionRequestCodec<'_> {
+    type Request = OllamaCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        OllamaCompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     client: Client<T>,
@@ -540,7 +542,7 @@ impl<T> CompletionModel<T> {
 // ---------- CompletionModel Implementation ----------
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub done_reason: Option<String>,
     pub total_duration: Option<u64>,
     pub load_duration: Option<u64>,
@@ -550,7 +552,7 @@ pub struct StreamingCompletionResponse {
     pub eval_duration: Option<u64>,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         let mut usage = crate::completion::Usage::new();
         let input_tokens = self.prompt_eval_count.unwrap_or_default();
@@ -568,7 +570,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = Client<T>;
 
@@ -576,89 +578,92 @@ where
         Self::new(client.clone(), model.into().as_str())
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<Self::Response>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "ollama",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "ollama",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
+            } else {
+                tracing::Span::current()
+            };
 
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-        let request = OllamaCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Ollama completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("api/chat")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        let async_block = async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if !status.is_success() {
-                return Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ));
-            }
-
-            let response: CompletionResponse = serde_json::from_slice(&response_body)?;
-            let span = tracing::Span::current();
-            span.record("gen_ai.response.model", &response.model);
-            span.record(
-                "gen_ai.usage.input_tokens",
-                response.prompt_eval_count.unwrap_or_default(),
-            );
-            span.record(
-                "gen_ai.usage.output_tokens",
-                response.eval_count.unwrap_or_default(),
-            );
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+            let request = crate::completion::CompletionCodec::encode_request(
+                &OllamaCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
 
             if tracing::enabled!(tracing::Level::TRACE) {
                 tracing::trace!(target: "rig::completions",
-                    "Ollama completion response: {}",
-                    serde_json::to_string_pretty(&response)?
+                    "Ollama completion request: {}",
+                    serde_json::to_string_pretty(&request)?
                 );
             }
 
-            let response: completion::CompletionResponse<CompletionResponse> =
-                response.try_into()?;
+            let body = serde_json::to_vec(&request)?;
 
-            Ok(response)
-        };
+            let req = self
+                .client
+                .post("api/chat")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
 
-        tracing::Instrument::instrument(async_block, span).await
+            let async_block = async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if !status.is_success() {
+                    return Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ));
+                }
+
+                let response: CompletionResponse = serde_json::from_slice(&response_body)?;
+                let span = tracing::Span::current();
+                span.record("gen_ai.response.model", &response.model);
+                span.record(
+                    "gen_ai.usage.input_tokens",
+                    response.prompt_eval_count.unwrap_or_default(),
+                );
+                span.record(
+                    "gen_ai.usage.output_tokens",
+                    response.eval_count.unwrap_or_default(),
+                );
+
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(target: "rig::completions",
+                        "Ollama completion response: {}",
+                        serde_json::to_string_pretty(&response)?
+                    );
+                }
+
+                crate::completion::codec::response_events(&OllamaCompletionCodec, response)
+            };
+
+            tracing::Instrument::instrument(async_block, span).await
+        }
+        .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
     {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
@@ -680,7 +685,10 @@ where
 
         span.record("gen_ai.system_instructions", &request.preamble);
 
-        let mut request = OllamaCompletionRequest::try_from((self.model.as_ref(), request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
         request.stream = true;
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -729,21 +737,21 @@ where
                     if let Message::Assistant { content, thinking, tool_calls, .. } = response.message {
                         if let Some(thinking_content) = thinking && !thinking_content.is_empty() {
                             thinking_response += &thinking_content;
-                            yield RawStreamingChoice::ReasoningDelta {
+                            yield ModelEvent::ReasoningDelta {
                                 id: None,
-                                reasoning: thinking_content,
+                                text: thinking_content,
                             };
                         }
 
                         if !content.is_empty() {
                             text_response += &content;
-                            yield RawStreamingChoice::Message(content);
+                            yield ModelEvent::TextDelta { text: content };
                         }
 
                         for tool_call in tool_calls {
                             tool_calls_final.push(tool_call.clone());
-                            yield RawStreamingChoice::ToolCall(
-                                crate::streaming::RawStreamingToolCall::new(String::new(), tool_call.function.name, tool_call.function.arguments)
+                            yield ModelEvent::from(
+                                crate::providers::internal::tool_call::ProviderToolCall::new(String::new(), tool_call.function.name, tool_call.function.arguments)
                             );
                         }
                     }
@@ -761,26 +769,29 @@ where
                         if let Ok(serialized_message) = serde_json::to_string(&vec![message]) {
                             span.record("gen_ai.output.messages", serialized_message);
                         }
-                        yield RawStreamingChoice::FinalResponse(
-                            StreamingCompletionResponse {
-                                total_duration: response.total_duration,
-                                load_duration: response.load_duration,
-                                prompt_eval_count: response.prompt_eval_count,
-                                prompt_eval_duration: response.prompt_eval_duration,
-                                eval_count: response.eval_count,
-                                eval_duration: response.eval_duration,
-                                done_reason: response.done_reason,
-                            }
-                        );
+                        let final_response = StreamingResponse {
+                            total_duration: response.total_duration,
+                            load_duration: response.load_duration,
+                            prompt_eval_count: response.prompt_eval_count,
+                            prompt_eval_duration: response.prompt_eval_duration,
+                            eval_count: response.eval_count,
+                            eval_duration: response.eval_duration,
+                            done_reason: response.done_reason,
+                        };
+                        if let Some(usage) = final_response.token_usage() {
+                            yield ModelEvent::Usage { usage };
+                        }
+                        yield ModelEvent::RawResponse {
+                            response: final_response,
+                        };
+                        yield ModelEvent::Done;
                         break;
                     }
                 }
             }
         }.instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
-            stream,
-        )))
+        Ok(crate::completion::codec::result_stream(Box::pin(stream)))
     }
 }
 
@@ -1251,8 +1262,11 @@ mod tests {
 
         let chat_resp: CompletionResponse =
             serde_json::from_str(&sample_text).expect("Invalid JSON structure");
-        let conv: completion::CompletionResponse<CompletionResponse> =
-            chat_resp.try_into().unwrap();
+        let conv = crate::model_event::collect(
+            crate::completion::codec::response_events(&OllamaCompletionCodec, chat_resp).unwrap(),
+        )
+        .await
+        .unwrap();
         assert!(
             !conv.choice.is_empty(),
             "Expected non-empty choice in chat response"
@@ -1581,8 +1595,11 @@ mod tests {
         };
 
         // Convert to OllamaCompletionRequest
-        let ollama_request = OllamaCompletionRequest::try_from(("qwen3:8b", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("qwen3:8b"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         // Serialize to JSON
         let serialized =
@@ -1645,8 +1662,11 @@ mod tests {
         };
 
         // Convert to OllamaCompletionRequest
-        let ollama_request = OllamaCompletionRequest::try_from(("llama3.2", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("llama3.2"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         // Serialize to JSON
         let serialized =
@@ -1709,8 +1729,11 @@ mod tests {
             output_schema: Some(schema),
         };
 
-        let ollama_request = OllamaCompletionRequest::try_from(("llama3.1", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("llama3.1"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         let serialized =
             serde_json::to_value(&ollama_request).expect("Failed to serialize request");
@@ -1754,8 +1777,11 @@ mod tests {
             output_schema: None,
         };
 
-        let ollama_request = OllamaCompletionRequest::try_from(("llama3.1", completion_request))
-            .expect("Failed to create Ollama request");
+        let ollama_request = crate::completion::CompletionCodec::encode_request(
+            &OllamaCompletionRequestCodec::new("llama3.1"),
+            completion_request,
+        )
+        .expect("Failed to create Ollama request");
 
         let serialized =
             serde_json::to_value(&ollama_request).expect("Failed to serialize request");

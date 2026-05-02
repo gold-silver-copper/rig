@@ -10,11 +10,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::StreamExt;
 use rig::OneOrMany;
-use rig::agent::{MultiTurnStreamItem, StreamingError};
+use rig::agent::{AgentEvent, StreamingError};
 use rig::completion::request::ToolDefinition;
 use rig::completion::{self, CompletionModel};
 use rig::message::{AssistantContent, Message, Reasoning, ReasoningContent, UserContent};
-use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+use rig::model_event::ModelEvent;
 use rig::tool::Tool;
 use rig::wasm_compat::WasmCompatSend;
 use serde::Deserialize;
@@ -72,27 +72,37 @@ where
         output_schema: None,
     };
 
-    let mut stream = agent.model.stream(request).await.expect("Turn 1 stream");
+    let mut stream = agent
+        .model
+        .stream_events(request)
+        .await
+        .expect("Turn 1 stream");
 
     let mut assistant_content = Vec::new();
     let mut saw_reasoning_block = false;
     let mut reasoning_delta_text = String::new();
     let mut streamed_text = String::new();
+    let mut message_id = None;
 
     while let Some(chunk) = stream.next().await {
         match chunk {
-            Ok(StreamedAssistantContent::Text(text)) => {
-                streamed_text.push_str(&text.text);
+            ModelEvent::TextDelta { text } => {
+                streamed_text.push_str(&text);
             }
-            Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+            ModelEvent::ReasoningDone { reasoning } => {
                 saw_reasoning_block = true;
                 assistant_content.push(AssistantContent::Reasoning(reasoning));
             }
-            Ok(StreamedAssistantContent::ReasoningDelta { reasoning, .. }) => {
-                reasoning_delta_text.push_str(&reasoning);
+            ModelEvent::ReasoningDelta { text, .. } => {
+                reasoning_delta_text.push_str(&text);
             }
-            Ok(_) => {}
-            Err(error) => panic!("Turn 1 stream error: {error}"),
+            ModelEvent::MessageDone { id } => {
+                if id.is_some() {
+                    message_id = id;
+                }
+            }
+            ModelEvent::Error { error } => panic!("Turn 1 stream error: {error}"),
+            _ => {}
         }
     }
 
@@ -109,7 +119,7 @@ where
     assistant_content.push(AssistantContent::text(&streamed_text));
 
     let turn1_assistant = Message::Assistant {
-        id: stream.message_id.clone(),
+        id: message_id,
         content: OneOrMany::many(assistant_content).expect("non-empty"),
     };
 
@@ -131,16 +141,20 @@ where
         output_schema: None,
     };
 
-    let mut stream2 = agent.model.stream(request2).await.expect("Turn 2 stream");
+    let mut stream2 = agent
+        .model
+        .stream_events(request2)
+        .await
+        .expect("Turn 2 stream");
     let mut turn2_text = String::new();
 
     while let Some(chunk) = stream2.next().await {
         match chunk {
-            Ok(StreamedAssistantContent::Text(text)) => {
-                turn2_text.push_str(&text.text);
+            ModelEvent::TextDelta { text } => {
+                turn2_text.push_str(&text);
             }
-            Ok(_) => {}
-            Err(error) => panic!("Turn 2 stream error: {error}"),
+            ModelEvent::Error { error } => panic!("Turn 2 stream error: {error}"),
+            _ => {}
         }
     }
 
@@ -405,7 +419,7 @@ fn record_reasoning(stats: &mut StreamStats, reasoning: &Reasoning, provider: &s
 }
 
 pub(crate) async fn collect_stream_stats<R>(
-    stream: impl futures::Stream<Item = Result<MultiTurnStreamItem<R>, StreamingError>>,
+    stream: impl futures::Stream<Item = Result<AgentEvent<R>, StreamingError>>,
     provider: &str,
 ) -> StreamStats {
     let mut stats = StreamStats::new();
@@ -414,46 +428,51 @@ pub(crate) async fn collect_stream_stats<R>(
 
     while let Some(item) = stream.next().await {
         match item {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(content)) => match content {
-                StreamedAssistantContent::Reasoning(ref reasoning) => {
+            Ok(AgentEvent::Model(event)) => match event {
+                ModelEvent::ReasoningDone { ref reasoning } => {
                     record_reasoning(&mut stats, reasoning, provider);
                 }
-                StreamedAssistantContent::ReasoningDelta { .. } => {
+                ModelEvent::ReasoningDelta { .. } => {
                     stats.reasoning_delta_count += 1;
                     if stats.events.last() != Some(&"reasoning_delta") {
                         stats.events.push("reasoning_delta");
                     }
                 }
-                StreamedAssistantContent::ToolCall { ref tool_call, .. } => {
+                ModelEvent::ToolCallDone { ref tool_call, .. } => {
                     stats
                         .tool_calls_in_stream
                         .push(tool_call.function.name.clone());
                     stats.events.push("tool_call");
                 }
-                StreamedAssistantContent::Text(ref text) => {
+                ModelEvent::TextDelta { ref text } => {
                     stats.text_chunks += 1;
-                    stats.final_turn_text.push_str(&text.text);
+                    stats.final_turn_text.push_str(text);
                     if stats.events.last() != Some(&"text") {
                         stats.events.push("text");
                     }
                 }
-                StreamedAssistantContent::ToolCallDelta { .. } => {
+                ModelEvent::ToolCallStart { .. } | ModelEvent::ToolCallDelta { .. } => {
                     if stats.events.last() != Some(&"tool_call_delta") {
                         stats.events.push("tool_call_delta");
                     }
                 }
-                StreamedAssistantContent::Final(_) => {
+                ModelEvent::RawResponse { .. } => {
                     stats.events.push("final");
                 }
-            },
-            Ok(MultiTurnStreamItem::StreamUserItem(ref content)) => match content {
-                StreamedUserContent::ToolResult { .. } => {
-                    stats.tool_results_in_stream += 1;
-                    stats.final_turn_text.clear();
-                    stats.events.push("tool_result");
+                ModelEvent::MessageDone { .. }
+                | ModelEvent::Usage { .. }
+                | ModelEvent::ProviderMetadata { .. }
+                | ModelEvent::Done => {}
+                ModelEvent::Error { error } => {
+                    stats.errors.push(error.to_string());
                 }
             },
-            Ok(MultiTurnStreamItem::FinalResponse(response)) => {
+            Ok(AgentEvent::ToolResult { .. }) => {
+                stats.tool_results_in_stream += 1;
+                stats.final_turn_text.clear();
+                stats.events.push("tool_result");
+            }
+            Ok(AgentEvent::FinalResponse(response)) => {
                 stats.final_response_text = Some(response.response().to_owned());
                 stats.got_final_response = true;
             }

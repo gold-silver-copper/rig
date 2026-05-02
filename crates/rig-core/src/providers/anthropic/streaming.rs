@@ -10,14 +10,15 @@ use super::completion::{
     SystemContent, ToolChoice, ToolDefinition, Usage, apply_cache_control,
     split_system_messages_from_history,
 };
-use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
+use crate::completion::{
+    CompletionError, CompletionRequest, CompletionStreamCodec, GetTokenUsage, ModelTurnAccumulator,
+};
 use crate::http_client::sse::{Event, GenericEventSource};
 use crate::http_client::{self, HttpClientExt};
 use crate::json_utils::merge_inplace;
-use crate::message::ReasoningContent;
-use crate::streaming::{
-    self, RawStreamingChoice, RawStreamingToolCall, StreamingResult, ToolCallDeltaContent,
-};
+use crate::message::{Reasoning, ReasoningContent};
+use crate::model_event::{ModelEvent, ToolCallDeltaContent};
+use crate::providers::internal::tool_call::ProviderToolCall;
 use crate::telemetry::SpanCombinator;
 use crate::wasm_compat::{WasmCompatSend, WasmCompatSync};
 
@@ -116,11 +117,11 @@ struct ThinkingState {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: PartialUsage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         let mut usage = crate::completion::Usage::new();
         usage.input_tokens = self.usage.input_tokens.unwrap_or(0) as u64;
@@ -141,11 +142,10 @@ where
     T: HttpClientExt + Clone + Default + 'static,
     Ext: AnthropicCompatibleProvider + Clone + WasmCompatSend + WasmCompatSync + 'static,
 {
-    pub(crate) async fn stream(
+    pub(crate) async fn stream_events(
         &self,
         mut completion_request: CompletionRequest,
-    ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError>
-    {
+    ) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError> {
         let request_model = completion_request
             .model
             .clone()
@@ -293,14 +293,11 @@ where
         let stream = GenericEventSource::new(self.client.clone(), req);
 
         // Use our SSE decoder to directly handle Server-Sent Events format
-        let stream: StreamingResult<StreamingCompletionResponse> = Box::pin(stream! {
-            let mut current_tool_call: Option<ToolCallState> = None;
-            let mut current_thinking: Option<ThinkingState> = None;
+        let stream = stream! {
+            let mut codec = AnthropicStreamEventCodec::default();
             let mut sse_stream = Box::pin(stream);
             let mut input_tokens = 0;
             let mut final_usage = None;
-
-            let mut text_content = String::new();
 
             while let Some(sse_result) = sse_stream.next().await {
                 match sse_result {
@@ -338,11 +335,13 @@ where
                                     _ => {}
                                 }
 
-                                if let Some(result) = handle_event(&event, &mut current_tool_call, &mut current_thinking) {
-                                    if let Ok(RawStreamingChoice::Message(ref text)) = result {
-                                        text_content += text;
+                                match codec.decode_stream_chunk(event) {
+                                    Ok(events) => {
+                                        for event in events {
+                                            yield Ok(event);
+                                        }
                                     }
-                                    yield result;
+                                    Err(err) => yield Err(err),
                                 }
                             },
                             Err(e) => {
@@ -364,12 +363,18 @@ where
             // Ensure event source is closed when stream ends
             sse_stream.close();
 
-            yield Ok(RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
-                usage: final_usage.unwrap_or_default()
-            }))
-        }.instrument(span));
+            codec.set_final_usage(final_usage.unwrap_or_default());
+            match codec.finish_events() {
+                Ok(events) => {
+                    for event in events {
+                        yield Ok(event);
+                    }
+                }
+                Err(err) => yield Err(err),
+            }
+        }.instrument(span);
 
-        Ok(streaming::StreamingCompletionResponse::stream(stream))
+        Ok(crate::completion::codec::result_stream(stream))
     }
 }
 
@@ -389,16 +394,86 @@ fn extract_tools_from_additional_params(
     Ok(Vec::new())
 }
 
+#[derive(Default)]
+pub(crate) struct AnthropicStreamEventCodec {
+    current_tool_call: Option<ToolCallState>,
+    current_thinking: Option<ThinkingState>,
+    final_usage: PartialUsage,
+    turn_accumulator: ModelTurnAccumulator<StreamingResponse>,
+}
+
+impl AnthropicStreamEventCodec {
+    fn set_final_usage(&mut self, usage: PartialUsage) {
+        self.final_usage = usage;
+    }
+
+    fn finish_events(mut self) -> Result<Vec<ModelEvent<StreamingResponse>>, CompletionError> {
+        let response = StreamingResponse {
+            usage: self.final_usage,
+        };
+        let mut events = Vec::new();
+        if let Some(usage) = response.token_usage() {
+            events.push(ModelEvent::Usage { usage });
+        }
+        events.push(ModelEvent::RawResponse { response });
+        events.push(ModelEvent::Done);
+
+        for event in &events {
+            self.turn_accumulator.push_ref(event)?;
+        }
+
+        Ok(events)
+    }
+}
+
+impl CompletionStreamCodec for AnthropicStreamEventCodec {
+    type StreamChunk = StreamingEvent;
+    type RawFinal = StreamingResponse;
+
+    fn decode_stream_chunk(
+        &mut self,
+        chunk: Self::StreamChunk,
+    ) -> Result<Vec<ModelEvent<Self::RawFinal>>, CompletionError> {
+        match handle_event(
+            &chunk,
+            &mut self.current_tool_call,
+            &mut self.current_thinking,
+        ) {
+            Some(Ok(event)) => {
+                self.turn_accumulator.push_ref(&event)?;
+                Ok(vec![event])
+            }
+            Some(Err(err)) => Err(err),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn finish_stream(
+        mut self,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
+        let response = StreamingResponse {
+            usage: self.final_usage,
+        };
+        if let Some(usage) = response.token_usage() {
+            self.turn_accumulator.push(ModelEvent::Usage { usage })?;
+        }
+        self.turn_accumulator
+            .push(ModelEvent::RawResponse { response })?;
+        self.turn_accumulator.push(ModelEvent::Done)?;
+        self.turn_accumulator.finish()
+    }
+}
+
 fn handle_event(
     event: &StreamingEvent,
     current_tool_call: &mut Option<ToolCallState>,
     current_thinking: &mut Option<ThinkingState>,
-) -> Option<Result<RawStreamingChoice<StreamingCompletionResponse>, CompletionError>> {
+) -> Option<Result<ModelEvent<StreamingResponse>, CompletionError>> {
     match event {
         StreamingEvent::ContentBlockDelta { delta, .. } => match delta {
             ContentDelta::TextDelta { text } => {
                 if current_tool_call.is_none() {
-                    return Some(Ok(RawStreamingChoice::Message(text.clone())));
+                    return Some(Ok(ModelEvent::TextDelta { text: text.clone() }));
                 }
                 None
             }
@@ -406,7 +481,7 @@ fn handle_event(
                 if let Some(tool_call) = current_tool_call {
                     tool_call.input_json.push_str(partial_json);
                     // Emit the delta so UI can show progress
-                    return Some(Ok(RawStreamingChoice::ToolCallDelta {
+                    return Some(Ok(ModelEvent::ToolCallDelta {
                         id: tool_call.id.clone(),
                         internal_call_id: tool_call.internal_call_id.clone(),
                         content: ToolCallDeltaContent::Delta(partial_json.clone()),
@@ -420,9 +495,9 @@ fn handle_event(
                     .thinking
                     .push_str(thinking);
 
-                Some(Ok(RawStreamingChoice::ReasoningDelta {
+                Some(Ok(ModelEvent::ReasoningDelta {
                     id: None,
-                    reasoning: thinking.clone(),
+                    text: thinking.clone(),
                 }))
             }
             ContentDelta::SignatureDelta { signature } => {
@@ -444,7 +519,7 @@ fn handle_event(
                     internal_call_id: internal_call_id.clone(),
                     input_json: String::new(),
                 });
-                Some(Ok(RawStreamingChoice::ToolCallDelta {
+                Some(Ok(ModelEvent::ToolCallDelta {
                     id: id.clone(),
                     internal_call_id,
                     content: ToolCallDeltaContent::Name(name.clone()),
@@ -454,9 +529,11 @@ fn handle_event(
                 *current_thinking = Some(ThinkingState::default());
                 None
             }
-            Content::RedactedThinking { data } => Some(Ok(RawStreamingChoice::Reasoning {
-                id: None,
-                content: ReasoningContent::Redacted { data: data.clone() },
+            Content::RedactedThinking { data } => Some(Ok(ModelEvent::ReasoningDone {
+                reasoning: Reasoning {
+                    id: None,
+                    content: vec![ReasoningContent::Redacted { data: data.clone() }],
+                },
             })),
             // Handle other content types - they don't need special handling
             _ => None,
@@ -471,11 +548,13 @@ fn handle_event(
                     Some(thinking_state.signature)
                 };
 
-                return Some(Ok(RawStreamingChoice::Reasoning {
-                    id: None,
-                    content: ReasoningContent::Text {
-                        text: thinking_state.thinking,
-                        signature,
+                return Some(Ok(ModelEvent::ReasoningDone {
+                    reasoning: Reasoning {
+                        id: None,
+                        content: vec![ReasoningContent::Text {
+                            text: thinking_state.thinking,
+                            signature,
+                        }],
                     },
                 }));
             }
@@ -489,9 +568,9 @@ fn handle_event(
                 match serde_json::from_str(json_str) {
                     Ok(json_value) => {
                         let raw_tool_call =
-                            RawStreamingToolCall::new(tool_call.id, tool_call.name, json_value)
+                            ProviderToolCall::new(tool_call.id, tool_call.name, json_value)
                                 .with_internal_call_id(tool_call.internal_call_id);
-                        Some(Ok(RawStreamingChoice::ToolCall(raw_tool_call)))
+                        Some(Ok(ModelEvent::from(raw_tool_call)))
                     }
                     Err(e) => Some(Err(CompletionError::from(e))),
                 }
@@ -511,6 +590,40 @@ fn handle_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anthropic_stream_codec_decodes_text_delta_and_final_response() {
+        let mut codec = AnthropicStreamEventCodec::default();
+        let events = codec
+            .decode_stream_chunk(StreamingEvent::ContentBlockDelta {
+                index: 0,
+                delta: ContentDelta::TextDelta {
+                    text: "hello".to_string(),
+                },
+            })
+            .expect("text delta should decode");
+
+        assert!(matches!(
+            events.as_slice(),
+            [ModelEvent::TextDelta { text }] if text == "hello"
+        ));
+
+        codec.set_final_usage(PartialUsage {
+            input_tokens: Some(3),
+            output_tokens: 4,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        });
+        let final_events = codec.finish_events().expect("stream should finish");
+        assert!(final_events
+            .iter()
+            .any(|event| matches!(event, ModelEvent::Usage { usage } if usage.input_tokens == 3 && usage.output_tokens == 4)));
+        assert!(
+            final_events
+                .iter()
+                .any(|event| matches!(event, ModelEvent::RawResponse { .. }))
+        );
+    }
 
     #[test]
     fn test_thinking_delta_deserialization() {
@@ -609,9 +722,9 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::ReasoningDelta { id, reasoning, .. } => {
+            ModelEvent::ReasoningDelta { id, text } => {
                 assert_eq!(id, None);
-                assert_eq!(reasoning, "Analyzing the request...");
+                assert_eq!(text, "Analyzing the request...");
             }
             _ => panic!("Expected ReasoningDelta choice"),
         }
@@ -656,11 +769,11 @@ mod tests {
 
         assert!(result.is_some());
         match result.unwrap().unwrap() {
-            RawStreamingChoice::Reasoning {
-                content: ReasoningContent::Redacted { data },
-                ..
-            } => {
-                assert_eq!(data, "redacted_blob");
+            ModelEvent::ReasoningDone { reasoning } => {
+                assert!(matches!(
+                    reasoning.content.first(),
+                    Some(ReasoningContent::Redacted { data }) if data == "redacted_blob"
+                ));
             }
             _ => panic!("Expected Redacted reasoning chunk"),
         }
@@ -683,7 +796,7 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::Message(text) => {
+            ModelEvent::TextDelta { text } => {
                 assert_eq!(text, "Hello, world!");
             }
             _ => panic!("Expected Message choice"),
@@ -714,8 +827,8 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::ReasoningDelta { reasoning, .. } => {
-                assert_eq!(reasoning, "Thinking while tool is active...");
+            ModelEvent::ReasoningDelta { text, .. } => {
+                assert_eq!(text, "Thinking while tool is active...");
             }
             _ => panic!("Expected ReasoningDelta choice"),
         }
@@ -748,7 +861,7 @@ mod tests {
         let choice = result.unwrap().unwrap();
 
         match choice {
-            RawStreamingChoice::ToolCallDelta {
+            ModelEvent::ToolCallDelta {
                 id,
                 internal_call_id: _,
                 content,
@@ -822,19 +935,29 @@ mod tests {
         assert!(final_result.is_some());
 
         match final_result.unwrap().unwrap() {
-            RawStreamingChoice::ToolCall(RawStreamingToolCall {
-                id,
-                name,
-                arguments,
-                ..
-            }) => {
-                assert_eq!(id, "tool_123");
-                assert_eq!(name, "test_tool");
+            ModelEvent::ToolCallDone { tool_call, .. } => {
+                assert_eq!(tool_call.id, "tool_123");
+                assert_eq!(tool_call.function.name, "test_tool");
                 assert_eq!(
-                    arguments.get("location").unwrap().as_str().unwrap(),
+                    tool_call
+                        .function
+                        .arguments
+                        .get("location")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
                     "Paris"
                 );
-                assert_eq!(arguments.get("temp").unwrap().as_str().unwrap(), "20C");
+                assert_eq!(
+                    tool_call
+                        .function
+                        .arguments
+                        .get("temp")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
+                    "20C"
+                );
             }
             other => panic!("Expected ToolCall, got {:?}", other),
         }

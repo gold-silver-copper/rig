@@ -5,9 +5,9 @@ use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{CompletionModel, GetTokenUsage};
 use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
+use rig::model_event::ModelEvent;
 use rig::providers::gemini;
 use rig::providers::gemini::interactions_api::{AdditionalParameters, Tool};
-use rig::streaming::StreamedAssistantContent;
 
 use crate::support::assert_nonempty_response;
 
@@ -206,16 +206,20 @@ async fn streaming_interaction() {
         .completion_request("Write a 3-line poem about rust and rivers.")
         .temperature(0.4)
         .build();
-    let mut stream = model.stream(request).await.expect("stream should start");
+    let mut stream = model
+        .stream_events(request)
+        .await
+        .expect("stream should start");
 
     let mut text = String::new();
     let mut saw_usage = false;
     while let Some(chunk) = stream.next().await {
-        match chunk.expect("stream chunk should succeed") {
-            StreamedAssistantContent::Text(delta) => text.push_str(&delta.text),
-            StreamedAssistantContent::Final(response) => {
+        match chunk {
+            ModelEvent::TextDelta { text: delta } => text.push_str(&delta),
+            ModelEvent::RawResponse { response } => {
                 saw_usage = response.token_usage().is_some();
             }
+            ModelEvent::Error { error } => panic!("stream chunk should succeed: {error}"),
             _ => {}
         }
     }

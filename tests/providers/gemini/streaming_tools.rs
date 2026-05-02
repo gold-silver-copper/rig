@@ -55,7 +55,10 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
         .tool_choice(ToolChoice::Required)
         .additional_params(streaming_tool_params())
         .build();
-    let stream = model.stream(request).await.expect("stream should start");
+    let stream = model
+        .stream_events(request)
+        .await
+        .expect("stream should start");
 
     assert_stream_contains_zero_arg_tool_call_named(stream, "ping", true).await;
 }

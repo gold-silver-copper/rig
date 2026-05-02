@@ -5,6 +5,7 @@
 use crate::{
     completion::CompletionModel,
     message::Message,
+    model_event::ModelEvent,
     wasm_compat::{WasmCompatSend, WasmCompatSync},
 };
 
@@ -28,6 +29,17 @@ where
         _prompt: &Message,
         _response: &crate::completion::CompletionResponse<M::Response>,
     ) -> impl Future<Output = HookAction> + WasmCompatSend {
+        async { HookAction::cont() }
+    }
+
+    /// Called for each normalized model event observed by the agent.
+    fn on_model_event<R>(
+        &self,
+        _event: &ModelEvent<R>,
+    ) -> impl Future<Output = HookAction> + WasmCompatSend
+    where
+        R: WasmCompatSend,
+    {
         async { HookAction::cont() }
     }
 

@@ -156,7 +156,7 @@ pub enum ReasoningFormat {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct GroqCompletionRequest {
+pub(crate) struct GroqCompletionRequest {
     model: String,
     pub messages: Vec<OpenAIMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -177,10 +177,8 @@ pub(super) struct StreamOptions {
     pub(super) include_usage: bool,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, mut req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl GroqCompletionRequest {
+    fn from_completion_request(model: &str, mut req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Groq");
         }
@@ -242,6 +240,27 @@ impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
             stream: false,
             stream_options: None,
         })
+    }
+}
+
+pub(crate) struct GroqCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> GroqCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for GroqCompletionRequestCodec<'_> {
+    type Request = GroqCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        GroqCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -349,7 +368,7 @@ where
     T: HttpClientExt + Clone + Send + std::fmt::Debug + Default + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = StreamingCompletionResponse;
+    type StreamingResponse = StreamingResponse;
 
     type Client = Client<T>;
 
@@ -357,101 +376,106 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "groq",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        let request = GroqCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Groq completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-        let req = self
-            .client
-            .post("/chat/completions")?
-            .body(body)
-            .map_err(|e| http_client::Error::Instance(e.into()))?;
-
-        let async_block = async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record("gen_ai.response.id", response.id.clone());
-                        span.record("gen_ai.response.model", response.model.clone());
-                        if let Some(ref usage) = response.usage {
-                            span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
-                            span.record(
-                                "gen_ai.usage.output_tokens",
-                                usage.total_tokens - usage.prompt_tokens,
-                            );
-                            span.record(
-                                "gen_ai.usage.cache_read.input_tokens",
-                                usage
-                                    .prompt_tokens_details
-                                    .as_ref()
-                                    .map(|d| d.cached_tokens)
-                                    .unwrap_or(0),
-                            );
-                        }
-
-                        if tracing::enabled!(tracing::Level::TRACE) {
-                            tracing::trace!(target: "rig::completions",
-                                "Groq completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-
-                        response.try_into()
-                    }
-                    ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "groq",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
-            }
-        };
+                tracing::Span::current()
+            };
 
-        tracing::Instrument::instrument(async_block, span).await
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+
+            let request = crate::completion::CompletionCodec::encode_request(
+                &GroqCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Groq completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+            let req = self
+                .client
+                .post("/chat/completions")?
+                .body(body)
+                .map_err(|e| http_client::Error::Instance(e.into()))?;
+
+            let async_block = async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)?
+                    {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record("gen_ai.response.id", response.id.clone());
+                            span.record("gen_ai.response.model", response.model.clone());
+                            if let Some(ref usage) = response.usage {
+                                span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+                                span.record(
+                                    "gen_ai.usage.output_tokens",
+                                    usage.total_tokens - usage.prompt_tokens,
+                                );
+                                span.record(
+                                    "gen_ai.usage.cache_read.input_tokens",
+                                    usage
+                                        .prompt_tokens_details
+                                        .as_ref()
+                                        .map(|d| d.cached_tokens)
+                                        .unwrap_or(0),
+                                );
+                            }
+
+                            if tracing::enabled!(tracing::Level::TRACE) {
+                                tracing::trace!(target: "rig::completions",
+                                    "Groq completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+
+                            crate::providers::openai::completion_response_events(response)
+                        }
+                        ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            };
+
+            tracing::Instrument::instrument(async_block, span).await
+        }
+        .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<
-        crate::streaming::StreamingCompletionResponse<Self::StreamingResponse>,
-        CompletionError,
-    > {
+    ) -> Result<crate::model_event::ModelEventStream<Self::StreamingResponse>, CompletionError>
+    {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -472,7 +496,10 @@ where
 
         span.record("gen_ai.system_instructions", &request.preamble);
 
-        let mut request = GroqCompletionRequest::try_from((self.model.as_ref(), request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &GroqCompletionRequestCodec::new(self.model.as_ref()),
+            request,
+        )?;
 
         request.stream = true;
         request.stream_options = Some(StreamOptions {
@@ -628,11 +655,11 @@ struct StreamingCompletionChunk {
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct StreamingCompletionResponse {
+pub struct StreamingResponse {
     pub usage: Usage,
 }
 
-impl GetTokenUsage for StreamingCompletionResponse {
+impl GetTokenUsage for StreamingResponse {
     fn token_usage(&self) -> Option<crate::completion::Usage> {
         self.usage.token_usage()
     }
@@ -644,7 +671,7 @@ struct GroqCompatibleProfile;
 impl CompatibleStreamProfile for GroqCompatibleProfile {
     type Usage = Usage;
     type Detail = ();
-    type FinalResponse = StreamingCompletionResponse;
+    type FinalResponse = StreamingResponse;
 
     fn normalize_chunk(
         &self,
@@ -693,7 +720,7 @@ impl CompatibleStreamProfile for GroqCompatibleProfile {
     }
 
     fn build_final_response(&self, usage: Self::Usage) -> Self::FinalResponse {
-        StreamingCompletionResponse { usage }
+        StreamingResponse { usage }
     }
 
     fn uses_distinct_tool_call_eviction(&self) -> bool {
@@ -708,10 +735,7 @@ impl CompatibleStreamProfile for GroqCompatibleProfile {
 pub async fn send_compatible_streaming_request<T>(
     client: T,
     req: Request<Vec<u8>>,
-) -> Result<
-    crate::streaming::StreamingCompletionResponse<StreamingCompletionResponse>,
-    CompletionError,
->
+) -> Result<crate::model_event::ModelEventStream<StreamingResponse>, CompletionError>
 where
     T: HttpClientExt + Clone + 'static,
 {

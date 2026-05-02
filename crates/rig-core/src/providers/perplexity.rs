@@ -10,11 +10,10 @@
 //! ```
 use crate::client::BearerAuth;
 use crate::completion::CompletionRequest;
+use crate::model_event::ModelEventStream;
 use crate::providers::openai;
 use crate::providers::openai::send_compatible_streaming_request;
-use crate::streaming::StreamingCompletionResponse;
 use crate::{
-    OneOrMany,
     client::{
         self, Capabilities, Capable, DebugExt, Nothing, Provider, ProviderBuilder, ProviderClient,
     },
@@ -172,10 +171,16 @@ impl std::fmt::Display for Usage {
     }
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-    type Error = CompletionError;
+pub(crate) struct PerplexityCompletionCodec;
 
-    fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
+impl crate::completion::CompletionResponseCodec for PerplexityCompletionCodec {
+    type Response = CompletionResponse;
+    type RawFinal = CompletionResponse;
+
+    fn decode_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<crate::completion::ModelTurn<Self::RawFinal>, CompletionError> {
         let choice = response.choices.first().ok_or_else(|| {
             CompletionError::ResponseError("Response contained no choices".to_owned())
         })?;
@@ -184,18 +189,22 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             Message {
                 role: Role::Assistant,
                 content,
-            } => Ok(completion::CompletionResponse {
-                choice: OneOrMany::one(content.clone().into()),
-                usage: completion::Usage {
+            } => {
+                let content = content.clone();
+                let usage = completion::Usage {
                     input_tokens: response.usage.prompt_tokens as u64,
                     output_tokens: response.usage.completion_tokens as u64,
                     total_tokens: response.usage.total_tokens as u64,
                     cached_input_tokens: 0,
                     cache_creation_input_tokens: 0,
-                },
-                raw_response: response,
-                message_id: None,
-            }),
+                };
+                crate::completion::codec::turn_from_parts(
+                    response,
+                    vec![completion::AssistantContent::text(content)],
+                    usage,
+                    None,
+                )
+            }
             _ => Err(CompletionError::ResponseError(
                 "Response contained no assistant message".to_owned(),
             )),
@@ -204,7 +213,7 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct PerplexityCompletionRequest {
+pub(crate) struct PerplexityCompletionRequest {
     model: String,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -216,10 +225,8 @@ pub(super) struct PerplexityCompletionRequest {
     pub stream: bool,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl PerplexityCompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for Perplexity");
         }
@@ -254,6 +261,27 @@ impl TryFrom<(&str, CompletionRequest)> for PerplexityCompletionRequest {
             additional_params: req.additional_params,
             stream: false,
         })
+    }
+}
+
+pub(crate) struct PerplexityCompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> PerplexityCompletionRequestCodec<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for PerplexityCompletionRequestCodec<'_> {
+    type Request = PerplexityCompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        PerplexityCompletionRequest::from_completion_request(self.model, request)
     }
 }
 
@@ -341,7 +369,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
 
     type Client = Client<T>;
 
@@ -349,96 +377,107 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "perplexity",
-                gen_ai.request.model = self.model,
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        if completion_request.tool_choice.is_some() {
-            tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");
-        }
-
-        if !completion_request.tools.is_empty() {
-            tracing::warn!("WARNING: `tools` not supported on Perplexity");
-        }
-        let request =
-            PerplexityCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
-
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "Perplexity completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/v1/chat/completions")?
-            .body(body)
-            .map_err(http_client::Error::from)?;
-
-        let async_block = async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record("gen_ai.usage.input_tokens", response.usage.prompt_tokens);
-                        span.record(
-                            "gen_ai.usage.output_tokens",
-                            response.usage.completion_tokens,
-                        );
-                        span.record("gen_ai.response.id", response.id.to_string());
-                        span.record("gen_ai.response.model", response.model.to_string());
-                        if tracing::enabled!(tracing::Level::TRACE) {
-                            tracing::trace!(target: "rig::responses",
-                                "Perplexity completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-                        Ok(response.try_into()?)
-                    }
-                    ApiResponse::Err(error) => Err(CompletionError::ProviderError(error.message)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "perplexity",
+                    gen_ai.request.model = self.model,
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
-            }
-        };
+                tracing::Span::current()
+            };
 
-        async_block.instrument(span).await
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+
+            if completion_request.tool_choice.is_some() {
+                tracing::warn!("WARNING: `tool_choice` not supported on Perplexity");
+            }
+
+            if !completion_request.tools.is_empty() {
+                tracing::warn!("WARNING: `tools` not supported on Perplexity");
+            }
+            let request = crate::completion::CompletionCodec::encode_request(
+                &PerplexityCompletionRequestCodec::new(self.model.as_ref()),
+                completion_request,
+            )?;
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "Perplexity completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
+            }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/v1/chat/completions")?
+                .body(body)
+                .map_err(http_client::Error::from)?;
+
+            let async_block = async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<CompletionResponse>>(&response_body)?
+                    {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record("gen_ai.usage.input_tokens", response.usage.prompt_tokens);
+                            span.record(
+                                "gen_ai.usage.output_tokens",
+                                response.usage.completion_tokens,
+                            );
+                            span.record("gen_ai.response.id", response.id.to_string());
+                            span.record("gen_ai.response.model", response.model.to_string());
+                            if tracing::enabled!(tracing::Level::TRACE) {
+                                tracing::trace!(target: "rig::responses",
+                                    "Perplexity completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+                            crate::completion::codec::response_events(
+                                &PerplexityCompletionCodec,
+                                response,
+                            )
+                        }
+                        ApiResponse::Err(error) => {
+                            Err(CompletionError::ProviderError(error.message))
+                        }
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            };
+
+            async_block.instrument(span).await
+        }
+        .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
         let span = if tracing::Span::current().is_disabled() {
             info_span!(
                 target: "rig::completions",
@@ -467,8 +506,10 @@ where
             tracing::warn!("WARNING: `tools` not supported on Perplexity");
         }
 
-        let mut request =
-            PerplexityCompletionRequest::try_from((self.model.as_ref(), completion_request))?;
+        let mut request = crate::completion::CompletionCodec::encode_request(
+            &PerplexityCompletionRequestCodec::new(self.model.as_ref()),
+            completion_request,
+        )?;
         request.stream = true;
 
         if tracing::enabled!(tracing::Level::TRACE) {

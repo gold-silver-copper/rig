@@ -11,7 +11,7 @@ use crate::{
 
 use super::client::{Client, together_ai_api_types::ApiResponse};
 use crate::completion::CompletionRequest;
-use crate::streaming::StreamingCompletionResponse;
+use crate::model_event::ModelEventStream;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, Level, enabled, info_span};
@@ -130,7 +130,7 @@ pub const WIZARDLM_13B_V1_2: &str = "WizardLM/WizardLM-13B-V1.2";
 // =================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct TogetherAICompletionRequest {
+pub(crate) struct TogetherAICompletionRequest {
     model: String,
     pub messages: Vec<openai::Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,10 +143,8 @@ pub(super) struct TogetherAICompletionRequest {
     pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
-    type Error = CompletionError;
-
-    fn try_from((model, req): (&str, CompletionRequest)) -> Result<Self, Self::Error> {
+impl TogetherAICompletionRequest {
+    fn from_completion_request(model: &str, req: CompletionRequest) -> Result<Self, CompletionError> {
         if req.output_schema.is_some() {
             tracing::warn!("Structured outputs currently not supported for TogetherAI");
         }
@@ -203,6 +201,27 @@ impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
     }
 }
 
+pub(crate) struct TogetherAICompletionRequestCodec<'a> {
+    model: &'a str,
+}
+
+impl<'a> TogetherAICompletionRequestCodec<'a> {
+    pub(crate) fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl crate::completion::CompletionCodec for TogetherAICompletionRequestCodec<'_> {
+    type Request = TogetherAICompletionRequest;
+
+    fn encode_request(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<Self::Request, CompletionError> {
+        TogetherAICompletionRequest::from_completion_request(self.model, request)
+    }
+}
+
 #[derive(Clone)]
 pub struct CompletionModel<T = reqwest::Client> {
     pub(crate) client: Client<T>,
@@ -223,7 +242,7 @@ where
     T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
 {
     type Response = openai::CompletionResponse;
-    type StreamingResponse = openai::StreamingCompletionResponse;
+    type StreamingResponse = openai::StreamingResponse;
 
     type Client = Client<T>;
 
@@ -231,96 +250,99 @@ where
         Self::new(client.clone(), model)
     }
 
-    async fn completion(
+    async fn events(
         &self,
         completion_request: completion::CompletionRequest,
-    ) -> Result<completion::CompletionResponse<openai::CompletionResponse>, CompletionError> {
-        let span = if tracing::Span::current().is_disabled() {
-            info_span!(
-                target: "rig::completions",
-                "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = "together",
-                gen_ai.request.model = self.model.to_string(),
-                gen_ai.system_instructions = tracing::field::Empty,
-                gen_ai.response.id = tracing::field::Empty,
-                gen_ai.response.model = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
-            )
-        } else {
-            tracing::Span::current()
-        };
-
-        span.record("gen_ai.system_instructions", &completion_request.preamble);
-
-        let request = TogetherAICompletionRequest::try_from((
-            self.model.to_string().as_ref(),
-            completion_request,
-        ))?;
-
-        if enabled!(Level::TRACE) {
-            tracing::trace!(target: "rig::completions",
-                "TogetherAI completion request: {}",
-                serde_json::to_string_pretty(&request)?
-            );
-        }
-
-        let body = serde_json::to_vec(&request)?;
-
-        let req = self
-            .client
-            .post("/v1/chat/completions")?
-            .body(body)
-            .map_err(|x| CompletionError::HttpError(x.into()))?;
-
-        async move {
-            let response = self.client.send::<_, Bytes>(req).await?;
-            let status = response.status();
-            let response_body = response.into_body().into_future().await?.to_vec();
-
-            if status.is_success() {
-                match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
-                    &response_body,
-                )? {
-                    ApiResponse::Ok(response) => {
-                        let span = tracing::Span::current();
-                        span.record("gen_ai.response.id", &response.id);
-                        span.record("gen_ai.response.model", &response.model);
-                        if let Some(ref usage) = response.usage {
-                            span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
-                            span.record(
-                                "gen_ai.usage.output_tokens",
-                                usage.total_tokens - usage.prompt_tokens,
-                            );
-                        }
-                        if enabled!(Level::TRACE) {
-                            tracing::trace!(
-                                target: "rig::completions",
-                                "TogetherAI completion response: {}",
-                                serde_json::to_string_pretty(&response)?
-                            );
-                        }
-                        response.try_into()
-                    }
-                    ApiResponse::Error(err) => Err(CompletionError::ProviderError(err.error)),
-                }
+    ) -> Result<crate::model_event::ModelEventStream<Self::Response>, CompletionError> {
+        async {
+            let span = if tracing::Span::current().is_disabled() {
+                info_span!(
+                    target: "rig::completions",
+                    "chat",
+                    gen_ai.operation.name = "chat",
+                    gen_ai.provider.name = "together",
+                    gen_ai.request.model = self.model.to_string(),
+                    gen_ai.system_instructions = tracing::field::Empty,
+                    gen_ai.response.id = tracing::field::Empty,
+                    gen_ai.response.model = tracing::field::Empty,
+                    gen_ai.usage.output_tokens = tracing::field::Empty,
+                    gen_ai.usage.input_tokens = tracing::field::Empty,
+                    gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                )
             } else {
-                Err(CompletionError::ProviderError(
-                    String::from_utf8_lossy(&response_body).to_string(),
-                ))
+                tracing::Span::current()
+            };
+
+            span.record("gen_ai.system_instructions", &completion_request.preamble);
+
+            let request = crate::completion::CompletionCodec::encode_request(
+                &TogetherAICompletionRequestCodec::new(self.model.as_str()),
+                completion_request,
+            )?;
+
+            if enabled!(Level::TRACE) {
+                tracing::trace!(target: "rig::completions",
+                    "TogetherAI completion request: {}",
+                    serde_json::to_string_pretty(&request)?
+                );
             }
+
+            let body = serde_json::to_vec(&request)?;
+
+            let req = self
+                .client
+                .post("/v1/chat/completions")?
+                .body(body)
+                .map_err(|x| CompletionError::HttpError(x.into()))?;
+
+            async move {
+                let response = self.client.send::<_, Bytes>(req).await?;
+                let status = response.status();
+                let response_body = response.into_body().into_future().await?.to_vec();
+
+                if status.is_success() {
+                    match serde_json::from_slice::<ApiResponse<openai::CompletionResponse>>(
+                        &response_body,
+                    )? {
+                        ApiResponse::Ok(response) => {
+                            let span = tracing::Span::current();
+                            span.record("gen_ai.response.id", &response.id);
+                            span.record("gen_ai.response.model", &response.model);
+                            if let Some(ref usage) = response.usage {
+                                span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+                                span.record(
+                                    "gen_ai.usage.output_tokens",
+                                    usage.total_tokens - usage.prompt_tokens,
+                                );
+                            }
+                            if enabled!(Level::TRACE) {
+                                tracing::trace!(
+                                    target: "rig::completions",
+                                    "TogetherAI completion response: {}",
+                                    serde_json::to_string_pretty(&response)?
+                                );
+                            }
+                            openai::completion_response_events(response)
+                        }
+                        ApiResponse::Error(err) => Err(CompletionError::ProviderError(err.error)),
+                    }
+                } else {
+                    Err(CompletionError::ProviderError(
+                        String::from_utf8_lossy(&response_body).to_string(),
+                    ))
+                }
+            }
+            .instrument(span)
+            .await
         }
-        .instrument(span)
         .await
     }
 
-    async fn stream(
+    async fn stream_events(
         &self,
         request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        CompletionModel::stream(self, request).await
+    ) -> Result<ModelEventStream<Self::StreamingResponse>, CompletionError> {
+        CompletionModel::stream_events(self, request).await
     }
 }
 
@@ -387,7 +409,10 @@ mod tests {
             output_schema: None,
         };
 
-        let result = TogetherAICompletionRequest::try_from(("meta-llama/test-model", request));
+        let result = crate::completion::CompletionCodec::encode_request(
+            &TogetherAICompletionRequestCodec::new("meta-llama/test-model"),
+            request,
+        );
         assert!(matches!(result, Err(CompletionError::RequestError(_))));
     }
 }

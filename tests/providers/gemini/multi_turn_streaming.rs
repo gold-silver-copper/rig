@@ -10,8 +10,9 @@ use rig::agent::Agent;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{self, CompletionError, CompletionModel, PromptError, ToolDefinition};
 use rig::message::{AssistantContent, Message, Text, ToolResultContent, UserContent};
+use rig::model_event::ModelEvent;
 use rig::providers::gemini;
-use rig::streaming::{StreamedAssistantContent, StreamingCompletion};
+use rig::streaming::StreamingCompletion;
 use rig::tool::{Tool, ToolError, ToolSetError};
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
@@ -32,7 +33,7 @@ enum StreamingError {
     Tool(#[from] ToolSetError),
 }
 
-type StreamingResult = Pin<Box<dyn Stream<Item = Result<Text, StreamingError>> + Send>>;
+type GeminiStreamingResult = Pin<Box<dyn Stream<Item = Result<Text, StreamingError>> + Send>>;
 
 #[tokio::test]
 #[ignore = "requires GEMINI_API_KEY"]
@@ -86,7 +87,7 @@ async fn multi_turn_prompt<M>(
     agent: Agent<M>,
     prompt: impl Into<Message> + Send,
     mut chat_history: Vec<completion::Message>,
-) -> StreamingResult
+) -> GeminiStreamingResult
 where
     M: CompletionModel + 'static,
     M::StreamingResponse: Send,
@@ -101,7 +102,7 @@ where
             let mut stream = agent
                 .stream_completion(current_prompt.clone(), &chat_history)
                 .await?
-                .stream()
+                .stream_events()
                 .await?;
 
             chat_history.push(current_prompt.clone());
@@ -110,11 +111,11 @@ where
 
             while let Some(content) = stream.next().await {
                 match content {
-                    Ok(StreamedAssistantContent::Text(text)) => {
-                        yield Ok(Text { text: text.text });
+                    ModelEvent::TextDelta { text } => {
+                        yield Ok(Text { text });
                         did_call_tool = false;
                     }
-                    Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
+                    ModelEvent::ToolCallDone { tool_call, .. } => {
                         let tool_result = agent
                             .tool_server_handle
                             .call_tool(
@@ -132,18 +133,24 @@ where
                         tool_results.push((tool_call.id, tool_call.call_id, tool_result));
                         did_call_tool = true;
                     }
-                    Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+                    ModelEvent::ReasoningDone { reasoning } => {
                         let rendered = reasoning.display_text();
                         if !rendered.is_empty() {
                             yield Ok(Text { text: rendered });
                         }
                         did_call_tool = false;
                     }
-                    Ok(_) => {}
-                    Err(error) => {
+                    ModelEvent::ReasoningDelta { text, .. } => {
+                        if !text.is_empty() {
+                            yield Ok(Text { text });
+                        }
+                        did_call_tool = false;
+                    }
+                    ModelEvent::Error { error } => {
                         yield Err(error.into());
                         break 'outer;
                     }
+                    _ => {}
                 }
             }
 
@@ -178,7 +185,7 @@ where
     })
 }
 
-async fn collect_text(stream: &mut StreamingResult) -> Result<String, StreamingError> {
+async fn collect_text(stream: &mut GeminiStreamingResult) -> Result<String, StreamingError> {
     let mut text = String::new();
     while let Some(content) = stream.next().await {
         text.push_str(&content?.text);
