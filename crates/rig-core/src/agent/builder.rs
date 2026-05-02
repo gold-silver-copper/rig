@@ -307,7 +307,7 @@ where
     where
         T: LocalRmcpTool,
     {
-        let toolname = futures::executor::block_on(tool.definition(String::new())).name;
+        let toolname = tool.name();
         let mut tools = RmcpToolRegistry::new();
         tools.add_local_tool(tool);
         AgentBuilder {
@@ -500,7 +500,7 @@ where
     where
         T: LocalRmcpTool,
     {
-        let toolname = futures::executor::block_on(tool.definition(String::new())).name;
+        let toolname = tool.name();
         self.tool_state.tools.add_local_tool(tool);
         self.tool_state.static_tools.push(toolname);
         self

@@ -48,6 +48,10 @@ impl LocalRmcpTool for Tool {
     type Args = serde_json::Value;
     type Output = CallToolResult;
 
+    fn name(&self) -> String {
+        self.name.to_string()
+    }
+
     async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
         crate::completion::ToolDefinition::from(self)
     }
@@ -66,6 +70,10 @@ impl LocalRmcpTool for crate::completion::ToolDefinition {
     type Error = ToolError;
     type Args = serde_json::Value;
     type Output = CallToolResult;
+
+    fn name(&self) -> String {
+        self.name.clone()
+    }
 
     async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
         self.clone()
@@ -140,6 +148,39 @@ where
         params: CallToolRequestParams,
     ) -> WasmBoxedFuture<'a, Result<CallToolResult, ToolServerError>> {
         Box::pin((self.handler)(params))
+    }
+}
+
+struct LocalToolProvider<T> {
+    tool: Arc<T>,
+}
+
+impl<T> RmcpToolProvider for LocalToolProvider<T>
+where
+    T: LocalRmcpTool,
+{
+    fn list_tools<'a>(&'a self) -> WasmBoxedFuture<'a, Result<Vec<Tool>, ToolServerError>> {
+        Box::pin(async move {
+            let definition = self.tool.definition(String::new()).await;
+            Ok(vec![definition.into()])
+        })
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        params: CallToolRequestParams,
+    ) -> WasmBoxedFuture<'a, Result<CallToolResult, ToolServerError>> {
+        Box::pin(async move {
+            let args =
+                serde_json::from_value::<T::Args>(params.arguments.unwrap_or_default().into())?;
+            let output = self
+                .tool
+                .call(args)
+                .await
+                .map_err(|e| ToolServerError::from(e.to_string()))?;
+            let value = serde_json::to_value(output)?;
+            Ok(CallToolResult::structured(value))
+        })
     }
 }
 
@@ -260,31 +301,12 @@ impl ToolServer {
     where
         T: LocalRmcpTool,
     {
-        let definition = futures::executor::block_on(tool.definition(String::new()));
+        let name = tool.name();
         let tool = Arc::new(tool);
-        let provider_tool = tool.clone();
-        let provider = Arc::new(ClosureToolProvider {
-            definition: definition.clone().into(),
-            handler: move |params: CallToolRequestParams| {
-                let tool = provider_tool.clone();
-                async move {
-                    let args = serde_json::from_value::<T::Args>(
-                        params.arguments.unwrap_or_default().into(),
-                    )?;
-                    let output = tool
-                        .call(args)
-                        .await
-                        .map_err(|e| ToolServerError::from(e.to_string()))?;
-                    let value = serde_json::to_value(output)?;
-                    Ok(CallToolResult::structured(value))
-                }
-            },
-        });
-        self.tools.insert(
-            definition.name.clone(),
-            local_registered_tool(tool, provider),
-        );
-        self.static_tool_names.push(definition.name);
+        let provider = Arc::new(LocalToolProvider { tool: tool.clone() });
+        self.tools
+            .insert(name.clone(), local_registered_tool(tool, provider));
+        self.static_tool_names.push(name);
         self
     }
 
@@ -351,28 +373,11 @@ impl RmcpToolRegistry {
     where
         T: LocalRmcpTool,
     {
-        let definition = futures::executor::block_on(tool.definition(String::new()));
+        let name = tool.name();
         let tool = Arc::new(tool);
-        let provider_tool = tool.clone();
-        let provider = Arc::new(ClosureToolProvider {
-            definition: definition.clone().into(),
-            handler: move |params: CallToolRequestParams| {
-                let tool = provider_tool.clone();
-                async move {
-                    let args = serde_json::from_value::<T::Args>(
-                        params.arguments.unwrap_or_default().into(),
-                    )?;
-                    let output = tool
-                        .call(args)
-                        .await
-                        .map_err(|e| ToolServerError::from(e.to_string()))?;
-                    let value = serde_json::to_value(output)?;
-                    Ok(CallToolResult::structured(value))
-                }
-            },
-        });
+        let provider = Arc::new(LocalToolProvider { tool: tool.clone() });
         self.tools
-            .insert(definition.name, local_registered_tool(tool, provider));
+            .insert(name, local_registered_tool(tool, provider));
     }
 
     pub fn add_remote_tools(&mut self, tools: Vec<Tool>, sink: ::rmcp::service::ServerSink) {
@@ -473,7 +478,9 @@ impl ToolServerHandle {
     ) -> Result<String, ToolServerError> {
         let result = self.call_tool(params).await?;
         if result.is_error == Some(true) {
-            return Ok(call_tool_result_to_text(&result)?);
+            return Err(ToolServerError::ToolResultError(call_tool_result_to_text(
+                &result,
+            )?));
         }
         Ok(call_tool_result_to_text(&result)?)
     }
@@ -558,6 +565,9 @@ pub enum ToolServerError {
 
     #[error("Remote MCP tool error: {0}")]
     RemoteMcp(#[from] ::rmcp::ServiceError),
+
+    #[error("MCP tool returned error: {0}")]
+    ToolResultError(String),
 }
 
 impl From<String> for ToolServerError {
@@ -584,6 +594,11 @@ pub fn error_result(message: impl Into<String>) -> CallToolResult {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use serde::{Deserialize, Serialize};
 
     use super::*;
@@ -726,6 +741,86 @@ mod tests {
             defs[0].description.as_deref(),
             Some("Definition for prompt: current user request")
         );
+    }
+
+    #[derive(Clone)]
+    struct CountingDefinitionTool {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl LocalRmcpTool for CountingDefinitionTool {
+        const NAME: &'static str = "counting_definition";
+
+        type Error = ToolError;
+        type Args = EchoArgs;
+        type Output = String;
+
+        async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            crate::completion::ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "Count definition calls".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string" }
+                    },
+                    "required": ["message"]
+                }),
+            }
+        }
+
+        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok(args.message)
+        }
+    }
+
+    #[tokio::test]
+    async fn local_rmcp_tool_registration_does_not_resolve_definition() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handle = ToolServer::new()
+            .local_rmcp_tool(CountingDefinitionTool {
+                calls: calls.clone(),
+            })
+            .run();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let defs = handle
+            .get_tool_defs(None)
+            .await
+            .expect("tool definitions should load");
+
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "counting_definition");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn call_tool_text_returns_error_for_mcp_error_result() {
+        let handle = ToolServer::new()
+            .rmcp_tool(
+                crate::tool::tool_from_schema(
+                    "failing_tool",
+                    "Fails",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {},
+                    }),
+                ),
+                |_params| async { Ok(error_result("remote failure")) },
+            )
+            .run();
+
+        let error = handle
+            .call_tool_text(CallToolRequestParams::new("failing_tool"))
+            .await
+            .expect_err("MCP error results should be returned as errors");
+
+        assert!(matches!(
+            error,
+            ToolServerError::ToolResultError(message) if message == "remote failure"
+        ));
     }
 
     #[test]
