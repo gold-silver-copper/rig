@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     completion::CompletionError,
-    tool::{ToolSetError, call_tool_result_to_text},
+    tool::{ToolError, call_tool_result_to_text},
     vector_store::{VectorSearchRequest, VectorStoreError, VectorStoreIndexDyn, request::Filter},
     wasm_compat::{WasmBoxedFuture, WasmCompatSend, WasmCompatSync},
 };
@@ -221,6 +221,10 @@ impl RmcpToolRegistry {
             );
         }
     }
+
+    pub fn extend(&mut self, registry: RmcpToolRegistry) {
+        self.tools.extend(registry.tools);
+    }
 }
 
 #[derive(Clone)]
@@ -286,9 +290,9 @@ impl ToolServerHandle {
 
         match provider {
             Some(provider) => provider.call_tool(params).await,
-            None => Err(ToolServerError::ToolsetError(
-                ToolSetError::ToolNotFoundError(tool_name),
-            )),
+            None => Err(ToolServerError::ToolsetError(ToolError::ToolNotFoundError(
+                tool_name,
+            ))),
         }
     }
 
@@ -366,8 +370,8 @@ impl ToolServerHandle {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolServerError {
-    #[error("Toolset error: {0}")]
-    ToolsetError(#[from] ToolSetError),
+    #[error("Tool error: {0}")]
+    ToolsetError(#[from] ToolError),
 
     #[error("Definition error: {0}")]
     DefinitionError(#[from] CompletionError),
@@ -378,7 +382,7 @@ pub enum ToolServerError {
 
 impl From<String> for ToolServerError {
     fn from(error: String) -> Self {
-        ToolSetError::ToolCallError(error).into()
+        ToolError::ToolCallError(error).into()
     }
 }
 
@@ -390,7 +394,7 @@ impl From<&str> for ToolServerError {
 
 impl From<serde_json::Error> for ToolServerError {
     fn from(error: serde_json::Error) -> Self {
-        ToolSetError::JsonError(error).into()
+        ToolError::JsonError(error).into()
     }
 }
 

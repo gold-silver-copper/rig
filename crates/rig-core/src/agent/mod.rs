@@ -31,8 +31,8 @@
 //!     .preamble("System prompt")
 //!     .context("Context document 1")
 //!     .context("Context document 2")
-//!     .tool(tool1)
-//!     .tool(tool2)
+//!     .rmcp_tool(tool1, handler1)
+//!     .rmcp_tool(tool2, handler2)
 //!     .temperature(0.8)
 //!     .additional_params(json!({"foo": "bar"}))
 //!     .build();

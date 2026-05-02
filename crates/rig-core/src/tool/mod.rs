@@ -15,7 +15,7 @@ use ::rmcp::model::{CallToolResult, Content, RawContent, ResourceContents};
 use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
-pub enum ToolSetError {
+pub enum ToolError {
     /// Could not find a tool.
     #[error("ToolNotFoundError: {0}")]
     ToolNotFoundError(String),
@@ -60,7 +60,7 @@ pub fn tool_from_schema(
 
 /// Convert an rmcp tool result to the text fallback used by providers that do not
 /// accept richer MCP result content directly.
-pub fn call_tool_result_to_text(result: &CallToolResult) -> Result<String, ToolSetError> {
+pub fn call_tool_result_to_text(result: &CallToolResult) -> Result<String, ToolError> {
     if let Some(value) = &result.structured_content {
         return Ok(value_to_model_text(value));
     }
@@ -79,7 +79,7 @@ fn value_to_model_text(value: &Value) -> String {
     }
 }
 
-fn content_to_text(content: &Content) -> Result<String, ToolSetError> {
+fn content_to_text(content: &Content) -> Result<String, ToolError> {
     match &content.raw {
         RawContent::Text(raw) => Ok(raw.text.clone()),
         RawContent::Image(raw) => Ok(format!("data:{};base64,{}", raw.mime_type, raw.data)),
@@ -109,10 +109,10 @@ fn content_to_text(content: &Content) -> Result<String, ToolSetError> {
                     .unwrap_or_default(),
             )),
         },
-        RawContent::Audio(_) => Err(ToolSetError::ToolCallError(
+        RawContent::Audio(_) => Err(ToolError::ToolCallError(
             "MCP tool returned audio content, which Rig does not support yet".to_string(),
         )),
-        other => Err(ToolSetError::ToolCallError(format!(
+        other => Err(ToolError::ToolCallError(format!(
             "MCP tool returned unsupported content: {other:?}"
         ))),
     }

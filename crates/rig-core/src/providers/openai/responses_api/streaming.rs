@@ -929,14 +929,9 @@ mod tests {
     use serde_json::{self, json};
 
     use crate::{
-        client::CompletionClient,
-        completion::{Message, ToolDefinition},
-        providers::openai,
-        streaming::StreamingChat,
-        tool::{Tool, ToolError},
+        client::CompletionClient, completion::Message, providers::openai, streaming::StreamingChat,
+        tool::server::ToolServerError,
     };
-
-    struct ExampleTool;
 
     impl Default for MockStreamingClient {
         fn default() -> Self {
@@ -1014,28 +1009,24 @@ mod tests {
         panic!("stream should yield a final response");
     }
 
-    impl Tool for ExampleTool {
-        type Args = ();
-        type Error = ToolError;
-        type Output = String;
-        const NAME: &'static str = "example_tool";
+    fn example_tool_definition() -> ::rmcp::model::Tool {
+        crate::tool::tool_from_schema(
+            "example_tool",
+            "A tool that returns some example text.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        )
+    }
 
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: self.name(),
-                description: "A tool that returns some example text.".to_string(),
-                parameters: serde_json::json!({
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                }),
-            }
-        }
-
-        async fn call(&self, _input: Self::Args) -> Result<Self::Output, Self::Error> {
-            let result = "Example answer".to_string();
-            Ok(result)
-        }
+    async fn call_example_tool(
+        _params: ::rmcp::model::CallToolRequestParams,
+    ) -> Result<::rmcp::model::CallToolResult, ToolServerError> {
+        Ok(::rmcp::model::CallToolResult::success(vec![
+            ::rmcp::model::Content::text("Example answer"),
+        ]))
     }
 
     #[test]
@@ -1434,7 +1425,7 @@ mod tests {
         let agent = client
             .agent("gpt-5.2")
             .max_tokens(8192)
-            .tool(ExampleTool)
+            .rmcp_tool(example_tool_definition(), call_example_tool)
             .additional_params(serde_json::json!({
                 "reasoning": {"effort": "high"}
             }))

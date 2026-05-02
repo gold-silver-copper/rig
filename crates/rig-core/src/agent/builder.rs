@@ -18,7 +18,7 @@ use super::Agent;
 ///
 /// This is the default state for a new `AgentBuilder`. From this state,
 /// you can either:
-/// - Add tools via `.tool()`, `.tools()`, `.dynamic_tools()`, etc. (transitions to `WithBuilderTools`)
+/// - Add tools via `.rmcp_tool()`, `.remote_rmcp_tools()`, `.dynamic_tools()`, etc. (transitions to `WithBuilderTools`)
 /// - Set a pre-existing `ToolServerHandle` via `.tool_server_handle()` (transitions to `WithToolServerHandle`)
 /// - Call `.build()` to create an agent with no tools
 #[derive(Default)]
@@ -26,7 +26,7 @@ pub struct NoToolConfig;
 
 /// Typestate indicating a pre-existing `ToolServerHandle` has been provided.
 ///
-/// In this state, tool-adding methods (`.tool()`, `.tools()`, etc.) are not available.
+/// In this state, tool-adding methods (`.rmcp_tool()`, `.remote_rmcp_tools()`, etc.) are not available.
 /// The provided handle will be used directly when building the agent.
 pub struct WithToolServerHandle {
     handle: ToolServerHandle,
@@ -34,7 +34,7 @@ pub struct WithToolServerHandle {
 
 /// Typestate indicating tools are being configured via the builder API.
 ///
-/// In this state, you can continue adding tools via `.tool()`, `.tools()`,
+/// In this state, you can continue adding tools via `.rmcp_tool()`, `.remote_rmcp_tools()`,
 /// `.dynamic_tools()`, etc. When `.build()` is called, a new `ToolServer`
 /// will be created with all the configured tools.
 pub struct WithBuilderTools {
@@ -47,7 +47,7 @@ pub struct WithBuilderTools {
 ///
 /// The builder uses a typestate pattern to enforce that tool configuration
 /// is done in a mutually exclusive way: either provide a pre-existing
-/// `ToolServerHandle`, or add tools via the builder API, but not both.
+/// `ToolServerHandle`, or add rmcp-native tools via the builder API, but not both.
 ///
 /// # Example
 /// ```
@@ -62,8 +62,8 @@ pub struct WithBuilderTools {
 ///     .preamble("System prompt")
 ///     .context("Context document 1")
 ///     .context("Context document 2")
-///     .tool(tool1)
-///     .tool(tool2)
+///     .rmcp_tool(tool1, handler1)
+///     .rmcp_tool(tool2, handler2)
 ///     .temperature(0.8)
 ///     .additional_params(json!({"foo": "bar"}))
 ///     .build();
@@ -239,7 +239,7 @@ where
 {
     /// Set a pre-existing ToolServerHandle for the agent.
     ///
-    /// After calling this method, tool-adding methods (`.tool()`, `.tools()`, etc.)
+    /// After calling this method, tool-adding methods (`.rmcp_tool()`, `.remote_rmcp_tools()`, etc.)
     /// will not be available. Use this when you want to share a `ToolServer`
     /// between multiple agents or have pre-configured tools.
     pub fn tool_server_handle(
@@ -487,14 +487,14 @@ where
         self.tool_state
             .dynamic_tools
             .push((sample, Arc::new(dynamic_tools)));
-        self.tool_state.tools = registry;
+        self.tool_state.tools.extend(registry);
         self
     }
 
     /// Build the agent with the configured tools.
     ///
     /// A new `ToolServer` will be created containing all tools added via
-    /// `.tool()`, `.tools()`, `.dynamic_tools()`, etc.
+    /// `.rmcp_tool()`, `.remote_rmcp_tools()`, `.dynamic_tools()`, etc.
     pub fn build(self) -> Agent<M, P> {
         let tool_server_handle = ToolServer::new()
             .static_tool_names(self.tool_state.static_tools)

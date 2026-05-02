@@ -20,7 +20,7 @@ use crate::{
     agent::Agent,
     completion::{CompletionError, CompletionModel, PromptError},
     message::{Message, Text},
-    tool::ToolSetError,
+    tool::ToolError,
 };
 
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
@@ -186,8 +186,8 @@ pub enum StreamingError {
     Completion(#[from] CompletionError),
     #[error("PromptError: {0}")]
     Prompt(#[from] Box<PromptError>),
-    #[error("ToolSetError: {0}")]
-    Tool(#[from] ToolSetError),
+    #[error("ToolError: {0}")]
+    Tool(#[from] ToolError),
 }
 
 const UNKNOWN_AGENT_NAME: &str = "Unnamed Agent";

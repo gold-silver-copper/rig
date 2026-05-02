@@ -72,7 +72,7 @@ use crate::{OneOrMany, http_client};
 use crate::{
     json_utils,
     message::{Message, UserContent},
-    tool::ToolSetError,
+    tool::ToolError,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -123,7 +123,7 @@ pub enum PromptError {
 
     /// There was an error while using a tool
     #[error("ToolCallError: {0}")]
-    ToolError(#[from] ToolSetError),
+    ToolError(#[from] ToolError),
 
     /// There was an issue while executing a tool on a tool server
     #[error("ToolServerError: {0}")]

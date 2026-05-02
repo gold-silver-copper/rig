@@ -1,11 +1,15 @@
-use crate::{
-    agent::Agent,
-    completion::{CompletionModel, Prompt, PromptError, ToolDefinition},
-    tool::Tool,
-};
+use std::sync::Arc;
+
+use ::rmcp::model::{CallToolRequestParams, CallToolResult, Content, Tool};
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+use crate::{
+    agent::Agent,
+    completion::{CompletionModel, Prompt},
+    tool::server::ToolServerError,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentToolArgs {
@@ -13,14 +17,11 @@ pub struct AgentToolArgs {
     prompt: String,
 }
 
-impl<M: CompletionModel + 'static> Tool for Agent<M> {
-    const NAME: &'static str = "agent_tool";
-
-    type Error = PromptError;
-    type Args = AgentToolArgs;
-    type Output = String;
-
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
+impl<M> Agent<M>
+where
+    M: CompletionModel + 'static,
+{
+    pub fn rmcp_tool_definition(&self) -> Tool {
         let description = format!(
             "
             Prompt a sub-agent to do a task for you.
@@ -33,18 +34,39 @@ impl<M: CompletionModel + 'static> Tool for Agent<M> {
             description = self.description.clone().unwrap_or_default(),
             sysprompt = self.preamble.clone().unwrap_or_default()
         );
-        ToolDefinition {
-            name: <Self as Tool>::name(self),
+
+        crate::tool::tool_from_schema(
+            self.name.clone().unwrap_or_else(|| "agent_tool".to_string()),
             description,
-            parameters: json!(schema_for!(AgentToolArgs)),
-        }
+            json!(schema_for!(AgentToolArgs)),
+        )
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        self.prompt(args.prompt).await
-    }
+    pub fn into_rmcp_tool_handler(
+        self,
+    ) -> (
+        Tool,
+        impl Fn(CallToolRequestParams) -> crate::wasm_compat::WasmBoxedFuture<'static, Result<CallToolResult, ToolServerError>>
+        + Clone
+        + crate::wasm_compat::WasmCompatSend
+        + crate::wasm_compat::WasmCompatSync
+        + 'static,
+    ) {
+        let tool = self.rmcp_tool_definition();
+        let agent = Arc::new(self);
+        let handler = move |params: CallToolRequestParams| {
+            let agent = agent.clone();
+            Box::pin(async move {
+                let args = serde_json::from_value::<AgentToolArgs>(
+                    params.arguments.unwrap_or_default().into(),
+                )?;
+                let output = agent.prompt(args.prompt).await.map_err(|e| {
+                    ToolServerError::from(format!("Agent tool prompt failed: {e}"))
+                })?;
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }) as crate::wasm_compat::WasmBoxedFuture<'static, Result<CallToolResult, ToolServerError>>
+        };
 
-    fn name(&self) -> String {
-        self.name.clone().unwrap_or_else(|| Self::NAME.to_string())
+        (tool, handler)
     }
 }
