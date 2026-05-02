@@ -235,6 +235,7 @@ impl TryFrom<(&str, CompletionRequest)> for GroqCompletionRequest {
                 .tools
                 .clone()
                 .into_iter()
+                .map(crate::completion::ToolDefinition::from)
                 .map(ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,

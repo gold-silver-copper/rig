@@ -1,21 +1,16 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, future::Future, sync::Arc};
 
 use schemars::{JsonSchema, Schema, schema_for};
+
+use ::rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
 
 use crate::{
     agent::prompt_request::hooks::PromptHook,
     completion::{CompletionModel, Document},
     message::ToolChoice,
-    tool::{
-        Tool, ToolDyn, ToolSet,
-        server::{ToolServer, ToolServerHandle},
-    },
+    tool::server::{RmcpToolRegistry, ToolServer, ToolServerError, ToolServerHandle},
     vector_store::VectorStoreIndexDyn,
 };
-
-#[cfg(feature = "rmcp")]
-#[cfg_attr(docsrs, doc(cfg(feature = "rmcp")))]
-use crate::tool::rmcp::McpTool as RmcpTool;
 
 use super::Agent;
 
@@ -44,7 +39,7 @@ pub struct WithToolServerHandle {
 /// will be created with all the configured tools.
 pub struct WithBuilderTools {
     static_tools: Vec<String>,
-    tools: ToolSet,
+    tools: RmcpToolRegistry,
     dynamic_tools: Vec<(usize, Arc<dyn VectorStoreIndexDyn + Send + Sync>)>,
 }
 
@@ -269,12 +264,20 @@ where
         }
     }
 
-    /// Add a static tool to the agent.
-    ///
-    /// This transitions the builder to the `WithBuilderTools` state, where
-    /// additional tools can be added but `tool_server_handle()` is no longer available.
-    pub fn tool(self, tool: impl Tool + 'static) -> AgentBuilder<M, P, WithBuilderTools> {
-        let toolname = tool.name();
+    /// Add an rmcp-native static tool to the agent.
+    pub fn rmcp_tool<F, Fut>(self, tool: Tool, handler: F) -> AgentBuilder<M, P, WithBuilderTools>
+    where
+        F: Fn(CallToolRequestParams) -> Fut
+            + crate::wasm_compat::WasmCompatSend
+            + crate::wasm_compat::WasmCompatSync
+            + 'static,
+        Fut: Future<Output = Result<CallToolResult, ToolServerError>>
+            + crate::wasm_compat::WasmCompatSend
+            + 'static,
+    {
+        let toolname = tool.name.to_string();
+        let mut tools = RmcpToolRegistry::new();
+        tools.add_tool(tool, handler);
         AgentBuilder {
             name: self.name,
             description: self.description,
@@ -289,7 +292,7 @@ where
             default_max_turns: self.default_max_turns,
             tool_state: WithBuilderTools {
                 static_tools: vec![toolname],
-                tools: ToolSet::from_tools(vec![tool]),
+                tools,
                 dynamic_tools: vec![],
             },
             hook: self.hook,
@@ -297,13 +300,15 @@ where
         }
     }
 
-    /// Add a vector of boxed static tools to the agent.
-    ///
-    /// This is useful when you need to dynamically add static tools to the agent.
-    /// Transitions the builder to the `WithBuilderTools` state.
-    pub fn tools(self, tools: Vec<Box<dyn ToolDyn>>) -> AgentBuilder<M, P, WithBuilderTools> {
-        let static_tools = tools.iter().map(|tool| tool.name()).collect();
-        let tools = ToolSet::from_tools_boxed(tools);
+    /// Add remote MCP tools to the agent.
+    pub fn remote_rmcp_tools(
+        self,
+        tools: Vec<::rmcp::model::Tool>,
+        client: ::rmcp::service::ServerSink,
+    ) -> AgentBuilder<M, P, WithBuilderTools> {
+        let static_tools = tools.iter().map(|tool| tool.name.to_string()).collect();
+        let mut registry = RmcpToolRegistry::new();
+        registry.add_remote_tools(tools, client);
 
         AgentBuilder {
             name: self.name,
@@ -321,87 +326,7 @@ where
             output_schema: self.output_schema,
             tool_state: WithBuilderTools {
                 static_tools,
-                tools,
-                dynamic_tools: vec![],
-            },
-        }
-    }
-
-    /// Add an MCP tool (from `rmcp`) to the agent.
-    ///
-    /// Transitions the builder to the `WithBuilderTools` state.
-    #[cfg(feature = "rmcp")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "rmcp")))]
-    pub fn rmcp_tool(
-        self,
-        tool: rmcp::model::Tool,
-        client: rmcp::service::ServerSink,
-    ) -> AgentBuilder<M, P, WithBuilderTools> {
-        let toolname = tool.name.clone().to_string();
-        let tools = ToolSet::from_tools(vec![RmcpTool::from_mcp_server(tool, client)]);
-
-        AgentBuilder {
-            name: self.name,
-            description: self.description,
-            model: self.model,
-            preamble: self.preamble,
-            static_context: self.static_context,
-            additional_params: self.additional_params,
-            max_tokens: self.max_tokens,
-            dynamic_context: self.dynamic_context,
-            temperature: self.temperature,
-            tool_choice: self.tool_choice,
-            default_max_turns: self.default_max_turns,
-            hook: self.hook,
-            output_schema: self.output_schema,
-            tool_state: WithBuilderTools {
-                static_tools: vec![toolname],
-                tools,
-                dynamic_tools: vec![],
-            },
-        }
-    }
-
-    /// Add an array of MCP tools (from `rmcp`) to the agent.
-    ///
-    /// Transitions the builder to the `WithBuilderTools` state.
-    #[cfg(feature = "rmcp")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "rmcp")))]
-    pub fn rmcp_tools(
-        self,
-        tools: Vec<rmcp::model::Tool>,
-        client: rmcp::service::ServerSink,
-    ) -> AgentBuilder<M, P, WithBuilderTools> {
-        let (static_tools, tools) = tools.into_iter().fold(
-            (Vec::new(), Vec::new()),
-            |(mut toolnames, mut toolset), tool| {
-                let tool_name = tool.name.to_string();
-                let tool = RmcpTool::from_mcp_server(tool, client.clone());
-                toolnames.push(tool_name);
-                toolset.push(tool);
-                (toolnames, toolset)
-            },
-        );
-
-        let tools = ToolSet::from_tools(tools);
-
-        AgentBuilder {
-            name: self.name,
-            description: self.description,
-            model: self.model,
-            preamble: self.preamble,
-            static_context: self.static_context,
-            additional_params: self.additional_params,
-            max_tokens: self.max_tokens,
-            dynamic_context: self.dynamic_context,
-            temperature: self.temperature,
-            tool_choice: self.tool_choice,
-            default_max_turns: self.default_max_turns,
-            hook: self.hook,
-            output_schema: self.output_schema,
-            tool_state: WithBuilderTools {
-                static_tools,
-                tools,
+                tools: registry,
                 dynamic_tools: vec![],
             },
         }
@@ -415,7 +340,7 @@ where
         self,
         sample: usize,
         dynamic_tools: impl VectorStoreIndexDyn + Send + Sync + 'static,
-        toolset: ToolSet,
+        registry: RmcpToolRegistry,
     ) -> AgentBuilder<M, P, WithBuilderTools> {
         AgentBuilder {
             name: self.name,
@@ -433,7 +358,7 @@ where
             output_schema: self.output_schema,
             tool_state: WithBuilderTools {
                 static_tools: vec![],
-                tools: toolset,
+                tools: registry,
                 dynamic_tools: vec![(sample, Arc::new(dynamic_tools))],
             },
         }
@@ -521,38 +446,33 @@ where
     M: CompletionModel,
     P: PromptHook<M>,
 {
-    /// Add another static tool to the agent.
-    pub fn tool(mut self, tool: impl Tool + 'static) -> Self {
-        let toolname = tool.name();
-        self.tool_state.tools.add_tool(tool);
+    /// Add another rmcp-native static tool to the agent.
+    pub fn rmcp_tool<F, Fut>(mut self, tool: Tool, handler: F) -> Self
+    where
+        F: Fn(CallToolRequestParams) -> Fut
+            + crate::wasm_compat::WasmCompatSend
+            + crate::wasm_compat::WasmCompatSync
+            + 'static,
+        Fut: Future<Output = Result<CallToolResult, ToolServerError>>
+            + crate::wasm_compat::WasmCompatSend
+            + 'static,
+    {
+        let toolname = tool.name.to_string();
+        self.tool_state.tools.add_tool(tool, handler);
         self.tool_state.static_tools.push(toolname);
         self
     }
 
-    /// Add a vector of boxed static tools to the agent.
-    pub fn tools(mut self, tools: Vec<Box<dyn ToolDyn>>) -> Self {
-        let toolnames: Vec<String> = tools.iter().map(|tool| tool.name()).collect();
-        let tools = ToolSet::from_tools_boxed(tools);
-        self.tool_state.tools.add_tools(tools);
-        self.tool_state.static_tools.extend(toolnames);
-        self
-    }
-
-    /// Add an array of MCP tools (from `rmcp`) to the agent.
-    #[cfg(feature = "rmcp")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "rmcp")))]
-    pub fn rmcp_tools(
+    /// Add remote MCP tools to the agent.
+    pub fn remote_rmcp_tools(
         mut self,
-        tools: Vec<rmcp::model::Tool>,
-        client: rmcp::service::ServerSink,
+        tools: Vec<::rmcp::model::Tool>,
+        client: ::rmcp::service::ServerSink,
     ) -> Self {
-        for tool in tools {
-            let tool_name = tool.name.to_string();
-            let tool = RmcpTool::from_mcp_server(tool, client.clone());
-            self.tool_state.static_tools.push(tool_name);
-            self.tool_state.tools.add_tool(tool);
-        }
-
+        self.tool_state
+            .static_tools
+            .extend(tools.iter().map(|tool| tool.name.to_string()));
+        self.tool_state.tools.add_remote_tools(tools, client);
         self
     }
 
@@ -562,12 +482,12 @@ where
         mut self,
         sample: usize,
         dynamic_tools: impl VectorStoreIndexDyn + Send + Sync + 'static,
-        toolset: ToolSet,
+        registry: RmcpToolRegistry,
     ) -> Self {
         self.tool_state
             .dynamic_tools
             .push((sample, Arc::new(dynamic_tools)));
-        self.tool_state.tools.add_tools(toolset);
+        self.tool_state.tools = registry;
         self
     }
 
@@ -578,7 +498,7 @@ where
     pub fn build(self) -> Agent<M, P> {
         let tool_server_handle = ToolServer::new()
             .static_tool_names(self.tool_state.static_tools)
-            .add_tools(self.tool_state.tools)
+            .add_registry(self.tool_state.tools)
             .add_dynamic_tools(self.tool_state.dynamic_tools)
             .run();
 

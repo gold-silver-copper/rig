@@ -8,18 +8,17 @@
 //!
 //! Use [`VectorSearchRequest`] to build queries. See [`request`] for filtering.
 //!
-//! Types implementing [`VectorStoreIndex`] automatically implement [`Tool`].
+//! Types implementing [`VectorStoreIndex`] can be exposed as tools by registering
+//! rmcp-native tool definitions and handlers with an agent tool registry.
 
 pub use request::VectorSearchRequest;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
     Embed, OneOrMany,
-    completion::ToolDefinition,
     embeddings::{Embedding, EmbeddingError},
-    tool::Tool,
     vector_store::request::{Filter, FilterError, SearchFilter},
     wasm_compat::{WasmBoxedFuture, WasmCompatSend, WasmCompatSync},
 };
@@ -170,62 +169,6 @@ pub struct VectorStoreOutput {
     pub score: f64,
     pub id: String,
     pub document: Value,
-}
-
-impl<T, F> Tool for T
-where
-    F: SearchFilter<Value = serde_json::Value>
-        + WasmCompatSend
-        + WasmCompatSync
-        + for<'de> Deserialize<'de>,
-    T: VectorStoreIndex<Filter = F>,
-{
-    const NAME: &'static str = "search_vector_store";
-
-    type Error = VectorStoreError;
-    type Args = VectorSearchRequest<F>;
-    type Output = Vec<VectorStoreOutput>;
-
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description:
-                "Retrieves the most relevant documents from a vector store based on a query."
-                    .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The query string to search for relevant documents in the vector store."
-                    },
-                    "samples": {
-                        "type": "integer",
-                        "description": "The maxinum number of samples / documents to retrieve.",
-                        "default": 5,
-                        "minimum": 1
-                    },
-                    "threshold": {
-                        "type": "number",
-                        "description": "Similarity search threshold. If present, any result with a distance less than this may be omitted from the final result."
-                    }
-                },
-                "required": ["query", "samples"]
-            }),
-        }
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let results = self.top_n(args).await?;
-        Ok(results
-            .into_iter()
-            .map(|(score, id, document)| VectorStoreOutput {
-                score,
-                id,
-                document,
-            })
-            .collect())
-    }
 }
 
 /// Index strategy for the super::InMemoryVectorStore

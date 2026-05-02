@@ -78,6 +78,7 @@ impl TryFrom<(&str, CompletionRequest)> for XAICompletionRequest {
         let mut tools = req
             .tools
             .into_iter()
+            .map(crate::completion::ToolDefinition::from)
             .map(ToolDefinition::from)
             .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()?;

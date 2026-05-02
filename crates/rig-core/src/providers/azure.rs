@@ -657,6 +657,7 @@ impl TryFrom<(&str, CompletionRequest)> for AzureOpenAICompletionRequest {
                 .tools
                 .clone()
                 .into_iter()
+                .map(crate::completion::ToolDefinition::from)
                 .map(openai::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,

@@ -195,6 +195,7 @@ impl TryFrom<(&str, CompletionRequest)> for TogetherAICompletionRequest {
                 .tools
                 .clone()
                 .into_iter()
+                .map(crate::completion::ToolDefinition::from)
                 .map(crate::providers::openai::completion::ToolDefinition::from)
                 .collect::<Vec<_>>(),
             tool_choice,

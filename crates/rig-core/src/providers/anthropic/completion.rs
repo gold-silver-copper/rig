@@ -1278,6 +1278,7 @@ impl TryFrom<AnthropicRequestParams<'_>> for AnthropicCompletionRequest {
         let mut tools = req
             .tools
             .into_iter()
+            .map(crate::completion::ToolDefinition::from)
             .map(|tool| ToolDefinition {
                 name: tool.name,
                 description: Some(tool.description),

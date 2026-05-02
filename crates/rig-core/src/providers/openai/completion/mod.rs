@@ -1177,7 +1177,7 @@ impl TryFrom<OpenAIRequestParams> for CompletionRequest {
         let tools: Vec<ToolDefinition> = tools
             .into_iter()
             .map(|tool| {
-                let def = ToolDefinition::from(tool);
+                let def = ToolDefinition::from(crate::completion::ToolDefinition::from(tool));
                 if strict_tools { def.with_strict() } else { def }
             })
             .collect();

@@ -150,6 +150,7 @@ pub(crate) fn create_grpc_request(
     let tools = if !tools.is_empty() {
         let function_declarations = tools
             .into_iter()
+            .map(rig_core::completion::ToolDefinition::from)
             .map(|tool| proto::FunctionDeclaration {
                 name: tool.name,
                 description: tool.description,

@@ -1626,7 +1626,9 @@ impl TryFrom<OpenRouterRequestParams<'_>> for OpenrouterCompletionRequest {
             .clone()
             .into_iter()
             .map(|tool| {
-                let def = crate::providers::openai::completion::ToolDefinition::from(tool);
+                let def = crate::providers::openai::completion::ToolDefinition::from(
+                    crate::completion::ToolDefinition::from(tool),
+                );
                 if strict_tools { def.with_strict() } else { def }
             })
             .collect();

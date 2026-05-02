@@ -558,8 +558,19 @@ where
                                 tool_span.record("gen_ai.tool.name", &tool_call.function.name);
                                 tool_span.record("gen_ai.tool.call.arguments", &tool_args);
 
+                                let params = match serde_json::from_str::<::rmcp::model::JsonObject>(&tool_args)
+                                {
+                                    Ok(arguments) => ::rmcp::model::CallToolRequestParams::new(
+                                        tool_call.function.name.clone(),
+                                    )
+                                    .with_arguments(arguments),
+                                    Err(_) => ::rmcp::model::CallToolRequestParams::new(
+                                        tool_call.function.name.clone(),
+                                    ),
+                                };
+
                                 let tool_result = match
-                                tool_server_handle.call_tool(&tool_call.function.name, &tool_args).await {
+                                tool_server_handle.call_tool_text(params).await {
                                     Ok(thing) => thing,
                                     Err(e) => {
                                         tracing::warn!("Error while calling tool: {e}");

@@ -331,6 +331,7 @@ impl TryFrom<(&str, CompletionRequest)> for LlamafileCompletionRequest {
             tools: req
                 .tools
                 .into_iter()
+                .map(crate::completion::ToolDefinition::from)
                 .map(openai::ToolDefinition::from)
                 .collect(),
             additional_params: req.additional_params,

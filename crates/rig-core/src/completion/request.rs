@@ -212,6 +212,18 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value,
 }
 
+impl From<&::rmcp::model::Tool> for ToolDefinition {
+    fn from(tool: &::rmcp::model::Tool) -> Self {
+        crate::tool::tool_to_function_schema(tool)
+    }
+}
+
+impl From<::rmcp::model::Tool> for ToolDefinition {
+    fn from(tool: ::rmcp::model::Tool) -> Self {
+        Self::from(&tool)
+    }
+}
+
 /// Provider-native tool definition.
 ///
 /// Stored under `additional_params.tools` and forwarded by providers that support
@@ -516,7 +528,7 @@ pub struct CompletionRequest {
     /// The documents to be sent to the completion model provider
     pub documents: Vec<Document>,
     /// The tools to be sent to the completion model provider
-    pub tools: Vec<ToolDefinition>,
+    pub tools: Vec<::rmcp::model::Tool>,
     /// The temperature to be sent to the completion model provider
     pub temperature: Option<f64>,
     /// The max tokens to be sent to the completion model provider
@@ -672,7 +684,7 @@ pub struct CompletionRequestBuilder<M: CompletionModel> {
     preamble: Option<String>,
     chat_history: Vec<Message>,
     documents: Vec<Document>,
-    tools: Vec<ToolDefinition>,
+    tools: Vec<::rmcp::model::Tool>,
     provider_tools: Vec<ProviderToolDefinition>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
@@ -752,13 +764,13 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
     }
 
     /// Adds a tool to the completion request.
-    pub fn tool(mut self, tool: ToolDefinition) -> Self {
+    pub fn tool(mut self, tool: ::rmcp::model::Tool) -> Self {
         self.tools.push(tool);
         self
     }
 
     /// Adds a list of tools to the completion request.
-    pub fn tools(self, tools: Vec<ToolDefinition>) -> Self {
+    pub fn tools(self, tools: Vec<::rmcp::model::Tool>) -> Self {
         tools
             .into_iter()
             .fold(self, |builder, tool| builder.tool(tool))

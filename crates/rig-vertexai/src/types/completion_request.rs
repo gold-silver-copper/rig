@@ -56,10 +56,11 @@ impl VertexCompletionRequest {
             .tools
             .iter()
             .map(|tool_def| {
+                let tool_def = rig_core::completion::ToolDefinition::from(tool_def);
                 vertexai::model::FunctionDeclaration::new()
-                    .set_name(tool_def.name.clone())
-                    .set_description(tool_def.description.clone())
-                    .set_parameters_json_schema(tool_def.parameters.clone())
+                    .set_name(tool_def.name)
+                    .set_description(tool_def.description)
+                    .set_parameters_json_schema(tool_def.parameters)
             })
             .collect();
 

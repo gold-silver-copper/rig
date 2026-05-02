@@ -265,6 +265,10 @@ pub(crate) fn create_request_body(
     let mut tools = if function_tools.is_empty() {
         Vec::new()
     } else {
+        let function_tools = function_tools
+            .into_iter()
+            .map(crate::completion::ToolDefinition::from)
+            .collect::<Vec<_>>();
         vec![serde_json::to_value(Tool::try_from(function_tools)?)?]
     };
     tools.append(&mut additional_tools);

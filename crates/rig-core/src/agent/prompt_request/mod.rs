@@ -587,8 +587,17 @@ where
                                     }
                                 }
                             }
-                            let output = match tool_server_handle.call_tool(tool_name, &args).await
-                            {
+                            let params =
+                                match serde_json::from_str::<::rmcp::model::JsonObject>(&args) {
+                                    Ok(arguments) => ::rmcp::model::CallToolRequestParams::new(
+                                        tool_name.to_string(),
+                                    )
+                                    .with_arguments(arguments),
+                                    Err(_) => ::rmcp::model::CallToolRequestParams::new(
+                                        tool_name.to_string(),
+                                    ),
+                                };
+                            let output = match tool_server_handle.call_tool_text(params).await {
                                 Ok(res) => res,
                                 Err(e) => {
                                     tracing::warn!("Error while executing tool: {e}");

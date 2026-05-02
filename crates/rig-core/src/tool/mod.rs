@@ -1,276 +1,30 @@
-//! Module defining tool related structs and traits.
+//! Rmcp-native tool orchestration.
 //!
-//! The [Tool] trait defines a simple interface for creating tools that can be used
-//! by [Agents](crate::agent::Agent).
-//!
-//! The [ToolEmbedding] trait extends the [Tool] trait to allow for tools that can be
-//! stored in a vector store and RAGged.
-//!
-//! The [ToolSet] struct is a collection of tools that can be used by an [Agent](crate::agent::Agent)
-//! and optionally RAGged.
+//! Rig uses `::rmcp::model::Tool` as the canonical tool definition,
+//! `::rmcp::model::CallToolRequestParams` as the canonical invocation request,
+//! and `::rmcp::model::CallToolResult` as the canonical execution result.
 
 pub mod server;
-use std::collections::HashMap;
-use std::fmt;
-use std::sync::Arc;
-
-use futures::Future;
-use serde::{Deserialize, Serialize};
-
-use crate::{
-    completion::{self, ToolDefinition},
-    embeddings::{embed::EmbedError, tool::ToolSchema},
-    wasm_compat::{WasmBoxedFuture, WasmCompatSend, WasmCompatSync},
-};
-
-#[derive(Debug, thiserror::Error)]
-pub enum ToolError {
-    #[cfg(not(target_family = "wasm"))]
-    /// Error returned by the tool
-    ToolCallError(#[from] Box<dyn std::error::Error + Send + Sync>),
-
-    #[cfg(target_family = "wasm")]
-    /// Error returned by the tool
-    ToolCallError(#[from] Box<dyn std::error::Error>),
-    /// Error caused by a de/serialization fail
-    JsonError(#[from] serde_json::Error),
-}
-
-impl fmt::Display for ToolError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ToolError::ToolCallError(e) => {
-                let error_str = e.to_string();
-                // This is required due to being able to use agents as tools
-                // which means it is possible to get recursive tool call errors
-                if error_str.starts_with("ToolCallError: ") {
-                    write!(f, "{}", error_str)
-                } else {
-                    write!(f, "ToolCallError: {}", error_str)
-                }
-            }
-            ToolError::JsonError(e) => write!(f, "JsonError: {e}"),
-        }
-    }
-}
-
-/// Trait that represents a simple LLM tool
-///
-/// # Example
-/// ```
-/// use rig::{
-///     completion::ToolDefinition,
-///     tool::{ToolSet, Tool},
-/// };
-///
-/// #[derive(serde::Deserialize)]
-/// struct AddArgs {
-///     x: i32,
-///     y: i32,
-/// }
-///
-/// #[derive(Debug, thiserror::Error)]
-/// #[error("Math error")]
-/// struct MathError;
-///
-/// #[derive(serde::Deserialize, serde::Serialize)]
-/// struct Adder;
-///
-/// impl Tool for Adder {
-///     const NAME: &'static str = "add";
-///
-///     type Error = MathError;
-///     type Args = AddArgs;
-///     type Output = i32;
-///
-///     async fn definition(&self, _prompt: String) -> ToolDefinition {
-///         ToolDefinition {
-///             name: "add".to_string(),
-///             description: "Add x and y together".to_string(),
-///             parameters: serde_json::json!({
-///                 "type": "object",
-///                 "properties": {
-///                     "x": {
-///                         "type": "number",
-///                         "description": "The first number to add"
-///                     },
-///                     "y": {
-///                         "type": "number",
-///                         "description": "The second number to add"
-///                     }
-///                 }
-///             })
-///         }
-///     }
-///
-///     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-///         let result = args.x + args.y;
-///         Ok(result)
-///     }
-/// }
-/// ```
-pub trait Tool: Sized + WasmCompatSend + WasmCompatSync {
-    /// The name of the tool. This name should be unique within a single
-    /// [`ToolSet`] or other registration scope that dispatches tools by name.
-    const NAME: &'static str;
-
-    /// The error type of the tool.
-    type Error: std::error::Error + WasmCompatSend + WasmCompatSync + 'static;
-    /// The arguments type of the tool.
-    type Args: for<'a> Deserialize<'a> + WasmCompatSend + WasmCompatSync;
-    /// The output type of the tool.
-    type Output: Serialize;
-
-    /// A method returning the name of the tool.
-    fn name(&self) -> String {
-        Self::NAME.to_string()
-    }
-
-    /// A method returning the tool definition. The user prompt can be used to
-    /// tailor the definition to the specific use case.
-    fn definition(
-        &self,
-        _prompt: String,
-    ) -> impl Future<Output = ToolDefinition> + WasmCompatSend + WasmCompatSync;
-
-    /// The tool execution method.
-    /// Both the arguments and return value are a String since these values are meant to
-    /// be the output and input of LLM models (respectively)
-    fn call(
-        &self,
-        args: Self::Args,
-    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + WasmCompatSend;
-}
-
-/// Trait that represents an LLM tool that can be stored in a vector store and RAGged
-pub trait ToolEmbedding: Tool {
-    type InitError: std::error::Error + WasmCompatSend + WasmCompatSync + 'static;
-
-    /// Type of the tool' context. This context will be saved and loaded from the
-    /// vector store when ragging the tool.
-    /// This context can be used to store the tool's static configuration and local
-    /// context.
-    type Context: for<'a> Deserialize<'a> + Serialize;
-
-    /// Type of the tool's state. This state will be passed to the tool when initializing it.
-    /// This state can be used to pass runtime arguments to the tool such as clients,
-    /// API keys and other configuration.
-    type State: WasmCompatSend;
-
-    /// A method returning the documents that will be used as embeddings for the tool.
-    /// This allows for a tool to be retrieved from multiple embedding "directions".
-    /// If the tool will not be RAGged, this method should return an empty vector.
-    fn embedding_docs(&self) -> Vec<String>;
-
-    /// A method returning the context of the tool.
-    fn context(&self) -> Self::Context;
-
-    /// A method to initialize the tool from the context, and a state.
-    fn init(state: Self::State, context: Self::Context) -> Result<Self, Self::InitError>;
-}
-
-/// Wrapper trait to allow for dynamic dispatch of simple tools
-pub trait ToolDyn: WasmCompatSend + WasmCompatSync {
-    fn name(&self) -> String;
-
-    fn definition<'a>(&'a self, prompt: String) -> WasmBoxedFuture<'a, ToolDefinition>;
-
-    fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>>;
-}
-
-fn serialize_tool_output(output: impl Serialize) -> serde_json::Result<String> {
-    match serde_json::to_value(output)? {
-        serde_json::Value::String(text) => Ok(text),
-        value => Ok(value.to_string()),
-    }
-}
-
-impl<T: Tool> ToolDyn for T {
-    fn name(&self) -> String {
-        self.name()
-    }
-
-    fn definition<'a>(&'a self, prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
-        Box::pin(<Self as Tool>::definition(self, prompt))
-    }
-
-    fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
-        Box::pin(async move {
-            match serde_json::from_str(&args) {
-                Ok(args) => <Self as Tool>::call(self, args)
-                    .await
-                    .map_err(|e| ToolError::ToolCallError(Box::new(e)))
-                    .and_then(|output| serialize_tool_output(output).map_err(ToolError::JsonError)),
-                Err(e) => Err(ToolError::JsonError(e)),
-            }
-        })
-    }
-}
 
 #[cfg(feature = "rmcp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rmcp")))]
 pub mod rmcp;
 
-/// Wrapper trait to allow for dynamic dispatch of raggable tools
-pub trait ToolEmbeddingDyn: ToolDyn {
-    fn context(&self) -> serde_json::Result<serde_json::Value>;
-
-    fn embedding_docs(&self) -> Vec<String>;
-}
-
-impl<T> ToolEmbeddingDyn for T
-where
-    T: ToolEmbedding + 'static,
-{
-    fn context(&self) -> serde_json::Result<serde_json::Value> {
-        serde_json::to_value(self.context())
-    }
-
-    fn embedding_docs(&self) -> Vec<String> {
-        self.embedding_docs()
-    }
-}
-
-#[derive(Clone)]
-pub(crate) enum ToolType {
-    Simple(Arc<dyn ToolDyn>),
-    Embedding(Arc<dyn ToolEmbeddingDyn>),
-}
-
-impl ToolType {
-    pub fn name(&self) -> String {
-        match self {
-            ToolType::Simple(tool) => tool.name(),
-            ToolType::Embedding(tool) => tool.name(),
-        }
-    }
-
-    pub async fn definition(&self, prompt: String) -> ToolDefinition {
-        match self {
-            ToolType::Simple(tool) => tool.definition(prompt).await,
-            ToolType::Embedding(tool) => tool.definition(prompt).await,
-        }
-    }
-
-    pub async fn call(&self, args: String) -> Result<String, ToolError> {
-        match self {
-            ToolType::Simple(tool) => tool.call(args).await,
-            ToolType::Embedding(tool) => tool.call(args).await,
-        }
-    }
-}
+pub use ::rmcp::model::Tool;
+use ::rmcp::model::{CallToolResult, Content, RawContent, ResourceContents};
+use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolSetError {
-    /// Error returned by the tool
-    #[error("ToolCallError: {0}")]
-    ToolCallError(#[from] ToolError),
-
-    /// Could not find a tool
+    /// Could not find a tool.
     #[error("ToolNotFoundError: {0}")]
     ToolNotFoundError(String),
 
-    // TODO: Revisit this
+    /// Error returned while executing a tool.
+    #[error("ToolCallError: {0}")]
+    ToolCallError(String),
+
+    /// JSON serialization or deserialization failed.
     #[error("JsonError: {0}")]
     JsonError(#[from] serde_json::Error),
 
@@ -279,423 +33,87 @@ pub enum ToolSetError {
     Interrupted,
 }
 
-/// A struct that holds a set of tools
-#[derive(Default)]
-pub struct ToolSet {
-    pub(crate) tools: HashMap<String, ToolType>,
-}
-
-impl ToolSet {
-    /// Create a new ToolSet from a list of tools
-    pub fn from_tools(tools: Vec<impl ToolDyn + 'static>) -> Self {
-        let mut toolset = Self::default();
-        tools.into_iter().for_each(|tool| {
-            toolset.add_tool(tool);
-        });
-        toolset
-    }
-
-    pub fn from_tools_boxed(tools: Vec<Box<dyn ToolDyn + 'static>>) -> Self {
-        let mut toolset = Self::default();
-        tools.into_iter().for_each(|tool| {
-            toolset.add_tool_boxed(tool);
-        });
-        toolset
-    }
-
-    /// Create a toolset builder
-    pub fn builder() -> ToolSetBuilder {
-        ToolSetBuilder::default()
-    }
-
-    /// Check if the toolset contains a tool with the given name
-    pub fn contains(&self, toolname: &str) -> bool {
-        self.tools.contains_key(toolname)
-    }
-
-    /// Add a tool to the toolset
-    pub fn add_tool(&mut self, tool: impl ToolDyn + 'static) {
-        self.tools
-            .insert(tool.name(), ToolType::Simple(Arc::new(tool)));
-    }
-
-    /// Adds a boxed tool to the toolset. Useful for situations when dynamic dispatch is required.
-    pub fn add_tool_boxed(&mut self, tool: Box<dyn ToolDyn>) {
-        self.tools
-            .insert(tool.name(), ToolType::Simple(Arc::from(tool)));
-    }
-
-    pub fn delete_tool(&mut self, tool_name: &str) {
-        let _ = self.tools.remove(tool_name);
-    }
-
-    /// Merge another toolset into this one
-    pub fn add_tools(&mut self, toolset: ToolSet) {
-        self.tools.extend(toolset.tools);
-    }
-
-    pub(crate) fn get(&self, toolname: &str) -> Option<&ToolType> {
-        self.tools.get(toolname)
-    }
-
-    pub async fn get_tool_definitions(&self) -> Result<Vec<ToolDefinition>, ToolSetError> {
-        let mut defs = Vec::new();
-        for tool in self.tools.values() {
-            let def = tool.definition(String::new()).await;
-            defs.push(def);
-        }
-        Ok(defs)
-    }
-
-    /// Call a tool with the given name and arguments
-    pub async fn call(&self, toolname: &str, args: String) -> Result<String, ToolSetError> {
-        if let Some(tool) = self.tools.get(toolname) {
-            tracing::debug!(target: "rig",
-                "Calling tool {toolname} with args:\n{}",
-                args
-            );
-            Ok(tool.call(args).await?)
-        } else {
-            Err(ToolSetError::ToolNotFoundError(toolname.to_string()))
-        }
-    }
-
-    /// Get the documents of all the tools in the toolset
-    pub async fn documents(&self) -> Result<Vec<completion::Document>, ToolSetError> {
-        let mut docs = Vec::new();
-        for tool in self.tools.values() {
-            match tool {
-                ToolType::Simple(tool) => {
-                    docs.push(completion::Document {
-                        id: tool.name(),
-                        text: format!(
-                            "\
-                            Tool: {}\n\
-                            Definition: \n\
-                            {}\
-                        ",
-                            tool.name(),
-                            serde_json::to_string_pretty(&tool.definition("".to_string()).await)?
-                        ),
-                        additional_props: HashMap::new(),
-                    });
-                }
-                ToolType::Embedding(tool) => {
-                    docs.push(completion::Document {
-                        id: tool.name(),
-                        text: format!(
-                            "\
-                            Tool: {}\n\
-                            Definition: \n\
-                            {}\
-                        ",
-                            tool.name(),
-                            serde_json::to_string_pretty(&tool.definition("".to_string()).await)?
-                        ),
-                        additional_props: HashMap::new(),
-                    });
-                }
-            }
-        }
-        Ok(docs)
-    }
-
-    /// Convert tools in self to objects of type ToolSchema.
-    /// This is necessary because when adding tools to the EmbeddingBuilder because all
-    /// documents added to the builder must all be of the same type.
-    pub fn schemas(&self) -> Result<Vec<ToolSchema>, EmbedError> {
-        self.tools
-            .values()
-            .filter_map(|tool_type| {
-                if let ToolType::Embedding(tool) = tool_type {
-                    Some(ToolSchema::try_from(&**tool))
-                } else {
-                    None
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()
+/// Convert an rmcp tool definition into Rig's provider-boundary function schema.
+pub fn tool_to_function_schema(tool: &Tool) -> crate::completion::ToolDefinition {
+    crate::completion::ToolDefinition {
+        name: tool.name.to_string(),
+        description: tool.description.clone().unwrap_or_default().to_string(),
+        parameters: tool.schema_as_json_value(),
     }
 }
 
-#[derive(Default)]
-pub struct ToolSetBuilder {
-    tools: Vec<ToolType>,
+/// Build an rmcp tool definition from the provider-boundary function schema shape.
+pub fn tool_from_schema(
+    name: impl Into<std::borrow::Cow<'static, str>>,
+    description: impl Into<std::borrow::Cow<'static, str>>,
+    parameters: serde_json::Value,
+) -> Tool {
+    Tool::new(
+        name,
+        description,
+        match parameters {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        },
+    )
 }
 
-impl ToolSetBuilder {
-    pub fn static_tool(mut self, tool: impl ToolDyn + 'static) -> Self {
-        self.tools.push(ToolType::Simple(Arc::new(tool)));
-        self
+/// Convert an rmcp tool result to the text fallback used by providers that do not
+/// accept richer MCP result content directly.
+pub fn call_tool_result_to_text(result: &CallToolResult) -> Result<String, ToolSetError> {
+    if let Some(value) = &result.structured_content {
+        return Ok(value_to_model_text(value));
     }
 
-    pub fn dynamic_tool(mut self, tool: impl ToolEmbeddingDyn + 'static) -> Self {
-        self.tools.push(ToolType::Embedding(Arc::new(tool)));
-        self
+    let mut text = String::new();
+    for item in &result.content {
+        text.push_str(&content_to_text(item)?);
     }
+    Ok(text)
+}
 
-    pub fn build(self) -> ToolSet {
-        ToolSet {
-            tools: self
-                .tools
-                .into_iter()
-                .map(|tool| (tool.name(), tool))
-                .collect(),
-        }
+fn value_to_model_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        value => value.to_string(),
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::message::{DocumentSourceKind, ToolResultContent};
-    use serde_json::json;
-
-    use super::*;
-
-    fn get_test_toolset() -> ToolSet {
-        let mut toolset = ToolSet::default();
-
-        #[derive(Deserialize)]
-        struct OperationArgs {
-            x: i32,
-            y: i32,
-        }
-
-        #[derive(Debug, thiserror::Error)]
-        #[error("Math error")]
-        struct MathError;
-
-        #[derive(Deserialize, Serialize)]
-        struct Adder;
-
-        impl Tool for Adder {
-            const NAME: &'static str = "add";
-            type Error = MathError;
-            type Args = OperationArgs;
-            type Output = i32;
-
-            async fn definition(&self, _prompt: String) -> ToolDefinition {
-                ToolDefinition {
-                    name: "add".to_string(),
-                    description: "Add x and y together".to_string(),
-                    parameters: json!({
-                        "type": "object",
-                        "properties": {
-                            "x": {
-                                "type": "number",
-                                "description": "The first number to add"
-                            },
-                            "y": {
-                                "type": "number",
-                                "description": "The second number to add"
-                            }
-                        },
-                        "required": ["x", "y"]
-                    }),
-                }
-            }
-
-            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-                let result = args.x + args.y;
-                Ok(result)
-            }
-        }
-
-        #[derive(Deserialize, Serialize)]
-        struct Subtract;
-
-        impl Tool for Subtract {
-            const NAME: &'static str = "subtract";
-            type Error = MathError;
-            type Args = OperationArgs;
-            type Output = i32;
-
-            async fn definition(&self, _prompt: String) -> ToolDefinition {
-                serde_json::from_value(json!({
-                    "name": "subtract",
-                    "description": "Subtract y from x (i.e.: x - y)",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "x": {
-                                "type": "number",
-                                "description": "The number to subtract from"
-                            },
-                            "y": {
-                                "type": "number",
-                                "description": "The number to subtract"
-                            }
-                        },
-                        "required": ["x", "y"]
-                    }
-                }))
-                .expect("Tool Definition")
-            }
-
-            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-                let result = args.x - args.y;
-                Ok(result)
-            }
-        }
-
-        toolset.add_tool(Adder);
-        toolset.add_tool(Subtract);
-        toolset
-    }
-
-    #[tokio::test]
-    async fn test_get_tool_definitions() {
-        let toolset = get_test_toolset();
-        let tools = toolset.get_tool_definitions().await.unwrap();
-        assert_eq!(tools.len(), 2);
-    }
-
-    #[test]
-    fn test_tool_deletion() {
-        let mut toolset = get_test_toolset();
-        assert_eq!(toolset.tools.len(), 2);
-        toolset.delete_tool("add");
-        assert!(!toolset.contains("add"));
-        assert_eq!(toolset.tools.len(), 1);
-    }
-
-    #[derive(Debug, thiserror::Error)]
-    #[error("Test tool error")]
-    struct TestToolError;
-
-    #[derive(Deserialize, Serialize)]
-    struct StringOutputTool;
-
-    impl Tool for StringOutputTool {
-        const NAME: &'static str = "string_output";
-        type Error = TestToolError;
-        type Args = serde_json::Value;
-        type Output = String;
-
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: Self::NAME.to_string(),
-                description: "Returns a multiline string".to_string(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }
-        }
-
-        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-            Ok("Hello\nWorld".to_string())
-        }
-    }
-
-    #[tokio::test]
-    async fn string_tool_outputs_are_preserved_verbatim() {
-        let mut toolset = ToolSet::default();
-        toolset.add_tool(StringOutputTool);
-
-        let output = toolset
-            .call("string_output", "{}".to_string())
-            .await
-            .expect("tool should succeed");
-
-        assert_eq!(output, "Hello\nWorld");
-    }
-
-    #[derive(Deserialize, Serialize)]
-    struct ImageOutputTool;
-
-    impl Tool for ImageOutputTool {
-        const NAME: &'static str = "image_output";
-        type Error = TestToolError;
-        type Args = serde_json::Value;
-        type Output = String;
-
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: Self::NAME.to_string(),
-                description: "Returns image JSON".to_string(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }
-        }
-
-        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-            Ok(json!({
-                "type": "image",
-                "data": "base64data==",
-                "mimeType": "image/png"
-            })
-            .to_string())
-        }
-    }
-
-    #[tokio::test]
-    async fn structured_string_tool_outputs_remain_parseable() {
-        let mut toolset = ToolSet::default();
-        toolset.add_tool(ImageOutputTool);
-
-        let output = toolset
-            .call("image_output", "{}".to_string())
-            .await
-            .expect("tool should succeed");
-        let content = ToolResultContent::from_tool_output(output);
-
-        assert_eq!(content.len(), 1);
-        match content.first() {
-            ToolResultContent::Image(image) => {
-                assert!(matches!(image.data, DocumentSourceKind::Base64(_)));
-                assert_eq!(image.media_type, Some(crate::message::ImageMediaType::PNG));
-            }
-            other => panic!("expected image tool result content, got {other:?}"),
-        }
-    }
-
-    #[derive(Deserialize, Serialize)]
-    struct ObjectOutputTool;
-
-    impl Tool for ObjectOutputTool {
-        const NAME: &'static str = "object_output";
-        type Error = TestToolError;
-        type Args = serde_json::Value;
-        type Output = serde_json::Value;
-
-        async fn definition(&self, _prompt: String) -> ToolDefinition {
-            ToolDefinition {
-                name: Self::NAME.to_string(),
-                description: "Returns an object".to_string(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-            }
-        }
-
-        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-            Ok(json!({
-                "status": "ok",
-                "count": 42
-            }))
-        }
-    }
-
-    #[tokio::test]
-    async fn object_tool_outputs_still_serialize_as_json() {
-        let mut toolset = ToolSet::default();
-        toolset.add_tool(ObjectOutputTool);
-
-        let output = toolset
-            .call("object_output", "{}".to_string())
-            .await
-            .expect("tool should succeed");
-
-        assert!(output.starts_with('{'));
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&output).unwrap(),
-            json!({
-                "status": "ok",
-                "count": 42
-            })
-        );
+fn content_to_text(content: &Content) -> Result<String, ToolSetError> {
+    match &content.raw {
+        RawContent::Text(raw) => Ok(raw.text.clone()),
+        RawContent::Image(raw) => Ok(format!("data:{};base64,{}", raw.mime_type, raw.data)),
+        RawContent::Resource(raw) => match &raw.resource {
+            ResourceContents::TextResourceContents {
+                uri,
+                mime_type,
+                text,
+                ..
+            } => Ok(format!(
+                "{mime_type}{uri}:{text}",
+                mime_type = mime_type
+                    .as_ref()
+                    .map(|m| format!("data:{m};"))
+                    .unwrap_or_default(),
+            )),
+            ResourceContents::BlobResourceContents {
+                uri,
+                mime_type,
+                blob,
+                ..
+            } => Ok(format!(
+                "{mime_type}{uri}:{blob}",
+                mime_type = mime_type
+                    .as_ref()
+                    .map(|m| format!("data:{m};"))
+                    .unwrap_or_default(),
+            )),
+        },
+        RawContent::Audio(_) => Err(ToolSetError::ToolCallError(
+            "MCP tool returned audio content, which Rig does not support yet".to_string(),
+        )),
+        other => Err(ToolSetError::ToolCallError(format!(
+            "MCP tool returned unsupported content: {other:?}"
+        ))),
     }
 }

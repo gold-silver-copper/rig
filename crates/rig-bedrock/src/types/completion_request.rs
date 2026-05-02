@@ -49,12 +49,13 @@ impl AwsCompletionRequest {
     pub fn tools_config(&self) -> Result<Option<ToolConfiguration>, CompletionError> {
         let mut tools = vec![];
         for tool_definition in self.inner.tools.iter() {
+            let tool_definition = rig_core::completion::ToolDefinition::from(tool_definition);
             let doc: AwsDocument = tool_definition.parameters.clone().into();
             let schema = ToolInputSchema::Json(doc.0);
             let tool = Tool::ToolSpec(
                 ToolSpecification::builder()
-                    .name(tool_definition.name.clone())
-                    .set_description(Some(tool_definition.description.clone()))
+                    .name(tool_definition.name)
+                    .set_description(Some(tool_definition.description))
                     .set_input_schema(Some(schema))
                     .build()
                     .map_err(|e| CompletionError::RequestError(e.into()))?,
