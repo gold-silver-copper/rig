@@ -310,6 +310,17 @@ fn is_empty_assistant_turn(choice: &OneOrMany<AssistantContent>) -> bool {
         )
 }
 
+fn tool_result_content_to_text(content: &OneOrMany<ToolResultContent>) -> String {
+    content
+        .iter()
+        .map(|content| match content {
+            ToolResultContent::Text(text) => text.text.clone(),
+            ToolResultContent::Image(_) => "[Image]".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl<M, P> PromptRequest<Extended, M, P>
 where
     M: CompletionModel,
@@ -587,7 +598,7 @@ where
                                     }
                                 }
                             }
-                            let output =
+                            let (output_text, output_content) =
                                 match serde_json::from_str::<::rmcp::model::JsonObject>(&args) {
                                     Ok(arguments) => {
                                         let params =
@@ -595,11 +606,15 @@ where
                                                 tool_name.to_string(),
                                             )
                                             .with_arguments(arguments);
-                                        match tool_server_handle.call_tool_text(params).await {
-                                            Ok(res) => res,
+                                        match tool_server_handle.call_tool_content(params).await {
+                                            Ok(res) => (tool_result_content_to_text(&res), res),
                                             Err(e) => {
                                                 tracing::warn!("Error while executing tool: {e}");
-                                                e.to_string()
+                                                let text = e.to_string();
+                                                (
+                                                    text.clone(),
+                                                    ToolResultContent::from_tool_output(text),
+                                                )
                                             }
                                         }
                                     }
@@ -608,7 +623,10 @@ where
                                             "ToolCallError: invalid arguments for tool '{tool_name}': {e}"
                                         );
                                         tracing::warn!("{message}");
-                                        message
+                                        (
+                                            message.clone(),
+                                            ToolResultContent::from_tool_output(message),
+                                        )
                                     }
                                 };
                             if let Some(hook) = hook2
@@ -618,7 +636,7 @@ where
                                         tool_call.call_id.clone(),
                                         &internal_call_id,
                                         &args,
-                                        &output.to_string(),
+                                        &output_text,
                                     )
                                     .await
                             {
@@ -628,20 +646,20 @@ where
                                 ));
                             }
 
-                            tool_span.record("gen_ai.tool.call.result", &output);
+                            tool_span.record("gen_ai.tool.call.result", &output_text);
                             tracing::info!(
-                                "executed tool {tool_name} with args {args}. result: {output}"
+                                "executed tool {tool_name} with args {args}. result: {output_text}"
                             );
                             if let Some(call_id) = tool_call.call_id.clone() {
                                 Ok(UserContent::tool_result_with_call_id(
                                     tool_call.id.clone(),
                                     call_id,
-                                    ToolResultContent::from_tool_output(output),
+                                    output_content,
                                 ))
                             } else {
                                 Ok(UserContent::tool_result(
                                     tool_call.id.clone(),
-                                    ToolResultContent::from_tool_output(output),
+                                    output_content,
                                 ))
                             }
                         } else {

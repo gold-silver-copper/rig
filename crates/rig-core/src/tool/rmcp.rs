@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ::rmcp::ServiceExt;
 use tokio::sync::RwLock;
 
-use crate::tool::server::{ToolServerError, ToolServerHandle};
+use crate::tool::server::{RemoteToolRegistration, ToolServerError, ToolServerHandle};
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpClientError {
@@ -24,7 +24,7 @@ pub enum McpClientError {
 pub struct McpClientHandler {
     client_info: ::rmcp::model::ClientInfo,
     tool_server_handle: ToolServerHandle,
-    managed_tool_names: Arc<RwLock<Vec<String>>>,
+    managed_tools: Arc<RwLock<Option<RemoteToolRegistration>>>,
 }
 
 impl McpClientHandler {
@@ -35,7 +35,7 @@ impl McpClientHandler {
         Self {
             client_info,
             tool_server_handle,
-            managed_tool_names: Arc::new(RwLock::new(Vec::new())),
+            managed_tools: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -54,12 +54,12 @@ impl McpClientHandler {
         let tools = service.peer().list_all_tools().await?;
         {
             let handler = service.service();
-            let mut managed = handler.managed_tool_names.write().await;
-            let tool_names = handler
+            let mut managed = handler.managed_tools.write().await;
+            let registration = handler
                 .tool_server_handle
                 .replace_remote_tools(managed.clone(), tools, service.peer().clone())
                 .await?;
-            *managed = tool_names;
+            *managed = Some(registration);
         }
 
         Ok(service)
@@ -83,19 +83,18 @@ impl ::rmcp::handler::client::ClientHandler for McpClientHandler {
             }
         };
 
-        let mut managed = self.managed_tool_names.write().await;
-        let tool_names = tools
-            .iter()
-            .map(|tool| tool.name.to_string())
-            .collect::<Vec<_>>();
-        if let Err(e) = self
+        let mut managed = self.managed_tools.write().await;
+        let registration = match self
             .tool_server_handle
             .replace_remote_tools(managed.clone(), tools, context.peer.clone())
             .await
         {
-            tracing::error!("Failed to refresh MCP tools: {e}");
-            return;
-        }
-        *managed = tool_names;
+            Ok(registration) => registration,
+            Err(e) => {
+                tracing::error!("Failed to refresh MCP tools: {e}");
+                return;
+            }
+        };
+        *managed = Some(registration);
     }
 }

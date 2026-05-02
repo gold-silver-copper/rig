@@ -567,10 +567,17 @@ where
                     .tool_server_handle
                     .call_tool_text(
                         ::rmcp::model::CallToolRequestParams::new(tool_call.function.name.clone())
-                            .with_arguments(match tool_call.function.arguments.clone() {
-                                serde_json::Value::Object(map) => map,
-                                _ => serde_json::Map::new(),
-                            }),
+                            .with_arguments(
+                                crate::json_utils::parse_tool_arguments(
+                                    &crate::json_utils::value_to_json_string(
+                                        &tool_call.function.arguments,
+                                    ),
+                                )
+                                .map_err(|x| std::io::Error::other(x.to_string()))?
+                                .as_object()
+                                .cloned()
+                                .unwrap_or_default(),
+                            ),
                     )
                     .await
                     .map_err(|x| std::io::Error::other(x.to_string()))?;

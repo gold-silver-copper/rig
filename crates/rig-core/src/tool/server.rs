@@ -1,11 +1,20 @@
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use ::rmcp::model::{CallToolRequestParams, CallToolResult, Content, Tool};
 use tokio::sync::RwLock;
 
 use crate::{
+    OneOrMany,
     completion::CompletionError,
-    tool::{ToolError, call_tool_result_to_text},
+    message::ToolResultContent,
+    tool::{ToolError, call_tool_result_to_content, call_tool_result_to_text},
     vector_store::{VectorSearchRequest, VectorStoreError, VectorStoreIndexDyn, request::Filter},
     wasm_compat::{WasmBoxedFuture, WasmCompatSend, WasmCompatSync},
 };
@@ -91,6 +100,18 @@ impl LocalRmcpTool for crate::completion::ToolDefinition {
 struct RegisteredTool {
     definition: Arc<dyn RmcpToolDefinitionProvider>,
     provider: Arc<dyn RmcpToolProvider>,
+    owner: ToolOwner,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToolOwner {
+    Local,
+    Remote(u64),
+}
+
+fn next_remote_owner_id() -> u64 {
+    static NEXT_REMOTE_OWNER_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_REMOTE_OWNER_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 trait RmcpToolDefinitionProvider: WasmCompatSend + WasmCompatSync {
@@ -187,11 +208,20 @@ where
 #[derive(Clone)]
 pub struct RemoteToolProvider {
     sink: ::rmcp::service::ServerSink,
+    owner_id: u64,
 }
 
 impl RemoteToolProvider {
     pub fn new(sink: ::rmcp::service::ServerSink) -> Self {
-        Self { sink }
+        Self::with_owner(sink, next_remote_owner_id())
+    }
+
+    fn with_owner(sink: ::rmcp::service::ServerSink, owner_id: u64) -> Self {
+        Self { sink, owner_id }
+    }
+
+    fn owner(&self) -> ToolOwner {
+        ToolOwner::Remote(self.owner_id)
     }
 }
 
@@ -223,12 +253,17 @@ pub struct ToolServer {
     tools: HashMap<String, RegisteredTool>,
 }
 
-fn static_registered_tool(tool: Tool, provider: Arc<dyn RmcpToolProvider>) -> RegisteredTool {
+fn static_registered_tool(
+    tool: Tool,
+    provider: Arc<dyn RmcpToolProvider>,
+    owner: ToolOwner,
+) -> RegisteredTool {
     RegisteredTool {
         definition: Arc::new(StaticToolDefinitionProvider {
             definition: tool.clone(),
         }),
         provider,
+        owner,
     }
 }
 
@@ -239,6 +274,7 @@ where
     RegisteredTool {
         definition: Arc::new(LocalToolDefinitionProvider { tool }),
         provider,
+        owner: ToolOwner::Local,
     }
 }
 
@@ -291,8 +327,10 @@ impl ToolServer {
             definition: tool.clone(),
             handler,
         });
-        self.tools
-            .insert(name.clone(), static_registered_tool(tool, provider));
+        self.tools.insert(
+            name.clone(),
+            static_registered_tool(tool, provider, ToolOwner::Local),
+        );
         self.static_tool_names.push(name);
         self
     }
@@ -316,10 +354,13 @@ impl ToolServer {
         sink: ::rmcp::service::ServerSink,
     ) -> Self {
         let provider = Arc::new(RemoteToolProvider::new(sink));
+        let owner = provider.owner();
         for tool in tools {
             let name = tool.name.to_string();
-            self.tools
-                .insert(name.clone(), static_registered_tool(tool, provider.clone()));
+            self.tools.insert(
+                name.clone(),
+                static_registered_tool(tool, provider.clone(), owner),
+            );
             self.static_tool_names.push(name);
         }
         self
@@ -365,8 +406,10 @@ impl RmcpToolRegistry {
             definition: tool.clone(),
             handler,
         });
-        self.tools
-            .insert(name, static_registered_tool(tool, provider));
+        self.tools.insert(
+            name,
+            static_registered_tool(tool, provider, ToolOwner::Local),
+        );
     }
 
     pub fn add_local_tool<T>(&mut self, tool: T)
@@ -382,10 +425,11 @@ impl RmcpToolRegistry {
 
     pub fn add_remote_tools(&mut self, tools: Vec<Tool>, sink: ::rmcp::service::ServerSink) {
         let provider = Arc::new(RemoteToolProvider::new(sink));
+        let owner = provider.owner();
         for tool in tools {
             self.tools.insert(
                 tool.name.to_string(),
-                static_registered_tool(tool, provider.clone()),
+                static_registered_tool(tool, provider.clone(), owner),
             );
         }
     }
@@ -397,6 +441,12 @@ impl RmcpToolRegistry {
 
 #[derive(Clone)]
 pub struct ToolServerHandle(Arc<RwLock<ToolServerState>>);
+
+#[derive(Clone, Debug, Default)]
+pub struct RemoteToolRegistration {
+    owner_id: u64,
+    tool_names: Vec<String>,
+}
 
 impl ToolServerHandle {
     pub async fn add_rmcp_tool<F, Fut>(&self, tool: Tool, handler: F) -> Result<(), ToolServerError>
@@ -432,23 +482,33 @@ impl ToolServerHandle {
         tools: Vec<Tool>,
         sink: ::rmcp::service::ServerSink,
     ) -> Result<(), ToolServerError> {
-        self.replace_remote_tools(Vec::new(), tools, sink)
+        self.replace_remote_tools(None, tools, sink)
             .await
             .map(|_| ())
     }
 
     pub async fn replace_remote_tools(
         &self,
-        previous_tool_names: Vec<String>,
+        previous: Option<RemoteToolRegistration>,
         tools: Vec<Tool>,
         sink: ::rmcp::service::ServerSink,
-    ) -> Result<Vec<String>, ToolServerError> {
-        self.replace_remote_tools_with_provider(
-            previous_tool_names,
-            tools,
-            Arc::new(RemoteToolProvider::new(sink)),
-        )
-        .await
+    ) -> Result<RemoteToolRegistration, ToolServerError> {
+        let owner_id = previous
+            .as_ref()
+            .map(|previous| previous.owner_id)
+            .unwrap_or_else(next_remote_owner_id);
+        let previous_tool_names = previous
+            .map(|previous| previous.tool_names)
+            .unwrap_or_default();
+        let provider = Arc::new(RemoteToolProvider::with_owner(sink, owner_id));
+        let owner = provider.owner();
+        let tool_names = self
+            .replace_remote_tools_with_provider(previous_tool_names, tools, provider, owner)
+            .await?;
+        Ok(RemoteToolRegistration {
+            owner_id,
+            tool_names,
+        })
     }
 
     async fn replace_remote_tools_with_provider(
@@ -456,11 +516,18 @@ impl ToolServerHandle {
         previous_tool_names: Vec<String>,
         tools: Vec<Tool>,
         provider: Arc<dyn RmcpToolProvider>,
+        owner: ToolOwner,
     ) -> Result<Vec<String>, ToolServerError> {
         let mut state = self.0.write().await;
         for name in previous_tool_names {
-            state.static_tool_names.retain(|x| x != &name);
-            state.tools.remove(&name);
+            let still_owned_by_caller = state
+                .tools
+                .get(&name)
+                .is_some_and(|tool| tool.owner == owner);
+            if still_owned_by_caller {
+                state.static_tool_names.retain(|x| x != &name);
+                state.tools.remove(&name);
+            }
         }
 
         let mut current_tool_names = Vec::new();
@@ -470,7 +537,7 @@ impl ToolServerHandle {
             push_unique_tool_name(&mut current_tool_names, name.clone());
             state
                 .tools
-                .insert(name, static_registered_tool(tool, provider.clone()));
+                .insert(name, static_registered_tool(tool, provider.clone(), owner));
         }
         Ok(current_tool_names)
     }
@@ -514,6 +581,19 @@ impl ToolServerHandle {
             )?));
         }
         Ok(call_tool_result_to_text(&result)?)
+    }
+
+    pub async fn call_tool_content(
+        &self,
+        params: CallToolRequestParams,
+    ) -> Result<OneOrMany<ToolResultContent>, ToolServerError> {
+        let result = self.call_tool(params).await?;
+        if result.is_error == Some(true) {
+            return Err(ToolServerError::ToolResultError(call_tool_result_to_text(
+                &result,
+            )?));
+        }
+        Ok(call_tool_result_to_content(&result)?)
     }
 
     pub async fn get_tool_defs(
@@ -878,6 +958,7 @@ mod tests {
                 Vec::new(),
                 vec![test_tool("remote_a"), test_tool("remote_b")],
                 provider.clone(),
+                ToolOwner::Remote(1),
             )
             .await
             .expect("initial remote tools should register");
@@ -894,7 +975,12 @@ mod tests {
         assert!(names.contains(&"remote_b".to_string()));
 
         handle
-            .replace_remote_tools_with_provider(managed, vec![test_tool("remote_c")], provider)
+            .replace_remote_tools_with_provider(
+                managed,
+                vec![test_tool("remote_c")],
+                provider,
+                ToolOwner::Remote(1),
+            )
             .await
             .expect("remote tools should replace");
 
@@ -936,6 +1022,7 @@ mod tests {
                 Vec::new(),
                 vec![test_tool("remote_a")],
                 provider_a.clone(),
+                ToolOwner::Remote(2),
             )
             .await
             .expect("first remote server should register");
@@ -944,12 +1031,18 @@ mod tests {
                 Vec::new(),
                 vec![test_tool("remote_b")],
                 provider_b.clone(),
+                ToolOwner::Remote(3),
             )
             .await
             .expect("second remote server should register");
 
         let managed_a = handle
-            .replace_remote_tools_with_provider(managed_a, vec![test_tool("remote_a2")], provider_a)
+            .replace_remote_tools_with_provider(
+                managed_a,
+                vec![test_tool("remote_a2")],
+                provider_a,
+                ToolOwner::Remote(2),
+            )
             .await
             .expect("first remote server should refresh");
 
@@ -967,6 +1060,55 @@ mod tests {
         assert!(!names.contains(&"remote_a".to_string()));
         assert_eq!(managed_a, vec!["remote_a2".to_string()]);
         assert_eq!(managed_b, vec!["remote_b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn remote_tool_replacement_does_not_remove_colliding_name_from_other_owner() {
+        let handle = ToolServer::new().run();
+        let provider_a = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_a"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("a")])) },
+        });
+        let provider_b = Arc::new(ClosureToolProvider {
+            definition: test_tool("provider_b"),
+            handler: |_params| async { Ok(CallToolResult::success(vec![Content::text("b")])) },
+        });
+
+        let managed_a = handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("shared")],
+                provider_a.clone(),
+                ToolOwner::Remote(4),
+            )
+            .await
+            .expect("first remote server should register");
+
+        handle
+            .replace_remote_tools_with_provider(
+                Vec::new(),
+                vec![test_tool("shared")],
+                provider_b,
+                ToolOwner::Remote(5),
+            )
+            .await
+            .expect("second remote server should replace shared name");
+
+        handle
+            .replace_remote_tools_with_provider(
+                managed_a,
+                Vec::new(),
+                provider_a,
+                ToolOwner::Remote(4),
+            )
+            .await
+            .expect("first remote server refresh should not remove second server tool");
+
+        let result = handle
+            .call_tool_text(CallToolRequestParams::new("shared"))
+            .await
+            .expect("shared tool should still be registered");
+        assert_eq!(result, "b");
     }
 
     #[test]

@@ -90,6 +90,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE.to_string())
         .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
+        .await
         .build();
 
     let first_turn = collect_raw_stream_observation(

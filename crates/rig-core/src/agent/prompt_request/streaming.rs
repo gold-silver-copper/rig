@@ -157,9 +157,8 @@ async fn cancelled_prompt_error(
 fn tool_result_to_user_message(
     id: String,
     call_id: Option<String>,
-    tool_result: String,
+    content: OneOrMany<ToolResultContent>,
 ) -> Message {
-    let content = ToolResultContent::from_tool_output(tool_result);
     let user_content = match call_id {
         Some(call_id) => UserContent::tool_result_with_call_id(id, call_id, content),
         None => UserContent::tool_result(id, content),
@@ -168,6 +167,17 @@ fn tool_result_to_user_message(
     Message::User {
         content: OneOrMany::one(user_content),
     }
+}
+
+fn tool_result_content_to_text(content: &OneOrMany<ToolResultContent>) -> String {
+    content
+        .iter()
+        .map(|content| match content {
+            ToolResultContent::Text(text) => text.text.clone(),
+            ToolResultContent::Image(_) => "[Image]".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn assistant_text_from_choice(choice: &OneOrMany<AssistantContent>) -> String {
@@ -549,27 +559,31 @@ where
                                         );
                                         let tool_call_msg = AssistantContent::ToolCall(tool_call.clone());
                                         tool_calls.push(tool_call_msg);
-                                        tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), reason.clone()));
+                                        tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), ToolResultContent::from_tool_output(reason.clone())));
                                         saw_tool_call_this_turn = true;
-                                        return Ok(reason);
+                                        return Ok((
+                                            reason.clone(),
+                                            ToolResultContent::from_tool_output(reason),
+                                        ));
                                     }
                                 }
 
                                 tool_span.record("gen_ai.tool.name", &tool_call.function.name);
                                 tool_span.record("gen_ai.tool.call.arguments", &tool_args);
 
-                                let tool_result = match serde_json::from_str::<::rmcp::model::JsonObject>(&tool_args)
+                                let (tool_result_text, tool_result_content) = match serde_json::from_str::<::rmcp::model::JsonObject>(&tool_args)
                                 {
                                     Ok(arguments) => {
                                         let params = ::rmcp::model::CallToolRequestParams::new(
                                             tool_call.function.name.clone(),
                                         )
                                         .with_arguments(arguments);
-                                        match tool_server_handle.call_tool_text(params).await {
-                                            Ok(thing) => thing,
+                                        match tool_server_handle.call_tool_content(params).await {
+                                            Ok(content) => (tool_result_content_to_text(&content), content),
                                             Err(e) => {
                                                 tracing::warn!("Error while calling tool: {e}");
-                                                e.to_string()
+                                                let text = e.to_string();
+                                                (text.clone(), ToolResultContent::from_tool_output(text))
                                             }
                                         }
                                     }
@@ -579,11 +593,11 @@ where
                                             tool_call.function.name
                                         );
                                         tracing::warn!("{message}");
-                                        message
+                                        (message.clone(), ToolResultContent::from_tool_output(message))
                                     }
                                 };
 
-                                tool_span.record("gen_ai.tool.call.result", &tool_result);
+                                tool_span.record("gen_ai.tool.call.result", &tool_result_text);
 
                                 if let Some(ref hook) = self.hook &&
                                     let HookAction::Terminate { reason } =
@@ -592,7 +606,7 @@ where
                                         tool_call.call_id.clone(),
                                         &internal_call_id,
                                         &tool_args,
-                                        &tool_result.to_string()
+                                        &tool_result_text
                                     )
                                     .await {
                                         return Err(cancelled_prompt_error(chat_history.as_deref(), new_messages.clone(), reason).await);
@@ -601,15 +615,15 @@ where
                                 let tool_call_msg = AssistantContent::ToolCall(tool_call.clone());
 
                                 tool_calls.push(tool_call_msg);
-                                tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_result.clone()));
+                                tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_result_content.clone()));
 
                                 saw_tool_call_this_turn = true;
-                                Ok(tool_result)
+                                Ok((tool_result_text, tool_result_content))
                             }.instrument(tool_span).await;
 
                             match tc_result {
-                                Ok(text) => {
-                                    let tr = ToolResult { id: tool_call.id, call_id: tool_call.call_id, content: ToolResultContent::from_tool_output(text) };
+                                Ok((_text, content)) => {
+                                    let tr = ToolResult { id: tool_call.id, call_id: tool_call.call_id, content };
                                     yield Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult{ tool_result: tr, internal_call_id }));
                                 }
                                 Err(e) => {
@@ -943,19 +957,21 @@ mod tests {
         let message = tool_result_to_user_message(
             "tool_call_1".to_string(),
             Some("call_1".to_string()),
-            serde_json::json!({
-                "response": {
-                    "instruction": "Use the image part to answer."
-                },
-                "parts": [
-                    {
-                        "type": "image",
-                        "data": "base64data==",
-                        "mimeType": "image/png"
-                    }
-                ]
-            })
-            .to_string(),
+            ToolResultContent::from_tool_output(
+                serde_json::json!({
+                    "response": {
+                        "instruction": "Use the image part to answer."
+                    },
+                    "parts": [
+                        {
+                            "type": "image",
+                            "data": "base64data==",
+                            "mimeType": "image/png"
+                        }
+                    ]
+                })
+                .to_string(),
+            ),
         );
 
         let tool_result = match message {

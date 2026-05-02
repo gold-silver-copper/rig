@@ -54,6 +54,7 @@ async fn raw_stream_decorates_reasoning_tool_call_metadata() {
         .preamble(crate::reasoning::TOOL_SYSTEM_PROMPT.to_string())
         .max_tokens(4096)
         .local_rmcp_tool(tool_definition)
+        .await
         .additional_params(serde_json::json!({
             "reasoning": { "effort": "high" },
             "include_reasoning": true
@@ -98,7 +99,9 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
         .completion_request(TWO_TOOL_STREAM_PROMPT)
         .preamble(TWO_TOOL_STREAM_PREAMBLE.to_string())
         .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
+        .await
         .local_rmcp_tool(BetaSignal.definition(String::new()).await)
+        .await
         .build();
 
     let observation = collect_raw_stream_observation(
@@ -124,6 +127,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE.to_string())
         .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
+        .await
         .build();
 
     let first_turn = collect_raw_stream_observation(

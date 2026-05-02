@@ -10,6 +10,10 @@ pub mod server;
 #[cfg_attr(docsrs, doc(cfg(feature = "rmcp")))]
 pub mod rmcp;
 
+use crate::{
+    OneOrMany,
+    message::{ImageMediaType, MimeType, ToolResultContent},
+};
 pub use ::rmcp::model::Tool;
 use ::rmcp::model::{CallToolResult, Content, RawContent, ResourceContents};
 use serde_json::Value;
@@ -82,6 +86,25 @@ pub fn call_tool_result_to_text(result: &CallToolResult) -> Result<String, ToolE
     Ok(text)
 }
 
+/// Convert an rmcp tool result into Rig's multimodal tool-result content.
+pub fn call_tool_result_to_content(
+    result: &CallToolResult,
+) -> Result<OneOrMany<ToolResultContent>, ToolError> {
+    if let Some(value) = &result.structured_content {
+        return Ok(ToolResultContent::from_tool_output(value_to_model_text(
+            value,
+        )));
+    }
+
+    let mut content = Vec::new();
+    for item in &result.content {
+        content.push(content_to_tool_result_content(item)?);
+    }
+
+    OneOrMany::many(content)
+        .map_err(|_| ToolError::ToolCallError("MCP tool returned no supported content".to_string()))
+}
+
 fn value_to_model_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -92,7 +115,12 @@ fn value_to_model_text(value: &Value) -> String {
 fn content_to_text(content: &Content) -> Result<String, ToolError> {
     match &content.raw {
         RawContent::Text(raw) => Ok(raw.text.clone()),
-        RawContent::Image(raw) => Ok(format!("data:{};base64,{}", raw.mime_type, raw.data)),
+        RawContent::Image(raw) => Ok(serde_json::json!({
+            "type": "image",
+            "data": raw.data,
+            "mimeType": raw.mime_type,
+        })
+        .to_string()),
         RawContent::Resource(raw) => match &raw.resource {
             ResourceContents::TextResourceContents {
                 uri,
@@ -125,5 +153,48 @@ fn content_to_text(content: &Content) -> Result<String, ToolError> {
         other => Err(ToolError::ToolCallError(format!(
             "MCP tool returned unsupported content: {other:?}"
         ))),
+    }
+}
+
+fn content_to_tool_result_content(content: &Content) -> Result<ToolResultContent, ToolError> {
+    match &content.raw {
+        RawContent::Text(raw) => Ok(ToolResultContent::text(raw.text.clone())),
+        RawContent::Image(raw) => Ok(ToolResultContent::image_base64(
+            raw.data.clone(),
+            ImageMediaType::from_mime_type(&raw.mime_type),
+            None,
+        )),
+        RawContent::Resource(_) => Ok(ToolResultContent::text(content_to_text(content)?)),
+        RawContent::Audio(_) => Err(ToolError::ToolCallError(
+            "MCP tool returned audio content, which Rig does not support yet".to_string(),
+        )),
+        other => Err(ToolError::ToolCallError(format!(
+            "MCP tool returned unsupported content: {other:?}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::DocumentSourceKind;
+
+    #[test]
+    fn mcp_image_tool_result_converts_to_multimodal_content() {
+        let result = CallToolResult::success(vec![Content::image("base64data==", "image/png")]);
+
+        let content =
+            call_tool_result_to_content(&result).expect("image result should convert to content");
+
+        assert_eq!(content.len(), 1);
+        match content.first() {
+            ToolResultContent::Image(image) => {
+                assert_eq!(image.media_type, Some(ImageMediaType::PNG));
+                assert!(
+                    matches!(image.data, DocumentSourceKind::Base64(ref data) if data == "base64data==")
+                );
+            }
+            other => panic!("expected image content, got {other:?}"),
+        }
     }
 }

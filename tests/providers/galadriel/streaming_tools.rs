@@ -18,6 +18,7 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
         .local_rmcp_tool(zero_arg_tool_definition("ping"))
+        .await
         .tool_choice(ToolChoice::Required)
         .build();
     let stream = model.stream(request).await.expect("stream should start");

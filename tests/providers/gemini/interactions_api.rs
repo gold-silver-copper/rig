@@ -152,6 +152,7 @@ async fn tool_result_roundtrip() {
             model
                 .completion_request("Use the add tool to sum 7 and 11.")
                 .local_rmcp_tool(tool)
+                .await
                 .tool_choice(ToolChoice::Required)
                 .additional_params(
                     serde_json::to_value(AdditionalParameters {

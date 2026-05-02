@@ -140,6 +140,7 @@ async fn raw_followup_empty_end_turn_normalizes_to_empty_text_choice() {
         .preamble(TERMINAL_NOTIFY_PREAMBLE.to_string())
         .max_tokens(1024)
         .local_rmcp_tool(notify_tool_definition())
+        .await
         .send()
         .await
         .expect("first Anthropic turn should succeed");

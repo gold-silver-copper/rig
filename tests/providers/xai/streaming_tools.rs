@@ -66,6 +66,7 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
         .local_rmcp_tool(zero_arg_tool_definition("ping"))
+        .await
         .tool_choice(ToolChoice::Required)
         .build();
     let stream = model.stream(request).await.expect("stream should start");
@@ -105,6 +106,7 @@ async fn raw_responses_stream_preserves_tool_then_followup_text_ordering() {
         .completion_request(XAI_STATUS_TOOL_PROMPT)
         .preamble(XAI_STATUS_TOOL_PREAMBLE.to_string())
         .local_rmcp_tool(StatusWordTool.definition(String::new()).await)
+        .await
         .build();
 
     let first_turn = collect_raw_stream_observation(
