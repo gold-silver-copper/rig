@@ -81,8 +81,44 @@ impl LocalRmcpTool for crate::completion::ToolDefinition {
 
 #[derive(Clone)]
 struct RegisteredTool {
-    definition: Tool,
+    definition: Arc<dyn RmcpToolDefinitionProvider>,
     provider: Arc<dyn RmcpToolProvider>,
+}
+
+trait RmcpToolDefinitionProvider: WasmCompatSend + WasmCompatSync {
+    fn definition<'a>(
+        &'a self,
+        prompt: String,
+    ) -> WasmBoxedFuture<'a, Result<Tool, ToolServerError>>;
+}
+
+struct StaticToolDefinitionProvider {
+    definition: Tool,
+}
+
+impl RmcpToolDefinitionProvider for StaticToolDefinitionProvider {
+    fn definition<'a>(
+        &'a self,
+        _prompt: String,
+    ) -> WasmBoxedFuture<'a, Result<Tool, ToolServerError>> {
+        Box::pin(async move { Ok(self.definition.clone()) })
+    }
+}
+
+struct LocalToolDefinitionProvider<T> {
+    tool: Arc<T>,
+}
+
+impl<T> RmcpToolDefinitionProvider for LocalToolDefinitionProvider<T>
+where
+    T: LocalRmcpTool,
+{
+    fn definition<'a>(
+        &'a self,
+        prompt: String,
+    ) -> WasmBoxedFuture<'a, Result<Tool, ToolServerError>> {
+        Box::pin(async move { Ok(self.tool.definition(prompt).await.into()) })
+    }
 }
 
 struct ClosureToolProvider<F> {
@@ -146,6 +182,31 @@ pub struct ToolServer {
     tools: HashMap<String, RegisteredTool>,
 }
 
+fn static_registered_tool(tool: Tool, provider: Arc<dyn RmcpToolProvider>) -> RegisteredTool {
+    RegisteredTool {
+        definition: Arc::new(StaticToolDefinitionProvider {
+            definition: tool.clone(),
+        }),
+        provider,
+    }
+}
+
+fn local_registered_tool<T>(tool: Arc<T>, provider: Arc<dyn RmcpToolProvider>) -> RegisteredTool
+where
+    T: LocalRmcpTool,
+{
+    RegisteredTool {
+        definition: Arc::new(LocalToolDefinitionProvider { tool }),
+        provider,
+    }
+}
+
+fn push_unique_tool_name(names: &mut Vec<String>, name: String) {
+    if !names.contains(&name) {
+        names.push(name);
+    }
+}
+
 impl Default for ToolServer {
     fn default() -> Self {
         Self::new()
@@ -189,36 +250,42 @@ impl ToolServer {
             definition: tool.clone(),
             handler,
         });
-        self.tools.insert(
-            name.clone(),
-            RegisteredTool {
-                definition: tool,
-                provider,
-            },
-        );
+        self.tools
+            .insert(name.clone(), static_registered_tool(tool, provider));
         self.static_tool_names.push(name);
         self
     }
 
-    pub fn local_rmcp_tool<T>(self, tool: T) -> Self
+    pub fn local_rmcp_tool<T>(mut self, tool: T) -> Self
     where
         T: LocalRmcpTool,
     {
         let definition = futures::executor::block_on(tool.definition(String::new()));
         let tool = Arc::new(tool);
-        self.rmcp_tool(definition.into(), move |params| {
-            let tool = tool.clone();
-            async move {
-                let args =
-                    serde_json::from_value::<T::Args>(params.arguments.unwrap_or_default().into())?;
-                let output = tool
-                    .call(args)
-                    .await
-                    .map_err(|e| ToolServerError::from(e.to_string()))?;
-                let value = serde_json::to_value(output)?;
-                Ok(CallToolResult::structured(value))
-            }
-        })
+        let provider_tool = tool.clone();
+        let provider = Arc::new(ClosureToolProvider {
+            definition: definition.clone().into(),
+            handler: move |params: CallToolRequestParams| {
+                let tool = provider_tool.clone();
+                async move {
+                    let args = serde_json::from_value::<T::Args>(
+                        params.arguments.unwrap_or_default().into(),
+                    )?;
+                    let output = tool
+                        .call(args)
+                        .await
+                        .map_err(|e| ToolServerError::from(e.to_string()))?;
+                    let value = serde_json::to_value(output)?;
+                    Ok(CallToolResult::structured(value))
+                }
+            },
+        });
+        self.tools.insert(
+            definition.name.clone(),
+            local_registered_tool(tool, provider),
+        );
+        self.static_tool_names.push(definition.name);
+        self
     }
 
     pub fn remote_rmcp_tools(
@@ -229,13 +296,8 @@ impl ToolServer {
         let provider = Arc::new(RemoteToolProvider::new(sink));
         for tool in tools {
             let name = tool.name.to_string();
-            self.tools.insert(
-                name.clone(),
-                RegisteredTool {
-                    definition: tool,
-                    provider: provider.clone(),
-                },
-            );
+            self.tools
+                .insert(name.clone(), static_registered_tool(tool, provider.clone()));
             self.static_tool_names.push(name);
         }
         self
@@ -281,13 +343,8 @@ impl RmcpToolRegistry {
             definition: tool.clone(),
             handler,
         });
-        self.tools.insert(
-            name,
-            RegisteredTool {
-                definition: tool,
-                provider,
-            },
-        );
+        self.tools
+            .insert(name, static_registered_tool(tool, provider));
     }
 
     pub fn add_local_tool<T>(&mut self, tool: T)
@@ -296,19 +353,26 @@ impl RmcpToolRegistry {
     {
         let definition = futures::executor::block_on(tool.definition(String::new()));
         let tool = Arc::new(tool);
-        self.add_tool(definition.into(), move |params| {
-            let tool = tool.clone();
-            async move {
-                let args =
-                    serde_json::from_value::<T::Args>(params.arguments.unwrap_or_default().into())?;
-                let output = tool
-                    .call(args)
-                    .await
-                    .map_err(|e| ToolServerError::from(e.to_string()))?;
-                let value = serde_json::to_value(output)?;
-                Ok(CallToolResult::structured(value))
-            }
+        let provider_tool = tool.clone();
+        let provider = Arc::new(ClosureToolProvider {
+            definition: definition.clone().into(),
+            handler: move |params: CallToolRequestParams| {
+                let tool = provider_tool.clone();
+                async move {
+                    let args = serde_json::from_value::<T::Args>(
+                        params.arguments.unwrap_or_default().into(),
+                    )?;
+                    let output = tool
+                        .call(args)
+                        .await
+                        .map_err(|e| ToolServerError::from(e.to_string()))?;
+                    let value = serde_json::to_value(output)?;
+                    Ok(CallToolResult::structured(value))
+                }
+            },
         });
+        self.tools
+            .insert(definition.name, local_registered_tool(tool, provider));
     }
 
     pub fn add_remote_tools(&mut self, tools: Vec<Tool>, sink: ::rmcp::service::ServerSink) {
@@ -316,10 +380,7 @@ impl RmcpToolRegistry {
         for tool in tools {
             self.tools.insert(
                 tool.name.to_string(),
-                RegisteredTool {
-                    definition: tool,
-                    provider: provider.clone(),
-                },
+                static_registered_tool(tool, provider.clone()),
             );
         }
     }
@@ -355,9 +416,7 @@ impl ToolServerHandle {
     pub async fn append_registry(&self, registry: RmcpToolRegistry) -> Result<(), ToolServerError> {
         let mut state = self.0.write().await;
         for name in registry.tools.keys() {
-            if !state.static_tool_names.contains(name) {
-                state.static_tool_names.push(name.clone());
-            }
+            push_unique_tool_name(&mut state.static_tool_names, name.clone());
         }
         state.tools.extend(registry.tools);
         Ok(())
@@ -372,14 +431,10 @@ impl ToolServerHandle {
         let provider = Arc::new(RemoteToolProvider::new(sink));
         for tool in tools {
             let name = tool.name.to_string();
-            state.static_tool_names.push(name.clone());
-            state.tools.insert(
-                name,
-                RegisteredTool {
-                    definition: tool,
-                    provider: provider.clone(),
-                },
-            );
+            push_unique_tool_name(&mut state.static_tool_names, name.clone());
+            state
+                .tools
+                .insert(name, static_registered_tool(tool, provider.clone()));
         }
         Ok(())
     }
@@ -470,17 +525,26 @@ impl ToolServerHandle {
 
         tool_names.extend(static_tool_names);
 
-        let state = self.0.read().await;
-        Ok(tool_names
-            .iter()
-            .filter_map(|name| {
-                let tool = state.tools.get(name);
-                if tool.is_none() {
-                    tracing::warn!("Tool implementation not found in registry: {}", name);
-                }
-                tool.map(|tool| tool.definition.clone())
-            })
-            .collect())
+        let definition_providers = {
+            let state = self.0.read().await;
+            tool_names
+                .iter()
+                .filter_map(|name| {
+                    let tool = state.tools.get(name);
+                    if tool.is_none() {
+                        tracing::warn!("Tool implementation not found in registry: {}", name);
+                    }
+                    tool.map(|tool| tool.definition.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let prompt = prompt.unwrap_or_default();
+        let definitions = definition_providers.into_iter().map(|provider| {
+            let prompt = prompt.clone();
+            async move { provider.definition(prompt).await }
+        });
+        futures::future::try_join_all(definitions).await
     }
 }
 
@@ -617,5 +681,60 @@ mod tests {
             .await
             .expect("tool call should succeed");
         assert_eq!(result, "hello");
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    struct PromptAwareTool;
+
+    impl LocalRmcpTool for PromptAwareTool {
+        const NAME: &'static str = "prompt_aware";
+
+        type Error = ToolError;
+        type Args = EchoArgs;
+        type Output = String;
+
+        async fn definition(&self, prompt: String) -> crate::completion::ToolDefinition {
+            crate::completion::ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: format!("Definition for prompt: {prompt}"),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string" }
+                    },
+                    "required": ["message"]
+                }),
+            }
+        }
+
+        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok(args.message)
+        }
+    }
+
+    #[tokio::test]
+    async fn local_rmcp_tool_definition_uses_request_prompt() {
+        let handle = ToolServer::new().local_rmcp_tool(PromptAwareTool).run();
+
+        let defs = handle
+            .get_tool_defs(Some("current user request".to_string()))
+            .await
+            .expect("tool definitions should load");
+
+        assert_eq!(defs.len(), 1);
+        assert_eq!(
+            defs[0].description.as_deref(),
+            Some("Definition for prompt: current user request")
+        );
+    }
+
+    #[test]
+    fn push_unique_tool_name_deduplicates_existing_names() {
+        let mut names = vec!["search".to_string()];
+
+        push_unique_tool_name(&mut names, "search".to_string());
+        push_unique_tool_name(&mut names, "lookup".to_string());
+
+        assert_eq!(names, vec!["search", "lookup"]);
     }
 }
