@@ -6,7 +6,7 @@ use rig::{
     agent::{Agent, AgentBuilder},
     completion::{Chat, CompletionModel, Message, PromptError, ToolDefinition},
     providers::openai::Client as OpenAIClient,
-    tool::Tool,
+    tool::server::LocalRmcpTool,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -21,7 +21,7 @@ struct TranslatorArgs {
     prompt: String,
 }
 
-impl<M: CompletionModel + 'static> Tool for TranslatorTool<M> {
+impl<M: CompletionModel + 'static> LocalRmcpTool for TranslatorTool<M> {
     const NAME: &'static str = "translator";
 
     type Args = TranslatorArgs;
@@ -85,9 +85,9 @@ async fn main() -> Result<(), anyhow::Error> {
             When you receive input that is not in English, or contains grammatical errors \
             use the {} tool first to ensure proper English, then provide your response. \
             Always show both the translated text and your final response.",
-            translator_tool.name()
+            "translator"
         ))
-        .tool(translator_tool)
+        .local_rmcp_tool(translator_tool)
         .build();
 
     // Spin up a CLI chatbot using the multi-agent system

@@ -17,8 +17,8 @@ async fn required_tool_choice_agent_roundtrip() {
         .agent(moonshot::KIMI_K2_5)
         .preamble(TOOLS_PREAMBLE)
         .tool_choice(ToolChoice::Required)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let response = agent

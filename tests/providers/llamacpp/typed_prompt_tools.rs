@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, CompletionResponse, Message, ToolDefinition, TypedPrompt};
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 
 use super::support;
 
@@ -130,7 +130,7 @@ where
         .unwrap_or_else(|err| format!("<failed to serialize debug payload as JSON: {err}>"))
 }
 
-impl Tool for WeatherTool {
+impl LocalRmcpTool for WeatherTool {
     const NAME: &'static str = "weather";
 
     type Error = std::io::Error;
@@ -185,7 +185,7 @@ async fn prompt_typed_with_tool_call_verbatim_roundtrip() -> Result<()> {
 
     let agent = client
         .agent(model)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .preamble(
             "You are a helpful assistant. When asked about weather, use the weather tool to get the current conditions. After calling the tool, return a JSON response with the city name and the weather description. DO NOT modify the description from the tool result.",
         )

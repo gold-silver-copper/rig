@@ -2,7 +2,7 @@ use anyhow::Result;
 use rig_core::prelude::*;
 use rig_core::{
     completion::{Prompt, ToolDefinition},
-    tool::Tool,
+    tool::server::LocalRmcpTool,
 };
 use rig_vertexai::{Client, completion::GEMINI_2_5_FLASH_LITE};
 use schemars::{JsonSchema, schema_for};
@@ -22,7 +22,7 @@ struct MathError;
 #[derive(Deserialize, Serialize)]
 struct Adder;
 
-impl Tool for Adder {
+impl LocalRmcpTool for Adder {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -53,7 +53,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Create agent with a calculator tool
     let calculator_agent = client
         .agent(GEMINI_2_5_FLASH_LITE)
-        .tool(Adder)
+        .local_rmcp_tool(Adder)
         .max_tokens(1024)
         .build();
 

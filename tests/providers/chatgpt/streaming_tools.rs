@@ -15,8 +15,8 @@ async fn streaming_tools_smoke() {
     let agent = live_client()
         .agent(LIVE_MODEL)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
@@ -37,8 +37,8 @@ async fn example_streaming_with_tools() {
              Use the tools provided to answer the user's question and answer in a full sentence.",
         )
         .max_tokens(1024)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;

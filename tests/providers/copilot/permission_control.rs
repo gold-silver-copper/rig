@@ -5,7 +5,7 @@ use rig::agent::{HookAction, PromptHook, ToolCallHookAction, stream_to_stdout};
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Prompt, ToolDefinition};
 use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ struct FileError;
 #[derive(Deserialize, Serialize)]
 struct ReadFileHead;
 
-impl Tool for ReadFileHead {
+impl LocalRmcpTool for ReadFileHead {
     const NAME: &'static str = "read_file_head";
     type Error = FileError;
     type Args = ReadFileArgs;
@@ -74,7 +74,7 @@ impl Tool for ReadFileHead {
 #[derive(Deserialize, Serialize)]
 struct ReadFileTail;
 
-impl Tool for ReadFileTail {
+impl LocalRmcpTool for ReadFileTail {
     const NAME: &'static str = "read_file_tail";
     type Error = FileError;
     type Args = ReadFileArgs;
@@ -158,8 +158,8 @@ async fn permission_control_prompt_example() -> Result<()> {
     let agent = live_client()
         .agent(LIVE_LIGHT_MODEL)
         .preamble("You are a helpful assistant that can read files using different methods.")
-        .tool(ReadFileHead)
-        .tool(ReadFileTail)
+        .local_rmcp_tool(ReadFileHead)
+        .local_rmcp_tool(ReadFileTail)
         .build();
 
     let call_count = Arc::new(AtomicUsize::new(0));
@@ -195,8 +195,8 @@ async fn permission_control_streaming_example() -> Result<()> {
     let agent = live_client()
         .agent(LIVE_LIGHT_MODEL)
         .preamble("You are a helpful assistant that can read files using different methods.")
-        .tool(ReadFileHead)
-        .tool(ReadFileTail)
+        .local_rmcp_tool(ReadFileHead)
+        .local_rmcp_tool(ReadFileTail)
         .build();
 
     let call_count = Arc::new(AtomicUsize::new(0));

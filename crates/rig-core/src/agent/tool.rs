@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::{
     agent::Agent,
     completion::{CompletionModel, Prompt},
-    tool::server::ToolServerError,
+    tool::server::{LocalRmcpTool, ToolServerError},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -68,5 +68,24 @@ where
         };
 
         (tool, handler)
+    }
+}
+
+impl<M> LocalRmcpTool for Agent<M>
+where
+    M: CompletionModel + 'static,
+{
+    const NAME: &'static str = "agent_tool";
+
+    type Error = crate::completion::PromptError;
+    type Args = AgentToolArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+        crate::completion::ToolDefinition::from(self.rmcp_tool_definition())
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        self.prompt(args.prompt).await
     }
 }

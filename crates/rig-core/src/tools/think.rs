@@ -41,3 +41,19 @@ impl ThinkTool {
         ]))
     }
 }
+
+impl crate::tool::server::LocalRmcpTool for ThinkTool {
+    const NAME: &'static str = "think";
+
+    type Error = crate::tool::ToolError;
+    type Args = ThinkArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+        crate::completion::ToolDefinition::from(Self::definition())
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok(args.thought)
+    }
+}

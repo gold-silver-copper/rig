@@ -64,8 +64,8 @@ async fn messages_tools_smoke() {
     let agent = client
         .agent(CLAUDE_OPUS_4_7)
         .preamble(TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let response = agent
@@ -83,8 +83,8 @@ async fn messages_streaming_tools_smoke() {
     let agent = client
         .agent(CLAUDE_OPUS_4_7)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
@@ -197,7 +197,7 @@ async fn messages_adaptive_thinking_tool_roundtrip_smoke() {
         .agent(CLAUDE_OPUS_4_7)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(16384)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(opus_4_7_thinking_params())
         .build();
 
@@ -218,7 +218,7 @@ async fn messages_adaptive_thinking_streaming_tool_roundtrip_smoke() {
         .agent(CLAUDE_OPUS_4_7)
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(16384)
-        .tool(WeatherTool::new(call_count.clone()))
+        .local_rmcp_tool(WeatherTool::new(call_count.clone()))
         .additional_params(opus_4_7_thinking_params())
         .build();
 

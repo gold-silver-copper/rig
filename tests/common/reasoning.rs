@@ -11,11 +11,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::StreamExt;
 use rig::OneOrMany;
 use rig::agent::{MultiTurnStreamItem, StreamingError};
-use rig::completion::request::ToolDefinition;
-use rig::completion::{self, CompletionModel};
+use rig::completion::{self, CompletionModel, ToolDefinition};
 use rig::message::{AssistantContent, Message, Reasoning, ReasoningContent, UserContent};
 use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
-use rig::tool::Tool;
+use rig::tool::server::LocalRmcpTool;
 use rig::wasm_compat::WasmCompatSend;
 use serde::Deserialize;
 use serde_json::json;
@@ -267,6 +266,7 @@ pub(crate) struct WeatherArgs {
     pub(crate) city: String,
 }
 
+#[derive(Clone)]
 pub(crate) struct WeatherTool {
     call_count: Arc<AtomicUsize>,
 }
@@ -277,19 +277,17 @@ impl WeatherTool {
     }
 }
 
-impl Tool for WeatherTool {
+impl LocalRmcpTool for WeatherTool {
     const NAME: &'static str = "get_weather";
     type Error = WeatherError;
     type Args = WeatherArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: "get_weather".to_string(),
-            description:
-                "Get the current weather for a city. Must be called for weather questions."
-                    .to_string(),
-            parameters: json!({
+        ToolDefinition::from(rig::tool::tool_from_schema(
+            "get_weather",
+            "Get the current weather for a city. Must be called for weather questions.",
+            json!({
                 "type": "object",
                 "properties": {
                     "city": {
@@ -299,7 +297,7 @@ impl Tool for WeatherTool {
                 },
                 "required": ["city"]
             }),
-        }
+        ))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {

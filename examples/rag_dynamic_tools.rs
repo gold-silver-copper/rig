@@ -5,7 +5,7 @@ use rig::{
     completion::{Prompt, ToolDefinition},
     embeddings::EmbeddingsBuilder,
     providers::openai::Client,
-    tool::{Tool, ToolEmbedding, ToolSet},
+    embeddings::tool::ToolSchema, tool::server::{LocalRmcpTool, RmcpToolRegistry},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 use serde::{Deserialize, Serialize};
@@ -21,14 +21,11 @@ struct OperationArgs {
 #[error("Math error")]
 struct MathError;
 
-#[derive(Debug, thiserror::Error)]
-#[error("Math error")]
-struct InitError;
 
 #[derive(Deserialize, Serialize)]
 struct Add;
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -58,21 +55,9 @@ impl Tool for Add {
         Ok(result)
     }
 }
-impl ToolEmbedding for Add {
-    type InitError = InitError;
-    type Context = ();
-    type State = ();
-    fn init(_state: Self::State, _context: Self::Context) -> Result<Self, Self::InitError> {
-        Ok(Add)
-    }
-    fn embedding_docs(&self) -> Vec<String> {
-        vec!["Add x and y together".into()]
-    }
-    fn context(&self) -> Self::Context {}
-}
 #[derive(Deserialize, Serialize)]
 struct Subtract;
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -103,21 +88,6 @@ impl Tool for Subtract {
     }
 }
 
-impl ToolEmbedding for Subtract {
-    type InitError = InitError;
-    type Context = ();
-    type State = ();
-
-    fn init(_state: Self::State, _context: Self::Context) -> Result<Self, Self::InitError> {
-        Ok(Subtract)
-    }
-
-    fn context(&self) -> Self::Context {}
-
-    fn embedding_docs(&self) -> Vec<String> {
-        vec!["Subtract y from x (i.e.: x - y)".into()]
-    }
-}
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // required to enable CloudWatch error logging by the runtime
@@ -130,12 +100,15 @@ async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
     let openai_client = Client::from_env()?;
     let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
-    let toolset = ToolSet::builder()
-        .dynamic_tool(Add)
-        .dynamic_tool(Subtract)
-        .build();
+    let mut tool_registry = RmcpToolRegistry::new();
+    tool_registry.add_local_tool(Add);
+    tool_registry.add_local_tool(Subtract);
+    let tool_schemas = vec![
+        ToolSchema::from_rmcp_tool(&Add.definition(String::new()).await.into()),
+        ToolSchema::from_rmcp_tool(&Subtract.definition(String::new()).await.into()),
+    ];
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-        .documents(toolset.schemas()?)?
+        .documents(tool_schemas)?
         .build()
         .await?;
 
@@ -152,7 +125,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .preamble("You are a calculator here to help the user perform arithmetic operations.")
         // Add a dynamic tool source with a sample rate of 1 (i.e.: only
         // 1 additional tool will be added to prompts)
-        .dynamic_tools(1, index, toolset)
+        .dynamic_tools(1, index, tool_registry)
         .build();
 
     // Prompt the agent and print the response

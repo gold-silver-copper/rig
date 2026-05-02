@@ -8,7 +8,7 @@ use rig::message::{AssistantContent, Message, ToolChoice};
 use rig::providers::openai;
 use rig::streaming::StreamingPrompt;
 use rig::telemetry::ProviderResponseExt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 
 use crate::support::{
     ALPHA_SIGNAL_OUTPUT, AlphaSignal, BETA_SIGNAL_OUTPUT, BetaSignal, ORDERED_TOOL_STREAM_PREAMBLE,
@@ -77,8 +77,8 @@ async fn completions_api_streams_two_tool_calls_before_final_answer() {
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
-        .tool(AlphaSignal)
-        .tool(BetaSignal)
+        .local_rmcp_tool(AlphaSignal)
+        .local_rmcp_tool(BetaSignal)
         .build();
 
     let mut stream = agent
@@ -103,7 +103,7 @@ async fn completions_api_raw_stream_emits_required_zero_arg_tool_call() {
     let model = client.completion_model(openai::GPT_4O);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
-        .tool(zero_arg_tool_definition("ping"))
+        .local_rmcp_tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
     let stream = model.stream(request).await.expect("stream should start");
@@ -121,8 +121,8 @@ async fn completions_api_raw_stream_surfaces_two_distinct_tool_calls_before_text
     let request = model
         .completion_request(TWO_TOOL_STREAM_PROMPT)
         .preamble(TWO_TOOL_STREAM_PREAMBLE.to_string())
-        .tool(AlphaSignal.definition(String::new()).await)
-        .tool(BetaSignal.definition(String::new()).await)
+        .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
+        .local_rmcp_tool(BetaSignal.definition(String::new()).await)
         .build();
 
     let observation = collect_raw_stream_observation(
@@ -148,7 +148,7 @@ async fn completions_api_stream_emits_tool_call_before_later_text() {
     let agent = client
         .agent(openai::GPT_4O)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
-        .tool(AlphaSignal)
+        .local_rmcp_tool(AlphaSignal)
         .build();
 
     let mut stream = agent
@@ -174,7 +174,7 @@ async fn completions_api_raw_followup_uses_tool_result_without_new_tool_calls() 
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE.to_string())
-        .tool(AlphaSignal.definition(String::new()).await)
+        .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
         .build();
 
     let first_turn = collect_raw_stream_observation(

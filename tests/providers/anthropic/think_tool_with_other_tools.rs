@@ -9,7 +9,7 @@ use rig::client::CompletionClient;
 use rig::completion::{Prompt, ToolDefinition};
 use rig::message::{AssistantContent, Message};
 use rig::providers::anthropic;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use rig::tools::ThinkTool;
 use serde::Deserialize;
 use serde_json::json;
@@ -35,7 +35,7 @@ impl Calculator {
     }
 }
 
-impl Tool for Calculator {
+impl LocalRmcpTool for Calculator {
     const NAME: &'static str = "calculator";
     type Error = CalculatorError;
     type Args = CalculatorArgs;
@@ -204,7 +204,7 @@ impl DatabaseLookup {
     }
 }
 
-impl Tool for DatabaseLookup {
+impl LocalRmcpTool for DatabaseLookup {
     const NAME: &'static str = "database_lookup";
     type Error = DatabaseLookupError;
     type Args = DatabaseLookupArgs;
@@ -296,9 +296,9 @@ async fn think_tool_with_other_tools() -> Result<()> {
             When handling customer inquiries, use the 'think' tool to analyze the situation
             before responding or using other tools.",
         )
-        .tool(ThinkTool)
-        .tool(Calculator::new(calculator_calls.clone()))
-        .tool(DatabaseLookup::new(database_lookup_calls.clone()))
+        .local_rmcp_tool(ThinkTool)
+        .local_rmcp_tool(Calculator::new(calculator_calls.clone()))
+        .local_rmcp_tool(DatabaseLookup::new(database_lookup_calls.clone()))
         .build();
 
     let response = agent

@@ -36,7 +36,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .agent(providers::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
-        .tool(StringProcessor)
+        .local_rmcp_tool(StringProcessor)
         .build();
 
     println!("Tool definition:");

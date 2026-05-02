@@ -56,13 +56,13 @@ async fn main() -> Result<(), anyhow::Error> {
         .agent(providers::openai::GPT_4O)
         .preamble("You are an agent with tools access, always use the tools")
         .max_tokens(1024)
-        .tool(Add)
-        .tool(Subtract)
-        .tool(Multiply)
-        .tool(Divide)
-        .tool(AnswerSecretQuestion)
-        .tool(HowManyRs)
-        .tool(SumNumbers)
+        .local_rmcp_tool(Add)
+        .local_rmcp_tool(Subtract)
+        .local_rmcp_tool(Multiply)
+        .local_rmcp_tool(Divide)
+        .local_rmcp_tool(AnswerSecretQuestion)
+        .local_rmcp_tool(HowManyRs)
+        .local_rmcp_tool(SumNumbers)
         .build();
 
     for prompt in [

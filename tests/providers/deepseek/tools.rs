@@ -15,8 +15,8 @@ async fn tools_smoke() {
     let agent = client
         .agent(deepseek::DEEPSEEK_V4_FLASH)
         .preamble(TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let response = agent

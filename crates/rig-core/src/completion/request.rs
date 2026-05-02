@@ -763,17 +763,26 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
             .fold(self, |builder, doc| builder.document(doc))
     }
 
-    /// Adds a tool to the completion request.
-    pub fn tool(mut self, tool: ::rmcp::model::Tool) -> Self {
+    /// Adds an rmcp tool to the completion request.
+    pub fn rmcp_tool(mut self, tool: ::rmcp::model::Tool) -> Self {
         self.tools.push(tool);
         self
     }
 
-    /// Adds a list of tools to the completion request.
-    pub fn tools(self, tools: Vec<::rmcp::model::Tool>) -> Self {
+    /// Adds a local rmcp tool definition to the completion request.
+    pub fn local_rmcp_tool<T>(self, tool: T) -> Self
+    where
+        T: crate::tool::server::LocalRmcpTool,
+    {
+        let definition = futures::executor::block_on(tool.definition(String::new()));
+        self.rmcp_tool(definition.into())
+    }
+
+    /// Adds a list of rmcp tools to the completion request.
+    pub fn rmcp_tools(self, tools: Vec<::rmcp::model::Tool>) -> Self {
         tools
             .into_iter()
-            .fold(self, |builder, tool| builder.tool(tool))
+            .fold(self, |builder, tool| builder.rmcp_tool(tool))
     }
 
     /// Adds a provider-hosted tool to the completion request.

@@ -19,8 +19,8 @@ async fn example_streaming_with_tools() {
              Use the tools provided to answer the user's question.",
         )
         .max_tokens(1024)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;

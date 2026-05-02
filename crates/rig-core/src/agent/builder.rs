@@ -8,7 +8,9 @@ use crate::{
     agent::prompt_request::hooks::PromptHook,
     completion::{CompletionModel, Document},
     message::ToolChoice,
-    tool::server::{RmcpToolRegistry, ToolServer, ToolServerError, ToolServerHandle},
+    tool::server::{
+        LocalRmcpTool, RmcpToolRegistry, ToolServer, ToolServerError, ToolServerHandle,
+    },
     vector_store::VectorStoreIndexDyn,
 };
 
@@ -300,6 +302,36 @@ where
         }
     }
 
+    /// Add an rmcp-native local tool provider to the agent.
+    pub fn local_rmcp_tool<T>(self, tool: T) -> AgentBuilder<M, P, WithBuilderTools>
+    where
+        T: LocalRmcpTool,
+    {
+        let toolname = futures::executor::block_on(tool.definition(String::new())).name;
+        let mut tools = RmcpToolRegistry::new();
+        tools.add_local_tool(tool);
+        AgentBuilder {
+            name: self.name,
+            description: self.description,
+            model: self.model,
+            preamble: self.preamble,
+            static_context: self.static_context,
+            additional_params: self.additional_params,
+            max_tokens: self.max_tokens,
+            dynamic_context: self.dynamic_context,
+            temperature: self.temperature,
+            tool_choice: self.tool_choice,
+            default_max_turns: self.default_max_turns,
+            tool_state: WithBuilderTools {
+                static_tools: vec![toolname],
+                tools,
+                dynamic_tools: vec![],
+            },
+            hook: self.hook,
+            output_schema: self.output_schema,
+        }
+    }
+
     /// Add remote MCP tools to the agent.
     pub fn remote_rmcp_tools(
         self,
@@ -459,6 +491,17 @@ where
     {
         let toolname = tool.name.to_string();
         self.tool_state.tools.add_tool(tool, handler);
+        self.tool_state.static_tools.push(toolname);
+        self
+    }
+
+    /// Add another rmcp-native local tool provider to the agent.
+    pub fn local_rmcp_tool<T>(mut self, tool: T) -> Self
+    where
+        T: LocalRmcpTool,
+    {
+        let toolname = futures::executor::block_on(tool.definition(String::new())).name;
+        self.tool_state.tools.add_local_tool(tool);
         self.tool_state.static_tools.push(toolname);
         self
     }

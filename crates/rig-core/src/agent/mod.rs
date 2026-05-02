@@ -111,6 +111,7 @@
 mod builder;
 mod completion;
 pub(crate) mod prompt_request;
+mod tool;
 
 pub use crate::message::Text;
 pub use builder::{AgentBuilder, NoToolConfig, WithBuilderTools, WithToolServerHandle};

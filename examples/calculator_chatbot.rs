@@ -6,7 +6,7 @@ use rig::{
     completion::ToolDefinition,
     embeddings::EmbeddingsBuilder,
     providers::openai::Client,
-    tool::{Tool, ToolEmbedding, ToolSet},
+    embeddings::tool::ToolSchema, tool::server::{LocalRmcpTool, RmcpToolRegistry},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 
@@ -30,7 +30,7 @@ struct InitError;
 #[derive(Deserialize, Serialize)]
 struct Add;
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -63,26 +63,10 @@ impl Tool for Add {
     }
 }
 
-impl ToolEmbedding for Add {
-    type InitError = InitError;
-    type Context = ();
-    type State = ();
-
-    fn init(_state: Self::State, _context: Self::Context) -> Result<Self, Self::InitError> {
-        Ok(Add)
-    }
-
-    fn embedding_docs(&self) -> Vec<String> {
-        vec!["Add x and y together".into()]
-    }
-
-    fn context(&self) -> Self::Context {}
-}
-
 #[derive(Deserialize, Serialize)]
 struct Subtract;
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -115,25 +99,10 @@ impl Tool for Subtract {
     }
 }
 
-impl ToolEmbedding for Subtract {
-    type InitError = InitError;
-    type Context = ();
-    type State = ();
-
-    fn init(_state: Self::State, _context: Self::Context) -> Result<Self, Self::InitError> {
-        Ok(Subtract)
-    }
-
-    fn embedding_docs(&self) -> Vec<String> {
-        vec!["Subtract y from x (i.e.: x - y)".into()]
-    }
-
-    fn context(&self) -> Self::Context {}
-}
 
 struct Multiply;
 
-impl Tool for Multiply {
+impl LocalRmcpTool for Multiply {
     const NAME: &'static str = "multiply";
     type Error = MathError;
     type Args = OperationArgs;
@@ -166,22 +135,10 @@ impl Tool for Multiply {
     }
 }
 
-impl ToolEmbedding for Multiply {
-    type InitError = InitError;
-    type Context = ();
-    type State = ();
-    fn init(_state: Self::State, _context: Self::Context) -> Result<Self, Self::InitError> {
-        Ok(Multiply)
-    }
-    fn embedding_docs(&self) -> Vec<String> {
-        vec!["Compute the product of x and y (i.e.: x * y)".into()]
-    }
-    fn context(&self) -> Self::Context {}
-}
 
 struct Divide;
 
-impl Tool for Divide {
+impl LocalRmcpTool for Divide {
     const NAME: &'static str = "divide";
     type Error = MathError;
     type Args = OperationArgs;
@@ -213,37 +170,26 @@ impl Tool for Divide {
     }
 }
 
-impl ToolEmbedding for Divide {
-    type InitError = InitError;
-    type Context = ();
-    type State = ();
-
-    fn init(_state: Self::State, _context: Self::Context) -> Result<Self, Self::InitError> {
-        Ok(Divide)
-    }
-
-    fn embedding_docs(&self) -> Vec<String> {
-        vec!["Compute the Quotient of x and y (i.e.: x / y). Useful for ratios.".into()]
-    }
-
-    fn context(&self) -> Self::Context {}
-}
-
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Create OpenAI client
     let openai_client = Client::from_env()?;
 
     // Create dynamic tools embeddings
-    let toolset = ToolSet::builder()
-        .dynamic_tool(Add)
-        .dynamic_tool(Subtract)
-        .dynamic_tool(Multiply)
-        .dynamic_tool(Divide)
-        .build();
     let embedding_model = openai_client.embedding_model(openai::TEXT_EMBEDDING_ADA_002);
+    let mut tool_registry = RmcpToolRegistry::new();
+    tool_registry.add_local_tool(Add);
+    tool_registry.add_local_tool(Subtract);
+    tool_registry.add_local_tool(Multiply);
+    tool_registry.add_local_tool(Divide);
+    let tool_schemas = vec![
+        ToolSchema::from_rmcp_tool(&Add.definition(String::new()).await.into()),
+        ToolSchema::from_rmcp_tool(&Subtract.definition(String::new()).await.into()),
+        ToolSchema::from_rmcp_tool(&Multiply.definition(String::new()).await.into()),
+        ToolSchema::from_rmcp_tool(&Divide.definition(String::new()).await.into()),
+    ];
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-        .documents(toolset.schemas()?)?
+        .documents(tool_schemas)?
         .build()
         .await?;
 
@@ -268,7 +214,7 @@ async fn main() -> Result<(), anyhow::Error> {
         )
         // Add a dynamic tool source with a sample rate of 1 (i.e.: only
         // 1 additional tool will be added to prompts)
-        .dynamic_tools(4, index, toolset)
+        .dynamic_tools(4, index, tool_registry)
         .build();
 
     // Create a CLI chatbot from the agent

@@ -464,18 +464,13 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
     let params_struct_name = format_ident!("{}Parameters", struct_name);
     let static_name = format_ident!("{}", fn_name_str.to_uppercase());
 
-    // Generate the call implementation based on whether the function is async
-    let call_impl = if is_async {
+    let call_body = if is_async {
         quote! {
-            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-                #fn_name(#(args.#param_names,)*).await
-            }
+            #fn_name(#(args.#param_names,)*).await
         }
     } else {
         quote! {
-            async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-                #fn_name(#(args.#param_names,)*)
-            }
+            #fn_name(#(args.#param_names,)*)
         }
     };
 
@@ -488,21 +483,11 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
 
         #input_fn
 
-        #[derive(Default)]
+        #[derive(Clone, Default)]
         #vis struct #struct_name;
 
-        impl #rig_core::tool::Tool for #struct_name {
-            const NAME: &'static str = #tool_name;
-
-            type Args = #params_struct_name;
-            type Output = #output_type;
-            type Error = #error_type;
-
-            fn name(&self) -> String {
-                #tool_name.to_string()
-            }
-
-            async fn definition(&self, _prompt: String) -> #rig_core::completion::ToolDefinition {
+        impl #rig_core::tool::server::LocalRmcpTool for #struct_name {
+            fn definition(&self) -> ::rmcp::model::Tool {
                 let parameters = serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -516,14 +501,24 @@ pub fn rig_tool(args: TokenStream, input: TokenStream) -> TokenStream {
                     "required": [#(#required_args),*]
                 });
 
-                #rig_core::completion::ToolDefinition {
-                    name: #tool_name.to_string(),
-                    description: #tool_description.to_string(),
+                #rig_core::tool::tool_from_schema(
+                    #tool_name,
+                    #tool_description,
                     parameters,
-                }
+                )
             }
 
-            #call_impl
+            async fn call(
+                &self,
+                params: ::rmcp::model::CallToolRequestParams,
+            ) -> Result<::rmcp::model::CallToolResult, #rig_core::tool::server::ToolServerError> {
+                let args = serde_json::from_value::<#params_struct_name>(
+                    params.arguments.unwrap_or_default().into(),
+                )?;
+                let output: #output_type = #call_body?;
+                let content = serde_json::to_value(output)?;
+                Ok(::rmcp::model::CallToolResult::structured(content))
+            }
         }
 
         #vis static #static_name: #struct_name = #struct_name;

@@ -1,4 +1,4 @@
-//! Demonstrates registering boxed tools on an agent.
+//! Demonstrates registering rmcp-native local tools on an agent.
 //! Requires `OPENAI_API_KEY`.
 //! Run it to see the model use arithmetic tools instead of answering from scratch.
 
@@ -6,7 +6,7 @@ use anyhow::Result;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Prompt, ToolDefinition};
 use rig::providers::openai;
-use rig::tool::{Tool, ToolDyn};
+use rig::tool::server::LocalRmcpTool;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -24,7 +24,7 @@ struct MathError;
 #[derive(Deserialize, Serialize)]
 struct Add;
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -53,7 +53,7 @@ impl Tool for Add {
 #[derive(Deserialize, Serialize)]
 struct Subtract;
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -79,10 +79,6 @@ impl Tool for Subtract {
     }
 }
 
-fn boxed_tools() -> Vec<Box<dyn ToolDyn>> {
-    vec![Box::new(Add), Box::new(Subtract)]
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let agent = openai::Client::from_env()?
@@ -91,7 +87,8 @@ async fn main() -> Result<()> {
             "You are a calculator here to help the user perform arithmetic operations. \
              You must use the provided tools before answering.",
         )
-        .tools(boxed_tools())
+        .local_rmcp_tool(Add)
+        .local_rmcp_tool(Subtract)
         .max_tokens(1024)
         .build();
 

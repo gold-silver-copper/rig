@@ -6,7 +6,7 @@ use rig::completion::CompletionModel;
 use rig::message::{AssistantContent, Message};
 use rig::providers::openrouter;
 use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -29,8 +29,8 @@ async fn streaming_tools_smoke() {
     let agent = client
         .agent(openrouter::GEMINI_FLASH_2_0)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
@@ -53,7 +53,7 @@ async fn raw_stream_decorates_reasoning_tool_call_metadata() {
         .completion_request(crate::reasoning::TOOL_USER_PROMPT)
         .preamble(crate::reasoning::TOOL_SYSTEM_PROMPT.to_string())
         .max_tokens(4096)
-        .tool(tool_definition)
+        .local_rmcp_tool(tool_definition)
         .additional_params(serde_json::json!({
             "reasoning": { "effort": "high" },
             "include_reasoning": true
@@ -97,8 +97,8 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
     let request = model
         .completion_request(TWO_TOOL_STREAM_PROMPT)
         .preamble(TWO_TOOL_STREAM_PREAMBLE.to_string())
-        .tool(AlphaSignal.definition(String::new()).await)
-        .tool(BetaSignal.definition(String::new()).await)
+        .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
+        .local_rmcp_tool(BetaSignal.definition(String::new()).await)
         .build();
 
     let observation = collect_raw_stream_observation(
@@ -123,7 +123,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE.to_string())
-        .tool(AlphaSignal.definition(String::new()).await)
+        .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
         .build();
 
     let first_turn = collect_raw_stream_observation(

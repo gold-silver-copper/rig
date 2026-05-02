@@ -15,7 +15,7 @@ use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{Completion, ToolDefinition};
 use rig::message::{AssistantContent, Message, ToolCall, ToolChoice};
 use rig::providers::openai;
-use rig::tool::{Tool, ToolSet};
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -32,7 +32,7 @@ struct MathError;
 #[derive(Deserialize, Serialize)]
 struct Add;
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -61,7 +61,7 @@ impl Tool for Add {
 #[derive(Deserialize, Serialize)]
 struct Subtract;
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -124,13 +124,8 @@ async fn main() -> Result<()> {
              You may emit one or multiple tool calls in a single turn. \
              Once all tool results are available, give a short final answer.",
         )
-        .tool(Add)
-        .tool(Subtract)
-        .build();
-
-    let local_tools = ToolSet::builder()
-        .static_tool(Add)
-        .static_tool(Subtract)
+        .local_rmcp_tool(Add)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut history = Vec::new();
@@ -169,8 +164,14 @@ async fn main() -> Result<()> {
 
         for tool_call in &tool_calls {
             let args = serde_json::to_string(&tool_call.function.arguments)?;
-            let output = local_tools
-                .call(&tool_call.function.name, args.clone())
+            let params = ::rmcp::model::CallToolRequestParams::new(tool_call.function.name.clone())
+                .with_arguments(
+                    serde_json::from_value(tool_call.function.arguments.clone())
+                        .unwrap_or_default(),
+                );
+            let output = agent
+                .tool_server_handle
+                .call_tool_text(params)
                 .await?;
             println!("  {}({args}) -> {}", tool_call.function.name, output);
             history.push(tool_result_message(tool_call, output));

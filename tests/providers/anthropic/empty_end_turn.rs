@@ -13,7 +13,7 @@ use rig::{
     completion::{CompletionModel, Prompt, ToolDefinition},
     message::{AssistantContent, Message, UserContent},
     providers::anthropic::{self, completion::CLAUDE_SONNET_4_6},
-    tool::Tool,
+    tool::server::LocalRmcpTool,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -66,7 +66,7 @@ impl Notify {
     }
 }
 
-impl Tool for Notify {
+impl LocalRmcpTool for Notify {
     const NAME: &'static str = "notify";
     type Error = NotifyError;
     type Args = NotifyArgs;
@@ -139,7 +139,7 @@ async fn raw_followup_empty_end_turn_normalizes_to_empty_text_choice() {
         .completion_request(TERMINAL_NOTIFY_PROMPT)
         .preamble(TERMINAL_NOTIFY_PREAMBLE.to_string())
         .max_tokens(1024)
-        .tool(notify_tool_definition())
+        .local_rmcp_tool(notify_tool_definition())
         .send()
         .await
         .expect("first Anthropic turn should succeed");
@@ -195,7 +195,7 @@ async fn prompt_loop_accepts_empty_terminal_turn_after_tool_result() {
         .agent(CLAUDE_SONNET_4_6)
         .preamble(TERMINAL_NOTIFY_PREAMBLE)
         .max_tokens(1024)
-        .tool(Notify::new(call_count.clone()))
+        .local_rmcp_tool(Notify::new(call_count.clone()))
         .build();
 
     let response = agent
@@ -244,7 +244,7 @@ async fn prompt_loop_preserves_pre_tool_text_when_terminal_followup_is_empty() {
         .agent(CLAUDE_SONNET_4_6)
         .preamble(TERMINAL_NOTIFY_WITH_ACK_PREAMBLE)
         .max_tokens(1024)
-        .tool(Notify::new(call_count.clone()))
+        .local_rmcp_tool(Notify::new(call_count.clone()))
         .build();
 
     let response = agent

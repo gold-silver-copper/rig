@@ -17,7 +17,7 @@ async fn main() -> Result<(), anyhow::Error> {
             like 20 words",
         )
         .max_tokens(1024)
-        .tool(common::Adder)
+        .local_rmcp_tool(common::Adder)
         .build();
 
     println!("Calculate 2 + 5");

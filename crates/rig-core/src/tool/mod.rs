@@ -58,6 +58,16 @@ pub fn tool_from_schema(
     )
 }
 
+impl From<crate::completion::ToolDefinition> for Tool {
+    fn from(definition: crate::completion::ToolDefinition) -> Self {
+        tool_from_schema(
+            definition.name,
+            definition.description,
+            definition.parameters,
+        )
+    }
+}
+
 /// Convert an rmcp tool result to the text fallback used by providers that do not
 /// accept richer MCP result content directly.
 pub fn call_tool_result_to_text(result: &CallToolResult) -> Result<String, ToolError> {

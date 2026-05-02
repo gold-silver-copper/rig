@@ -18,7 +18,7 @@ async fn think_tool_menu_planning() {
             "You are a helpful assistant that can solve complex problems. \
              Use the 'think' tool to reason through complex problems step by step.",
         )
-        .tool(ThinkTool)
+        .local_rmcp_tool(ThinkTool)
         .build();
 
     let response = agent

@@ -5,7 +5,7 @@ use rig::client::CompletionClient;
 use rig::completion::CompletionModel;
 use rig::message::{AssistantContent, Message, ToolChoice};
 use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 
 use crate::copilot::{LIVE_MODEL, live_client};
 use crate::support::{
@@ -25,8 +25,8 @@ async fn streaming_tools_smoke() {
     let agent = live_client()
         .agent(LIVE_MODEL)
         .preamble(STREAMING_TOOLS_PREAMBLE)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt(STREAMING_TOOLS_PROMPT).await;
@@ -47,8 +47,8 @@ async fn example_streaming_with_tools() {
              Use the tools provided to answer the user's question and answer in a full sentence.",
         )
         .max_tokens(1024)
-        .tool(Adder)
-        .tool(Subtract)
+        .local_rmcp_tool(Adder)
+        .local_rmcp_tool(Subtract)
         .build();
 
     let mut stream = agent.stream_prompt("Calculate 2 - 5").await;
@@ -65,7 +65,7 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let model = live_client().completion_model(LIVE_MODEL);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
-        .tool(zero_arg_tool_definition("ping"))
+        .local_rmcp_tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
     let stream = model.stream(request).await.expect("stream should start");
@@ -80,8 +80,8 @@ async fn raw_stream_surfaces_two_distinct_tool_calls_before_text() {
     let request = model
         .completion_request(TWO_TOOL_STREAM_PROMPT)
         .preamble(TWO_TOOL_STREAM_PREAMBLE.to_string())
-        .tool(AlphaSignal.definition(String::new()).await)
-        .tool(BetaSignal.definition(String::new()).await)
+        .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
+        .local_rmcp_tool(BetaSignal.definition(String::new()).await)
         .build();
 
     let observation = collect_raw_stream_observation(
@@ -104,8 +104,8 @@ async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() {
     let agent = live_client()
         .agent(LIVE_MODEL)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
-        .tool(AlphaSignal)
-        .tool(BetaSignal)
+        .local_rmcp_tool(AlphaSignal)
+        .local_rmcp_tool(BetaSignal)
         .build();
 
     let mut stream = agent
@@ -128,7 +128,7 @@ async fn raw_followup_uses_tool_result_without_new_tool_calls() {
     let request = model
         .completion_request(ORDERED_TOOL_STREAM_PROMPT)
         .preamble(ORDERED_TOOL_STREAM_PREAMBLE.to_string())
-        .tool(AlphaSignal.definition(String::new()).await)
+        .local_rmcp_tool(AlphaSignal.definition(String::new()).await)
         .build();
 
     let first_turn = collect_raw_stream_observation(

@@ -7,7 +7,7 @@ use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::ToolDefinition;
 use rig::providers::anthropic;
 use rig::streaming::StreamingPrompt;
-use rig::tool::Tool;
+use rig::tool::server::{LocalRmcpTool, ToolServerError};
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 
@@ -36,7 +36,7 @@ impl Add {
     }
 }
 
-impl Tool for Add {
+impl LocalRmcpTool for Add {
     const NAME: &'static str = "add";
     type Error = MathError;
     type Args = OperationArgs;
@@ -67,7 +67,7 @@ impl Subtract {
     }
 }
 
-impl Tool for Subtract {
+impl LocalRmcpTool for Subtract {
     const NAME: &'static str = "subtract";
     type Error = MathError;
     type Args = OperationArgs;
@@ -98,7 +98,7 @@ impl Multiply {
     }
 }
 
-impl Tool for Multiply {
+impl LocalRmcpTool for Multiply {
     const NAME: &'static str = "multiply";
     type Error = MathError;
     type Args = OperationArgs;
@@ -129,7 +129,7 @@ impl Divide {
     }
 }
 
-impl Tool for Divide {
+impl LocalRmcpTool for Divide {
     const NAME: &'static str = "divide";
     type Error = MathError;
     type Args = OperationArgs;
@@ -162,10 +162,10 @@ async fn multi_turn_streaming_tools() {
     let agent = client
         .agent(anthropic::completion::CLAUDE_SONNET_4_6)
         .preamble("You must use tools for arithmetic.")
-        .tool(Add::new(add_calls.clone()))
-        .tool(Subtract::new(subtract_calls.clone()))
-        .tool(Multiply::new(multiply_calls.clone()))
-        .tool(Divide::new(divide_calls.clone()))
+        .local_rmcp_tool(Add::new(add_calls.clone()))
+        .local_rmcp_tool(Subtract::new(subtract_calls.clone()))
+        .local_rmcp_tool(Multiply::new(multiply_calls.clone()))
+        .local_rmcp_tool(Divide::new(divide_calls.clone()))
         .build();
 
     let mut stream = agent

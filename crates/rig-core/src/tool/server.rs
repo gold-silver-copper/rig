@@ -19,6 +19,68 @@ pub trait RmcpToolProvider: WasmCompatSend + WasmCompatSync {
     ) -> WasmBoxedFuture<'a, Result<CallToolResult, ToolServerError>>;
 }
 
+pub trait LocalRmcpTool: WasmCompatSend + WasmCompatSync + 'static {
+    const NAME: &'static str;
+
+    type Error: std::error::Error + WasmCompatSend + WasmCompatSync + 'static;
+    type Args: serde::de::DeserializeOwned + WasmCompatSend;
+    type Output: serde::Serialize + WasmCompatSend;
+
+    fn definition(
+        &self,
+        prompt: String,
+    ) -> impl Future<Output = crate::completion::ToolDefinition> + WasmCompatSend;
+
+    fn call(
+        &self,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + WasmCompatSend;
+}
+
+impl LocalRmcpTool for Tool {
+    const NAME: &'static str = "";
+
+    type Error = ToolError;
+    type Args = serde_json::Value;
+    type Output = CallToolResult;
+
+    async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+        crate::completion::ToolDefinition::from(self)
+    }
+
+    async fn call(
+        &self,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(error_result(format!(
+            "No local handler is registered for rmcp tool '{}'",
+            self.name
+        )))
+    }
+}
+
+impl LocalRmcpTool for crate::completion::ToolDefinition {
+    const NAME: &'static str = "";
+
+    type Error = ToolError;
+    type Args = serde_json::Value;
+    type Output = CallToolResult;
+
+    async fn definition(&self, _prompt: String) -> crate::completion::ToolDefinition {
+        self.clone()
+    }
+
+    async fn call(
+        &self,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(error_result(format!(
+            "No local handler is registered for rmcp tool '{}'",
+            self.name
+        )))
+    }
+}
+
 #[derive(Clone)]
 struct RegisteredTool {
     definition: Tool,
@@ -140,6 +202,28 @@ impl ToolServer {
         self
     }
 
+    pub fn local_rmcp_tool<T>(self, tool: T) -> Self
+    where
+        T: LocalRmcpTool,
+    {
+        let definition = futures::executor::block_on(tool.definition(String::new()));
+        let tool = Arc::new(tool);
+        self.rmcp_tool(definition.into(), move |params| {
+            let tool = tool.clone();
+            async move {
+                let args = serde_json::from_value::<T::Args>(
+                    params.arguments.unwrap_or_default().into(),
+                )?;
+                let output = tool
+                    .call(args)
+                    .await
+                    .map_err(|e| ToolServerError::from(e.to_string()))?;
+                let value = serde_json::to_value(output)?;
+                Ok(CallToolResult::structured(value))
+            }
+        })
+    }
+
     pub fn remote_rmcp_tools(
         mut self,
         tools: Vec<Tool>,
@@ -209,6 +293,28 @@ impl RmcpToolRegistry {
         );
     }
 
+    pub fn add_local_tool<T>(&mut self, tool: T)
+    where
+        T: LocalRmcpTool,
+    {
+        let definition = futures::executor::block_on(tool.definition(String::new()));
+        let tool = Arc::new(tool);
+        self.add_tool(definition.into(), move |params| {
+            let tool = tool.clone();
+            async move {
+                let args = serde_json::from_value::<T::Args>(
+                    params.arguments.unwrap_or_default().into(),
+                )?;
+                let output = tool
+                    .call(args)
+                    .await
+                    .map_err(|e| ToolServerError::from(e.to_string()))?;
+                let value = serde_json::to_value(output)?;
+                Ok(CallToolResult::structured(value))
+            }
+        });
+    }
+
     pub fn add_remote_tools(&mut self, tools: Vec<Tool>, sink: ::rmcp::service::ServerSink) {
         let provider = Arc::new(RemoteToolProvider::new(sink));
         for tool in tools {
@@ -238,6 +344,15 @@ impl ToolServerHandle {
     {
         let mut registry = RmcpToolRegistry::new();
         registry.add_tool(tool, handler);
+        self.append_registry(registry).await
+    }
+
+    pub async fn add_local_rmcp_tool<T>(&self, tool: T) -> Result<(), ToolServerError>
+    where
+        T: LocalRmcpTool,
+    {
+        let mut registry = RmcpToolRegistry::new();
+        registry.add_local_tool(tool);
         self.append_registry(registry).await
     }
 

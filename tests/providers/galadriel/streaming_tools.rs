@@ -17,7 +17,7 @@ async fn raw_stream_emits_required_zero_arg_tool_call() {
     let model = client.completion_model(galadriel::GPT_4O);
     let request = model
         .completion_request(REQUIRED_ZERO_ARG_TOOL_PROMPT)
-        .tool(zero_arg_tool_definition("ping"))
+        .local_rmcp_tool(zero_arg_tool_definition("ping"))
         .tool_choice(ToolChoice::Required)
         .build();
     let stream = model.stream(request).await.expect("stream should start");
