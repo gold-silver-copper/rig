@@ -5,6 +5,7 @@
 //! fixtures through the common [`VectorStoreIndex`](rig_core::vector_store::VectorStoreIndex)
 //! API.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
@@ -15,6 +16,8 @@ use rig_core::vector_store::request::{SearchFilter, VectorSearchRequest};
 use rig_core::wasm_compat::{WasmCompatSend, WasmCompatSync};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+const FIXTURE_EXPECTED_SCORE_EPSILON: f64 = 1e-9;
 
 /// Distance metric used by an ANN conformance fixture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -97,6 +100,23 @@ impl AnnFixture {
     /// Queries to run against the vector store under test.
     pub fn queries(&self) -> &[FixtureQuery] {
         &self.queries
+    }
+
+    /// Recomputes the exact expected neighbors for `query` from fixture vectors.
+    pub fn expected_neighbors(&self, query: &FixtureQuery) -> Result<Vec<ExpectedNeighbor>> {
+        compute_expected_neighbors(
+            self.metric,
+            self.documents(),
+            &query.vector,
+            query.top_k,
+            query.threshold,
+        )
+        .with_context(|| {
+            format!(
+                "failed to compute expected neighbors for fixture '{}' query '{}'",
+                self.name, query.id
+            )
+        })
     }
 
     /// Validates fixture structure and internal references.
@@ -196,6 +216,35 @@ impl AnnFixture {
                     expected.id
                 );
             }
+
+            let oracle = self.expected_neighbors(query)?;
+            ensure!(
+                oracle.len() == query.expected.len(),
+                "ANN fixture '{}' query '{}' has {} embedded expected neighbors but vector oracle produced {}",
+                self.name,
+                query.id,
+                query.expected.len(),
+                oracle.len()
+            );
+            for (expected, oracle) in query.expected.iter().zip(oracle.iter()) {
+                ensure!(
+                    expected.id == oracle.id,
+                    "ANN fixture '{}' query '{}' expected id '{}' did not match vector oracle id '{}'",
+                    self.name,
+                    query.id,
+                    expected.id,
+                    oracle.id
+                );
+                ensure_score_close(
+                    expected.score,
+                    oracle.score,
+                    FIXTURE_EXPECTED_SCORE_EPSILON,
+                    &self.name,
+                    &query.id,
+                    &expected.id,
+                    "fixture/vector oracle",
+                )?;
+            }
         }
 
         Ok(())
@@ -264,6 +313,64 @@ pub struct ExpectedNeighbor {
     pub id: String,
     /// Expected backend-facing score.
     pub score: f64,
+}
+
+/// Computes exact expected neighbors from document vectors and a query vector.
+///
+/// The returned scores follow Rig's vector-store convention: larger values are
+/// better for every metric.
+pub fn compute_expected_neighbors(
+    metric: AnnMetric,
+    documents: &[FixtureDocument],
+    query_vector: &[f64],
+    top_k: u64,
+    threshold: Option<f64>,
+) -> Result<Vec<ExpectedNeighbor>> {
+    ensure!(top_k > 0, "top_k must be greater than zero");
+    ensure!(!documents.is_empty(), "documents must not be empty");
+    ensure!(
+        query_vector.iter().all(|value| value.is_finite()),
+        "query vector contains a non-finite value"
+    );
+
+    let dimensions = query_vector.len();
+    ensure!(dimensions > 0, "query vector must not be empty");
+    let top_k = usize::try_from(top_k).context("top_k did not fit in usize")?;
+
+    let mut scored = documents
+        .iter()
+        .map(|document| {
+            ensure!(
+                document.vector.len() == dimensions,
+                "document '{}' has {} dimensions, expected {dimensions}",
+                document.id,
+                document.vector.len()
+            );
+            ensure!(
+                document.vector.iter().all(|value| value.is_finite()),
+                "document '{}' vector contains a non-finite value",
+                document.id
+            );
+            Ok(ExpectedNeighbor {
+                id: document.id.clone(),
+                score: score_vector(metric, query_vector, &document.vector)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    scored.sort_by(compare_neighbor_score_desc);
+    let expected = scored
+        .into_iter()
+        .filter(|neighbor| threshold.is_none_or(|threshold| neighbor.score >= threshold))
+        .take(top_k)
+        .collect::<Vec<_>>();
+
+    ensure!(
+        !expected.is_empty(),
+        "vector oracle produced no expected neighbors"
+    );
+
+    Ok(expected)
 }
 
 /// Deterministic embedding model backed by an [`AnnFixture`].
@@ -422,6 +529,7 @@ where
     );
 
     for query in fixture.queries() {
+        let expected = fixture.expected_neighbors(query)?;
         let id_results = index
             .top_n_ids(request_for_query::<F>(query))
             .await
@@ -432,7 +540,14 @@ where
                     query.id
                 )
             })?;
-        assert_neighbors(fixture, query, &id_results, &options, "top_n_ids")?;
+        assert_neighbors(
+            fixture,
+            query,
+            &expected,
+            &id_results,
+            &options,
+            "top_n_ids",
+        )?;
 
         let doc_results = index
             .top_n::<D>(request_for_query::<F>(query))
@@ -505,21 +620,22 @@ where
 fn assert_neighbors(
     fixture: &AnnFixture,
     query: &FixtureQuery,
+    expected: &[ExpectedNeighbor],
     actual: &[(f64, String)],
     options: &AssertOptions,
     label: &str,
 ) -> Result<()> {
     if options.exact_order {
         ensure!(
-            actual.len() == query.expected.len(),
+            actual.len() == expected.len(),
             "fixture '{}' query '{}' {label} returned {} rows, expected {}",
             fixture.name(),
             query.id,
             actual.len(),
-            query.expected.len()
+            expected.len()
         );
 
-        for ((actual_score, actual_id), expected) in actual.iter().zip(query.expected.iter()) {
+        for ((actual_score, actual_id), expected) in actual.iter().zip(expected.iter()) {
             ensure!(
                 actual_id == &expected.id,
                 "fixture '{}' query '{}' {label} returned id '{}' where '{}' was expected",
@@ -539,8 +655,7 @@ fn assert_neighbors(
             )?;
         }
     } else {
-        let hits = query
-            .expected
+        let hits = expected
             .iter()
             .filter(|expected| {
                 actual
@@ -548,7 +663,7 @@ fn assert_neighbors(
                     .any(|(_, actual_id)| actual_id == &expected.id)
             })
             .count();
-        let recall = hits as f64 / query.expected.len() as f64;
+        let recall = hits as f64 / expected.len() as f64;
         ensure!(
             recall >= options.min_recall,
             "fixture '{}' query '{}' {label} recall {recall:.3} was below required {:.3}",
@@ -557,7 +672,7 @@ fn assert_neighbors(
             options.min_recall
         );
 
-        for expected in &query.expected {
+        for expected in expected {
             if let Some((actual_score, _)) = actual
                 .iter()
                 .find(|(_, actual_id)| actual_id == &expected.id)
@@ -576,6 +691,62 @@ fn assert_neighbors(
     }
 
     Ok(())
+}
+
+fn score_vector(metric: AnnMetric, query: &[f64], document: &[f64]) -> Result<f64> {
+    ensure!(
+        query.len() == document.len(),
+        "query vector has {} dimensions but document vector has {}",
+        query.len(),
+        document.len()
+    );
+    let score = match metric {
+        AnnMetric::Cosine => {
+            let (dot, query_norm, document_norm) = query.iter().zip(document.iter()).fold(
+                (0.0f32, 0.0f32, 0.0f32),
+                |(dot, query_norm, document_norm), (query_value, document_value)| {
+                    let query_value = *query_value as f32;
+                    let document_value = *document_value as f32;
+                    (
+                        dot + query_value * document_value,
+                        query_norm + query_value * query_value,
+                        document_norm + document_value * document_value,
+                    )
+                },
+            );
+            f64::from(dot / (query_norm.sqrt() * document_norm.sqrt()))
+        }
+        AnnMetric::L1 => {
+            let distance = query
+                .iter()
+                .zip(document.iter())
+                .map(|(query_value, document_value)| {
+                    ((*query_value as f32) - (*document_value as f32)).abs()
+                })
+                .sum::<f32>();
+            -f64::from(distance)
+        }
+        AnnMetric::L2 => {
+            let squared_distance = query
+                .iter()
+                .zip(document.iter())
+                .map(|(query_value, document_value)| {
+                    let delta = (*query_value as f32) - (*document_value as f32);
+                    delta * delta
+                })
+                .sum::<f32>();
+            -f64::from(squared_distance.sqrt())
+        }
+    };
+    ensure!(score.is_finite(), "computed score was not finite");
+    Ok(score)
+}
+
+fn compare_neighbor_score_desc(lhs: &ExpectedNeighbor, rhs: &ExpectedNeighbor) -> Ordering {
+    rhs.score
+        .partial_cmp(&lhs.score)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| lhs.id.cmp(&rhs.id))
 }
 
 fn ensure_score_close(
@@ -636,4 +807,283 @@ fn insert_embedding(
         bail!("ANN fixture '{fixture_name}' has conflicting vectors for text '{text}'");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Context, Result, ensure};
+    use rig_core::embeddings::EmbeddingModel;
+    use rig_core::vector_store::VectorStoreError;
+    use rig_core::vector_store::request::Filter;
+    use serde::Deserialize;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn validation_accepts_expected_values_that_match_vector_oracle() -> Result<()> {
+        let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_a", "score": 1.0},
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_c", "score": -1.0}
+        ])))?;
+        let query = fixture
+            .queries()
+            .first()
+            .context("fixture should include a query")?;
+        let expected = fixture.expected_neighbors(query)?;
+        let expected_ids = expected
+            .iter()
+            .map(|neighbor| neighbor.id.as_str())
+            .collect::<Vec<_>>();
+
+        ensure!(
+            expected_ids == ["doc_a", "doc_b", "doc_c"],
+            "unexpected oracle order: {expected_ids:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn validation_rejects_expected_order_that_differs_from_vector_oracle() -> Result<()> {
+        let result = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_a", "score": 1.0},
+            {"id": "doc_c", "score": -1.0}
+        ])));
+
+        ensure!(
+            result.is_err(),
+            "fixture validation should reject wrong order"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn validation_rejects_expected_score_that_differs_from_vector_oracle() -> Result<()> {
+        let result = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_a", "score": 0.5},
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_c", "score": -1.0}
+        ])));
+
+        ensure!(
+            result.is_err(),
+            "fixture validation should reject wrong score"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn threshold_equality_is_included_in_vector_oracle() -> Result<()> {
+        let fixture = AnnFixture::from_json(&threshold_equality_fixture_json())?;
+        let query = fixture
+            .queries()
+            .first()
+            .context("fixture should include a query")?;
+        let expected = fixture.expected_neighbors(query)?;
+        let expected_ids = expected
+            .iter()
+            .map(|neighbor| neighbor.id.as_str())
+            .collect::<Vec<_>>();
+
+        ensure!(
+            expected_ids == ["doc_a", "doc_b"],
+            "threshold equality should include doc_b: {expected_ids:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn equal_scores_are_ordered_by_document_id() -> Result<()> {
+        let fixture = AnnFixture::from_json(&tie_order_fixture_json())?;
+        let query = fixture
+            .queries()
+            .first()
+            .context("fixture should include a query")?;
+        let expected = fixture.expected_neighbors(query)?;
+        let expected_ids = expected
+            .iter()
+            .map(|neighbor| neighbor.id.as_str())
+            .collect::<Vec<_>>();
+
+        ensure!(
+            expected_ids == ["doc_a", "doc_b"],
+            "equal scores should be ordered by document id: {expected_ids:?}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fixture_embedding_model_rejects_missing_text() -> Result<()> {
+        let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_a", "score": 1.0},
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_c", "score": -1.0}
+        ])))?;
+        let model = FixtureEmbeddingModel::from_fixture(&fixture)?;
+        let result = model.embed_text("missing fixture text").await;
+
+        ensure!(
+            result.is_err(),
+            "fixture embedding model should reject missing text"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approximate_recall_mode_accepts_partial_expected_ids() -> Result<()> {
+        let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_a", "score": 1.0},
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_c", "score": -1.0}
+        ])))?;
+        let query = fixture
+            .queries()
+            .first()
+            .context("fixture should include a query")?;
+        let first_expected = fixture
+            .expected_neighbors(query)?
+            .into_iter()
+            .next()
+            .context("oracle should produce at least one neighbor")?;
+        let index = StaticIndex {
+            results: vec![(first_expected.score, first_expected.id)],
+        };
+
+        assert_vector_store_fixture(
+            &index,
+            &fixture,
+            AssertOptions::exact().recall_at_least(0.3),
+            |document: &TestDocument| document.id.clone(),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    #[derive(Clone)]
+    struct StaticIndex {
+        results: Vec<(f64, String)>,
+    }
+
+    impl VectorStoreIndex for StaticIndex {
+        type Filter = Filter<serde_json::Value>;
+
+        fn top_n<T: for<'a> Deserialize<'a> + WasmCompatSend>(
+            &self,
+            _req: VectorSearchRequest<Self::Filter>,
+        ) -> impl std::future::Future<
+            Output = std::result::Result<Vec<(f64, String, T)>, VectorStoreError>,
+        > + WasmCompatSend {
+            let results = self.results.clone();
+            async move {
+                results
+                    .iter()
+                    .map(|(score, id)| {
+                        let document = serde_json::from_value(json!({ "id": id }))?;
+                        Ok((*score, id.clone(), document))
+                    })
+                    .collect::<std::result::Result<Vec<_>, VectorStoreError>>()
+            }
+        }
+
+        fn top_n_ids(
+            &self,
+            _req: VectorSearchRequest<Self::Filter>,
+        ) -> impl std::future::Future<
+            Output = std::result::Result<Vec<(f64, String)>, VectorStoreError>,
+        > + WasmCompatSend {
+            let results = self.results.clone();
+            async move { Ok(results) }
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TestDocument {
+        id: String,
+    }
+
+    fn simple_cosine_fixture_json(expected: serde_json::Value) -> String {
+        json!({
+            "name": "simple_cosine",
+            "metric": "cosine",
+            "dimensions": 2,
+            "documents": [
+                {"id": "doc_a", "text": "doc:a", "vector": [1.0, 0.0]},
+                {"id": "doc_b", "text": "doc:b", "vector": [0.0, 1.0]},
+                {"id": "doc_c", "text": "doc:c", "vector": [-1.0, 0.0]}
+            ],
+            "queries": [
+                {
+                    "id": "query",
+                    "text": "query",
+                    "vector": [1.0, 0.0],
+                    "top_k": 3,
+                    "threshold": null,
+                    "expected": expected
+                }
+            ]
+        })
+        .to_string()
+    }
+
+    fn threshold_equality_fixture_json() -> String {
+        json!({
+            "name": "threshold_equality",
+            "metric": "cosine",
+            "dimensions": 2,
+            "documents": [
+                {"id": "doc_a", "text": "doc:a", "vector": [1.0, 0.0]},
+                {"id": "doc_b", "text": "doc:b", "vector": [0.0, 1.0]},
+                {"id": "doc_c", "text": "doc:c", "vector": [-1.0, 0.0]}
+            ],
+            "queries": [
+                {
+                    "id": "query",
+                    "text": "query",
+                    "vector": [1.0, 0.0],
+                    "top_k": 3,
+                    "threshold": 0.0,
+                    "expected": [
+                        {"id": "doc_a", "score": 1.0},
+                        {"id": "doc_b", "score": 0.0}
+                    ]
+                }
+            ]
+        })
+        .to_string()
+    }
+
+    fn tie_order_fixture_json() -> String {
+        json!({
+            "name": "tie_order",
+            "metric": "cosine",
+            "dimensions": 2,
+            "documents": [
+                {"id": "doc_b", "text": "doc:b", "vector": [1.0, 0.0]},
+                {"id": "doc_a", "text": "doc:a", "vector": [1.0, 0.0]}
+            ],
+            "queries": [
+                {
+                    "id": "query",
+                    "text": "query",
+                    "vector": [1.0, 0.0],
+                    "top_k": 2,
+                    "threshold": null,
+                    "expected": [
+                        {"id": "doc_a", "score": 1.0},
+                        {"id": "doc_b", "score": 1.0}
+                    ]
+                }
+            ]
+        })
+        .to_string()
+    }
 }

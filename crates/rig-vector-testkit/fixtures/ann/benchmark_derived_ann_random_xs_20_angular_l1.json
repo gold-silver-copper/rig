@@ -1,5 +1,5 @@
 {
-  "name": "ann_benchmarks_random_xs_20_angular_l1",
+  "name": "benchmark_derived_ann_random_xs_20_angular_l1",
   "metric": "l1",
   "dimensions": 20,
   "source": {
@@ -16,7 +16,7 @@
   },
   "documents": [
     {
-      "id": "ann:random-xs-20-angular:train:0",
+      "id": "ann-benchmarks:random-xs-20-angular:train:0",
       "text": "ann-benchmarks:random-xs-20-angular:train:0",
       "vector": [
         7.330019950866699,
@@ -42,7 +42,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:1",
+      "id": "ann-benchmarks:random-xs-20-angular:train:1",
       "text": "ann-benchmarks:random-xs-20-angular:train:1",
       "vector": [
         -5.894276142120361,
@@ -68,7 +68,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:2",
+      "id": "ann-benchmarks:random-xs-20-angular:train:2",
       "text": "ann-benchmarks:random-xs-20-angular:train:2",
       "vector": [
         7.63578462600708,
@@ -94,7 +94,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:3",
+      "id": "ann-benchmarks:random-xs-20-angular:train:3",
       "text": "ann-benchmarks:random-xs-20-angular:train:3",
       "vector": [
         10.335677146911621,
@@ -120,7 +120,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:4",
+      "id": "ann-benchmarks:random-xs-20-angular:train:4",
       "text": "ann-benchmarks:random-xs-20-angular:train:4",
       "vector": [
         3.028442144393921,
@@ -146,7 +146,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:5",
+      "id": "ann-benchmarks:random-xs-20-angular:train:5",
       "text": "ann-benchmarks:random-xs-20-angular:train:5",
       "vector": [
         -6.889273643493652,
@@ -172,7 +172,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:6",
+      "id": "ann-benchmarks:random-xs-20-angular:train:6",
       "text": "ann-benchmarks:random-xs-20-angular:train:6",
       "vector": [
         0.19963999092578888,
@@ -198,7 +198,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:7",
+      "id": "ann-benchmarks:random-xs-20-angular:train:7",
       "text": "ann-benchmarks:random-xs-20-angular:train:7",
       "vector": [
         0.4571079611778259,
@@ -224,7 +224,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:8",
+      "id": "ann-benchmarks:random-xs-20-angular:train:8",
       "text": "ann-benchmarks:random-xs-20-angular:train:8",
       "vector": [
         6.267971992492676,
@@ -250,7 +250,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:9",
+      "id": "ann-benchmarks:random-xs-20-angular:train:9",
       "text": "ann-benchmarks:random-xs-20-angular:train:9",
       "vector": [
         -1.3876546621322632,
@@ -276,7 +276,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:10",
+      "id": "ann-benchmarks:random-xs-20-angular:train:10",
       "text": "ann-benchmarks:random-xs-20-angular:train:10",
       "vector": [
         -6.2035746574401855,
@@ -302,7 +302,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:11",
+      "id": "ann-benchmarks:random-xs-20-angular:train:11",
       "text": "ann-benchmarks:random-xs-20-angular:train:11",
       "vector": [
         -3.3568785190582275,
@@ -328,7 +328,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:12",
+      "id": "ann-benchmarks:random-xs-20-angular:train:12",
       "text": "ann-benchmarks:random-xs-20-angular:train:12",
       "vector": [
         -2.5361671447753906,
@@ -354,7 +354,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:13",
+      "id": "ann-benchmarks:random-xs-20-angular:train:13",
       "text": "ann-benchmarks:random-xs-20-angular:train:13",
       "vector": [
         -4.135464191436768,
@@ -380,7 +380,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:14",
+      "id": "ann-benchmarks:random-xs-20-angular:train:14",
       "text": "ann-benchmarks:random-xs-20-angular:train:14",
       "vector": [
         7.404118537902832,
@@ -406,7 +406,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:15",
+      "id": "ann-benchmarks:random-xs-20-angular:train:15",
       "text": "ann-benchmarks:random-xs-20-angular:train:15",
       "vector": [
         -7.169374942779541,
@@ -434,7 +434,7 @@
   ],
   "queries": [
     {
-      "id": "ann:random-xs-20-angular:test:0",
+      "id": "ann-benchmarks:random-xs-20-angular:test:0",
       "text": "ann-benchmarks:random-xs-20-angular:test:0",
       "vector": [
         0.35840168595314026,
@@ -462,29 +462,29 @@
       "threshold": null,
       "expected": [
         {
-          "id": "ann:random-xs-20-angular:train:4",
+          "id": "ann-benchmarks:random-xs-20-angular:train:4",
           "score": -90.60901641845703
         },
         {
-          "id": "ann:random-xs-20-angular:train:11",
+          "id": "ann-benchmarks:random-xs-20-angular:train:11",
           "score": -105.49298858642578
         },
         {
-          "id": "ann:random-xs-20-angular:train:5",
+          "id": "ann-benchmarks:random-xs-20-angular:train:5",
           "score": -122.11114501953125
         },
         {
-          "id": "ann:random-xs-20-angular:train:7",
+          "id": "ann-benchmarks:random-xs-20-angular:train:7",
           "score": -127.526611328125
         },
         {
-          "id": "ann:random-xs-20-angular:train:15",
+          "id": "ann-benchmarks:random-xs-20-angular:train:15",
           "score": -130.69485473632812
         }
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:test:1",
+      "id": "ann-benchmarks:random-xs-20-angular:test:1",
       "text": "ann-benchmarks:random-xs-20-angular:test:1",
       "vector": [
         3.6209874153137207,
@@ -512,29 +512,29 @@
       "threshold": null,
       "expected": [
         {
-          "id": "ann:random-xs-20-angular:train:1",
+          "id": "ann-benchmarks:random-xs-20-angular:train:1",
           "score": -96.00678253173828
         },
         {
-          "id": "ann:random-xs-20-angular:train:7",
+          "id": "ann-benchmarks:random-xs-20-angular:train:7",
           "score": -118.45870208740234
         },
         {
-          "id": "ann:random-xs-20-angular:train:13",
+          "id": "ann-benchmarks:random-xs-20-angular:train:13",
           "score": -127.19526672363281
         },
         {
-          "id": "ann:random-xs-20-angular:train:14",
+          "id": "ann-benchmarks:random-xs-20-angular:train:14",
           "score": -132.31117248535156
         },
         {
-          "id": "ann:random-xs-20-angular:train:3",
+          "id": "ann-benchmarks:random-xs-20-angular:train:3",
           "score": -142.62437438964844
         }
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:test:2",
+      "id": "ann-benchmarks:random-xs-20-angular:test:2",
       "text": "ann-benchmarks:random-xs-20-angular:test:2",
       "vector": [
         -2.5134117603302,
@@ -562,15 +562,15 @@
       "threshold": -119.94393157958984,
       "expected": [
         {
-          "id": "ann:random-xs-20-angular:train:11",
+          "id": "ann-benchmarks:random-xs-20-angular:train:11",
           "score": -26.522390365600586
         },
         {
-          "id": "ann:random-xs-20-angular:train:6",
+          "id": "ann-benchmarks:random-xs-20-angular:train:6",
           "score": -113.07305145263672
         },
         {
-          "id": "ann:random-xs-20-angular:train:4",
+          "id": "ann-benchmarks:random-xs-20-angular:train:4",
           "score": -119.4617691040039
         }
       ]

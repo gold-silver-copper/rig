@@ -16,19 +16,19 @@ use serde::{Deserialize, Serialize};
 use sqlite_vec::sqlite3_vec_init;
 use tokio_rusqlite::Connection;
 
-const FIXTURES: [&str; 6] = [
+const FIXTURES: [&str; 4] = [
     include_str!(
-        "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_cosine.json"
+        "../../rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_cosine.json"
     ),
     include_str!(
-        "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_l1.json"
+        "../../rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_l1.json"
     ),
     include_str!(
-        "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_l2.json"
+        "../../rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_l2.json"
     ),
-    include_str!("../../rig-vector-testkit/fixtures/ann/vibe_yi_128_ip_cosine.json"),
-    include_str!("../../rig-vector-testkit/fixtures/ann/vibe_yi_128_ip_l1.json"),
-    include_str!("../../rig-vector-testkit/fixtures/ann/vibe_yi_128_ip_l2.json"),
+    include_str!(
+        "../../rig-vector-testkit/fixtures/ann/benchmark_derived_vibe_glove_200_cosine.json"
+    ),
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -100,6 +100,8 @@ async fn sqlite_index_for_fixture(
         SqliteVectorStore::with_distance_metric(conn, &model, sqlite_metric(fixture.metric()))
             .await?;
 
+    // These conformance fixtures inject precomputed embeddings so the test
+    // covers SQLite query/index behavior, not the normal InsertDocuments path.
     vector_store.add_rows(rows_for_fixture(fixture)).await?;
 
     Ok(vector_store.index(model))

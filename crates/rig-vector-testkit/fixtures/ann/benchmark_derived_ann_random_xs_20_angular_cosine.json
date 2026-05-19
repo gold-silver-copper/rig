@@ -1,6 +1,6 @@
 {
-  "name": "ann_benchmarks_random_xs_20_angular_l2",
-  "metric": "l2",
+  "name": "benchmark_derived_ann_random_xs_20_angular_cosine",
+  "metric": "cosine",
   "dimensions": 20,
   "source": {
     "kind": "ann-benchmarks-hdf5",
@@ -16,7 +16,7 @@
   },
   "documents": [
     {
-      "id": "ann:random-xs-20-angular:train:0",
+      "id": "ann-benchmarks:random-xs-20-angular:train:0",
       "text": "ann-benchmarks:random-xs-20-angular:train:0",
       "vector": [
         7.330019950866699,
@@ -42,7 +42,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:1",
+      "id": "ann-benchmarks:random-xs-20-angular:train:1",
       "text": "ann-benchmarks:random-xs-20-angular:train:1",
       "vector": [
         -5.894276142120361,
@@ -68,7 +68,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:2",
+      "id": "ann-benchmarks:random-xs-20-angular:train:2",
       "text": "ann-benchmarks:random-xs-20-angular:train:2",
       "vector": [
         7.63578462600708,
@@ -94,7 +94,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:3",
+      "id": "ann-benchmarks:random-xs-20-angular:train:3",
       "text": "ann-benchmarks:random-xs-20-angular:train:3",
       "vector": [
         10.335677146911621,
@@ -120,7 +120,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:4",
+      "id": "ann-benchmarks:random-xs-20-angular:train:4",
       "text": "ann-benchmarks:random-xs-20-angular:train:4",
       "vector": [
         3.028442144393921,
@@ -146,7 +146,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:5",
+      "id": "ann-benchmarks:random-xs-20-angular:train:5",
       "text": "ann-benchmarks:random-xs-20-angular:train:5",
       "vector": [
         -6.889273643493652,
@@ -172,7 +172,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:6",
+      "id": "ann-benchmarks:random-xs-20-angular:train:6",
       "text": "ann-benchmarks:random-xs-20-angular:train:6",
       "vector": [
         0.19963999092578888,
@@ -198,7 +198,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:7",
+      "id": "ann-benchmarks:random-xs-20-angular:train:7",
       "text": "ann-benchmarks:random-xs-20-angular:train:7",
       "vector": [
         0.4571079611778259,
@@ -224,7 +224,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:8",
+      "id": "ann-benchmarks:random-xs-20-angular:train:8",
       "text": "ann-benchmarks:random-xs-20-angular:train:8",
       "vector": [
         6.267971992492676,
@@ -250,7 +250,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:9",
+      "id": "ann-benchmarks:random-xs-20-angular:train:9",
       "text": "ann-benchmarks:random-xs-20-angular:train:9",
       "vector": [
         -1.3876546621322632,
@@ -276,7 +276,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:10",
+      "id": "ann-benchmarks:random-xs-20-angular:train:10",
       "text": "ann-benchmarks:random-xs-20-angular:train:10",
       "vector": [
         -6.2035746574401855,
@@ -302,7 +302,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:11",
+      "id": "ann-benchmarks:random-xs-20-angular:train:11",
       "text": "ann-benchmarks:random-xs-20-angular:train:11",
       "vector": [
         -3.3568785190582275,
@@ -328,7 +328,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:12",
+      "id": "ann-benchmarks:random-xs-20-angular:train:12",
       "text": "ann-benchmarks:random-xs-20-angular:train:12",
       "vector": [
         -2.5361671447753906,
@@ -354,7 +354,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:13",
+      "id": "ann-benchmarks:random-xs-20-angular:train:13",
       "text": "ann-benchmarks:random-xs-20-angular:train:13",
       "vector": [
         -4.135464191436768,
@@ -380,7 +380,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:14",
+      "id": "ann-benchmarks:random-xs-20-angular:train:14",
       "text": "ann-benchmarks:random-xs-20-angular:train:14",
       "vector": [
         7.404118537902832,
@@ -406,7 +406,7 @@
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:train:15",
+      "id": "ann-benchmarks:random-xs-20-angular:train:15",
       "text": "ann-benchmarks:random-xs-20-angular:train:15",
       "vector": [
         -7.169374942779541,
@@ -434,7 +434,7 @@
   ],
   "queries": [
     {
-      "id": "ann:random-xs-20-angular:test:0",
+      "id": "ann-benchmarks:random-xs-20-angular:test:0",
       "text": "ann-benchmarks:random-xs-20-angular:test:0",
       "vector": [
         0.35840168595314026,
@@ -462,29 +462,29 @@
       "threshold": null,
       "expected": [
         {
-          "id": "ann:random-xs-20-angular:train:4",
-          "score": -25.865999221801758
+          "id": "ann-benchmarks:random-xs-20-angular:train:4",
+          "score": 0.6295327544212341
         },
         {
-          "id": "ann:random-xs-20-angular:train:11",
-          "score": -29.415637969970703
+          "id": "ann-benchmarks:random-xs-20-angular:train:11",
+          "score": 0.42631271481513977
         },
         {
-          "id": "ann:random-xs-20-angular:train:5",
-          "score": -33.212684631347656
+          "id": "ann-benchmarks:random-xs-20-angular:train:15",
+          "score": 0.257154643535614
         },
         {
-          "id": "ann:random-xs-20-angular:train:15",
-          "score": -34.102073669433594
+          "id": "ann-benchmarks:random-xs-20-angular:train:5",
+          "score": 0.2534363865852356
         },
         {
-          "id": "ann:random-xs-20-angular:train:13",
-          "score": -36.51539993286133
+          "id": "ann-benchmarks:random-xs-20-angular:train:8",
+          "score": 0.2236003428697586
         }
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:test:1",
+      "id": "ann-benchmarks:random-xs-20-angular:test:1",
       "text": "ann-benchmarks:random-xs-20-angular:test:1",
       "vector": [
         3.6209874153137207,
@@ -512,29 +512,29 @@
       "threshold": null,
       "expected": [
         {
-          "id": "ann:random-xs-20-angular:train:1",
-          "score": -30.59081268310547
+          "id": "ann-benchmarks:random-xs-20-angular:train:1",
+          "score": 0.400501549243927
         },
         {
-          "id": "ann:random-xs-20-angular:train:13",
-          "score": -33.58499526977539
+          "id": "ann-benchmarks:random-xs-20-angular:train:13",
+          "score": 0.2122432440519333
         },
         {
-          "id": "ann:random-xs-20-angular:train:7",
-          "score": -35.24610137939453
+          "id": "ann-benchmarks:random-xs-20-angular:train:3",
+          "score": 0.0750870481133461
         },
         {
-          "id": "ann:random-xs-20-angular:train:11",
-          "score": -37.03864288330078
+          "id": "ann-benchmarks:random-xs-20-angular:train:7",
+          "score": 0.06553090363740921
         },
         {
-          "id": "ann:random-xs-20-angular:train:14",
-          "score": -37.353721618652344
+          "id": "ann-benchmarks:random-xs-20-angular:train:4",
+          "score": 0.06307100504636765
         }
       ]
     },
     {
-      "id": "ann:random-xs-20-angular:test:2",
+      "id": "ann-benchmarks:random-xs-20-angular:test:2",
       "text": "ann-benchmarks:random-xs-20-angular:test:2",
       "vector": [
         -2.5134117603302,
@@ -559,19 +559,19 @@
         -9.504595756530762
       ],
       "top_k": 5,
-      "threshold": -33.38032150268555,
+      "threshold": 0.2217719778418541,
       "expected": [
         {
-          "id": "ann:random-xs-20-angular:train:11",
-          "score": -6.8358893394470215
+          "id": "ann-benchmarks:random-xs-20-angular:train:11",
+          "score": 0.9647813439369202
         },
         {
-          "id": "ann:random-xs-20-angular:train:6",
-          "score": -32.11956787109375
+          "id": "ann-benchmarks:random-xs-20-angular:train:10",
+          "score": 0.2708776593208313
         },
         {
-          "id": "ann:random-xs-20-angular:train:13",
-          "score": -33.36170196533203
+          "id": "ann-benchmarks:random-xs-20-angular:train:4",
+          "score": 0.23628689348697662
         }
       ]
     }

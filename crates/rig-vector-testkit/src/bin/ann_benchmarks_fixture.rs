@@ -1,12 +1,12 @@
-use std::cmp::Ordering;
 use std::env;
 use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail, ensure};
-use hdf5_reader::{Hdf5File, SliceInfo, SliceInfoElem};
+use hdf5_reader::{H5Type, Hdf5File, SliceInfo, SliceInfoElem};
 use rig_vector_testkit::{
-    AnnFixture, AnnFixtureSource, AnnMetric, ExpectedNeighbor, FixtureDocument, FixtureQuery,
+    AnnFixture, AnnFixtureSource, AnnMetric, FixtureDocument, FixtureQuery,
+    compute_expected_neighbors,
 };
 
 fn main() -> Result<()> {
@@ -140,7 +140,7 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
     let dimensions = train_vectors
         .first()
         .map(Vec::len)
-        .context("ANN-Benchmarks train dataset yielded no rows")?;
+        .context("benchmark train dataset yielded no rows")?;
 
     ensure!(
         query_vectors.iter().all(|query| query.len() == dimensions),
@@ -148,12 +148,13 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
     );
     let top_k = u64::try_from(args.top_k).context("--top-k did not fit in u64")?;
 
+    let source_prefix = args.source_kind.trim_end_matches("-hdf5");
     let documents = train_vectors
         .iter()
         .enumerate()
         .map(|(index, vector)| FixtureDocument {
-            id: format!("ann:{}:train:{index}", args.dataset),
-            text: format!("ann-benchmarks:{}:train:{index}", args.dataset),
+            id: format!("{source_prefix}:{}:train:{index}", args.dataset),
+            text: format!("{source_prefix}:{}:train:{index}", args.dataset),
             vector: vector.clone(),
         })
         .collect::<Vec<_>>();
@@ -162,34 +163,27 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
     let queries = query_vectors
         .iter()
         .enumerate()
-        .map(|(query_index, vector)| {
-            let scored = scored_documents(args.metric, vector, &documents);
+        .map(|(query_index, vector)| -> Result<FixtureQuery> {
+            let unthresholded =
+                compute_expected_neighbors(args.metric, &documents, vector, top_k, None)?;
             let threshold = if query_index == last_query_index {
-                threshold_for(&scored, args.threshold_keep)
+                threshold_for(&unthresholded, args.threshold_keep)
             } else {
                 None
             };
-            let expected_limit = if threshold.is_some() {
-                args.threshold_keep.unwrap_or(args.top_k)
-            } else {
-                args.top_k
-            };
-            let expected = scored
-                .into_iter()
-                .take(expected_limit)
-                .map(|(score, id)| ExpectedNeighbor { id, score })
-                .collect::<Vec<_>>();
+            let expected =
+                compute_expected_neighbors(args.metric, &documents, vector, top_k, threshold)?;
 
-            FixtureQuery {
-                id: format!("ann:{}:test:{query_index}", args.dataset),
-                text: format!("ann-benchmarks:{}:test:{query_index}", args.dataset),
+            Ok(FixtureQuery {
+                id: format!("{source_prefix}:{}:test:{query_index}", args.dataset),
+                text: format!("{source_prefix}:{}:test:{query_index}", args.dataset),
                 vector: vector.clone(),
                 top_k,
                 threshold,
                 expected,
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
 
     AnnFixture::new(
         args.name.clone(),
@@ -253,7 +247,27 @@ fn read_dense_rows(
             },
         ],
     };
-    let rows: ndarray::ArrayD<f32> = dataset.read_slice(&selection)?;
+    read_dense_rows_with_type::<f32>(dataset, &selection, row_count, dimensions)
+        .or_else(|f32_error| {
+            read_dense_rows_with_type::<f64>(dataset, &selection, row_count, dimensions)
+                .with_context(|| format!("failed to read dense rows as f32: {f32_error}"))
+        })
+        .or_else(|float_error| {
+            read_dense_rows_with_type::<u8>(dataset, &selection, row_count, dimensions)
+                .with_context(|| format!("failed to read dense rows as float data: {float_error}"))
+        })
+}
+
+fn read_dense_rows_with_type<T>(
+    dataset: &hdf5_reader::Dataset,
+    selection: &SliceInfo,
+    row_count: usize,
+    dimensions: u64,
+) -> Result<Vec<Vec<f64>>>
+where
+    T: H5Type + Copy + Into<f64>,
+{
+    let rows: ndarray::ArrayD<T> = dataset.read_slice(selection)?;
     let dense_shape = rows.shape();
     ensure!(
         dense_shape.len() == 2,
@@ -291,78 +305,20 @@ fn read_dense_rows(
         let row_data = data
             .get(row_start..row_end)
             .context("selected row was outside dense data")?;
-        output.push(row_data.iter().map(|value| f64::from(*value)).collect());
+        output.push(row_data.iter().map(|value| (*value).into()).collect());
     }
 
     Ok(output)
 }
 
-fn scored_documents(
-    metric: AnnMetric,
-    query: &[f64],
-    documents: &[FixtureDocument],
-) -> Vec<(f64, String)> {
-    let mut scored = documents
-        .iter()
-        .map(|document| (score(metric, query, &document.vector), document.id.clone()))
-        .collect::<Vec<_>>();
-    scored.sort_by(compare_score_desc);
-    scored
-}
-
-fn compare_score_desc(lhs: &(f64, String), rhs: &(f64, String)) -> Ordering {
-    rhs.0
-        .partial_cmp(&lhs.0)
-        .unwrap_or(Ordering::Equal)
-        .then_with(|| lhs.1.cmp(&rhs.1))
-}
-
-fn threshold_for(scored: &[(f64, String)], threshold_keep: Option<usize>) -> Option<f64> {
+fn threshold_for(
+    expected: &[rig_vector_testkit::ExpectedNeighbor],
+    threshold_keep: Option<usize>,
+) -> Option<f64> {
     let threshold_keep = threshold_keep?;
-    let last_keep_score = scored.get(threshold_keep.checked_sub(1)?)?.0;
-    let first_drop_score = scored.get(threshold_keep)?.0;
+    let last_keep_score = expected.get(threshold_keep.checked_sub(1)?)?.score;
+    let first_drop_score = expected.get(threshold_keep)?.score;
     Some((last_keep_score + first_drop_score) / 2.0)
-}
-
-fn score(metric: AnnMetric, query: &[f64], document: &[f64]) -> f64 {
-    match metric {
-        AnnMetric::Cosine => {
-            let (dot, query_norm, document_norm) = query.iter().zip(document.iter()).fold(
-                (0.0f32, 0.0f32, 0.0f32),
-                |(dot, query_norm, document_norm), (query_value, document_value)| {
-                    let query_value = *query_value as f32;
-                    let document_value = *document_value as f32;
-                    (
-                        dot + query_value * document_value,
-                        query_norm + query_value * query_value,
-                        document_norm + document_value * document_value,
-                    )
-                },
-            );
-            f64::from(dot / (query_norm.sqrt() * document_norm.sqrt()))
-        }
-        AnnMetric::L1 => {
-            let distance = query
-                .iter()
-                .zip(document.iter())
-                .map(|(query_value, document_value)| {
-                    ((*query_value as f32) - (*document_value as f32)).abs()
-                })
-                .sum::<f32>();
-            -f64::from(distance)
-        }
-        AnnMetric::L2 => {
-            let squared_distance = query
-                .iter()
-                .zip(document.iter())
-                .map(|(query_value, document_value)| {
-                    let delta = (*query_value as f32) - (*document_value as f32);
-                    delta * delta
-                })
-                .sum::<f32>();
-            -f64::from(squared_distance.sqrt())
-        }
-    }
 }
 
 fn parse_metric(value: &str) -> Result<AnnMetric> {
