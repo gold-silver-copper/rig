@@ -149,7 +149,10 @@ async fn sqlite_matches_ann_conformance_fixtures() -> Result<()> {
         )
         .await?;
         if fixture_has_native_source_ground_truth(&fixture) {
-            assert_source_ground_truth_exact(&index, &fixture, 1e-4).await?;
+            assert_source_ground_truth_exact(&index, &fixture, 1e-4, |document: &AnnDocument| {
+                document.id.clone()
+            })
+            .await?;
         }
     }
 

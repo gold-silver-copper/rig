@@ -962,14 +962,17 @@ where
 /// This helper only uses source neighbors that are present in the compact
 /// fixture and have fixture document IDs. It rejects source metrics that do not
 /// match the fixture metric because Rig score conversion is metric-specific.
-pub async fn assert_source_ground_truth_exact<I, F>(
+pub async fn assert_source_ground_truth_exact<I, F, D, DocId>(
     index: &I,
     fixture: &AnnFixture,
     score_epsilon: f64,
+    document_id: DocId,
 ) -> Result<()>
 where
     I: VectorStoreIndex<Filter = F>,
     F: SearchFilter + WasmCompatSend + WasmCompatSync,
+    D: DeserializeOwned + Debug + WasmCompatSend,
+    DocId: Fn(&D) -> String,
 {
     fixture.validate()?;
     ensure!(
@@ -1001,7 +1004,7 @@ where
 
         let samples =
             u64::try_from(expected.len()).context("source expected count did not fit in u64")?;
-        let actual = index
+        let id_results = index
             .top_n_ids(request_for_query_samples::<F>(query, samples))
             .await
             .with_context(|| {
@@ -1012,31 +1015,51 @@ where
                 )
             })?;
         let expected_ids = expected.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-        let actual_ids = actual.iter().map(|(_, id)| id.as_str()).collect::<Vec<_>>();
+        assert_source_ground_truth_rows(
+            fixture,
+            query,
+            &expected,
+            &id_results,
+            score_epsilon,
+            "source ground-truth exact top_n_ids",
+        )?;
 
+        let doc_results = index
+            .top_n::<D>(request_for_query_samples::<F>(query, samples))
+            .await
+            .with_context(|| {
+                format!(
+                    "top_n failed for fixture '{}' query '{}' source ground-truth exact assertion",
+                    fixture.name(),
+                    query.id
+                )
+            })?;
+        let doc_ids = doc_results
+            .iter()
+            .map(|(_, id, _)| id.as_str())
+            .collect::<Vec<_>>();
         ensure!(
-            actual.len() == expected.len(),
-            "fixture '{}' query '{}' source ground-truth exact returned {} rows, expected {}; expected ids: {:?}; actual ids: {:?}",
+            doc_results.len() == expected.len(),
+            "fixture '{}' query '{}' source ground-truth exact top_n returned {} rows, expected {}; expected ids: {:?}; actual ids: {:?}",
             fixture.name(),
             query.id,
-            actual.len(),
+            doc_results.len(),
             expected.len(),
             expected_ids,
-            actual_ids
+            doc_ids
         );
-
-        for (rank, ((actual_score, actual_id), (expected_id, expected_score))) in
-            actual.iter().zip(expected.iter()).enumerate()
+        for (rank, ((actual_score, actual_id, document), (expected_id, expected_score))) in
+            doc_results.iter().zip(expected.iter()).enumerate()
         {
             ensure!(
                 actual_id == expected_id,
-                "fixture '{}' query '{}' source ground-truth exact rank {rank} returned id '{}' where '{}' was expected; expected ids: {:?}; actual ids: {:?}",
+                "fixture '{}' query '{}' source ground-truth exact top_n rank {rank} returned id '{}' where '{}' was expected; expected ids: {:?}; actual ids: {:?}",
                 fixture.name(),
                 query.id,
                 actual_id,
                 expected_id,
                 expected_ids,
-                actual_ids
+                doc_ids
             );
             ensure_score_close(
                 *actual_score,
@@ -1045,8 +1068,17 @@ where
                 fixture.name(),
                 &query.id,
                 expected_id,
-                "source ground-truth exact",
+                "source ground-truth exact top_n",
             )?;
+            let decoded_id = document_id(document);
+            ensure!(
+                decoded_id == *actual_id,
+                "fixture '{}' query '{}' source ground-truth exact top_n decoded document id '{}' did not match returned id '{}'",
+                fixture.name(),
+                query.id,
+                decoded_id,
+                actual_id
+            );
         }
         compared_queries += 1;
     }
@@ -1081,6 +1113,55 @@ where
         .query(query.text.clone())
         .samples(samples)
         .build()
+}
+
+fn assert_source_ground_truth_rows(
+    fixture: &AnnFixture,
+    query: &FixtureQuery,
+    expected: &[(&str, f64)],
+    actual: &[(f64, String)],
+    score_epsilon: f64,
+    label: &str,
+) -> Result<()> {
+    let expected_ids = expected.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    let actual_ids = actual.iter().map(|(_, id)| id.as_str()).collect::<Vec<_>>();
+
+    ensure!(
+        actual.len() == expected.len(),
+        "fixture '{}' query '{}' {label} returned {} rows, expected {}; expected ids: {:?}; actual ids: {:?}",
+        fixture.name(),
+        query.id,
+        actual.len(),
+        expected.len(),
+        expected_ids,
+        actual_ids
+    );
+
+    for (rank, ((actual_score, actual_id), (expected_id, expected_score))) in
+        actual.iter().zip(expected.iter()).enumerate()
+    {
+        ensure!(
+            actual_id == expected_id,
+            "fixture '{}' query '{}' {label} rank {rank} returned id '{}' where '{}' was expected; expected ids: {:?}; actual ids: {:?}",
+            fixture.name(),
+            query.id,
+            actual_id,
+            expected_id,
+            expected_ids,
+            actual_ids
+        );
+        ensure_score_close(
+            *actual_score,
+            *expected_score,
+            score_epsilon,
+            fixture.name(),
+            &query.id,
+            expected_id,
+            label,
+        )?;
+    }
+
+    Ok(())
 }
 
 fn assert_neighbors(
@@ -1726,7 +1807,12 @@ mod tests {
             .next()
             .context("oracle should produce at least one neighbor")?;
         let index = StaticIndex {
-            results: vec![(first_expected.score, first_expected.id)],
+            id_results: vec![(first_expected.score, first_expected.id.clone())],
+            doc_results: vec![(
+                first_expected.score,
+                first_expected.id.clone(),
+                first_expected.id,
+            )],
         };
 
         assert_vector_store_fixture(
@@ -1748,11 +1834,17 @@ mod tests {
             {"id": "doc_c", "score": -1.0}
         ])))?;
         let index = StaticIndex {
-            results: vec![
+            id_results: vec![
                 (1.0, "doc_a".to_string()),
                 (0.0, "doc_b".to_string()),
                 (-1.0, "doc_c".to_string()),
                 (-2.0, "doc_extra".to_string()),
+            ],
+            doc_results: vec![
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+                (-1.0, "doc_c".to_string(), "doc_c".to_string()),
+                (-2.0, "doc_extra".to_string(), "doc_extra".to_string()),
             ],
         };
         let result = assert_vector_store_fixture(
@@ -1779,7 +1871,11 @@ mod tests {
             {"id": "doc_c", "score": -1.0}
         ])))?;
         let index = StaticIndex {
-            results: vec![(1.0, "doc_a".to_string()), (1.0, "doc_a".to_string())],
+            id_results: vec![(1.0, "doc_a".to_string()), (1.0, "doc_a".to_string())],
+            doc_results: vec![
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+            ],
         };
         let result = assert_vector_store_fixture(
             &index,
@@ -1802,7 +1898,11 @@ mod tests {
         let fixture =
             AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
         let index = StaticIndex {
-            results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            id_results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            doc_results: vec![
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+            ],
         };
 
         assert_source_ground_truth_recall(&index, &fixture, 1.0).await?;
@@ -1815,10 +1915,17 @@ mod tests {
         let fixture =
             AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
         let index = StaticIndex {
-            results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            id_results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            doc_results: vec![
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+            ],
         };
 
-        assert_source_ground_truth_exact(&index, &fixture, 1e-9).await?;
+        assert_source_ground_truth_exact(&index, &fixture, 1e-9, |document: &TestDocument| {
+            document.id.clone()
+        })
+        .await?;
 
         Ok(())
     }
@@ -1828,9 +1935,17 @@ mod tests {
         let fixture =
             AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
         let index = StaticIndex {
-            results: vec![(0.0, "doc_b".to_string()), (1.0, "doc_a".to_string())],
+            id_results: vec![(0.0, "doc_b".to_string()), (1.0, "doc_a".to_string())],
+            doc_results: vec![
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+            ],
         };
-        let result = assert_source_ground_truth_exact(&index, &fixture, 1e-9).await;
+        let result =
+            assert_source_ground_truth_exact(&index, &fixture, 1e-9, |document: &TestDocument| {
+                document.id.clone()
+            })
+            .await;
 
         ensure!(
             result.is_err(),
@@ -1845,9 +1960,17 @@ mod tests {
         let fixture =
             AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
         let index = StaticIndex {
-            results: vec![(0.5, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            id_results: vec![(0.5, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            doc_results: vec![
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+            ],
         };
-        let result = assert_source_ground_truth_exact(&index, &fixture, 1e-9).await;
+        let result =
+            assert_source_ground_truth_exact(&index, &fixture, 1e-9, |document: &TestDocument| {
+                document.id.clone()
+            })
+            .await;
 
         ensure!(
             result.is_err(),
@@ -1858,11 +1981,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_ground_truth_exact_rejects_wrong_top_n_order() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
+        let index = StaticIndex {
+            id_results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            doc_results: vec![
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+                (1.0, "doc_a".to_string(), "doc_a".to_string()),
+            ],
+        };
+        let result =
+            assert_source_ground_truth_exact(&index, &fixture, 1e-9, |document: &TestDocument| {
+                document.id.clone()
+            })
+            .await;
+
+        ensure!(
+            result.is_err(),
+            "source ground-truth exact should reject wrong top_n order"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_ground_truth_exact_rejects_wrong_top_n_score() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
+        let index = StaticIndex {
+            id_results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            doc_results: vec![
+                (0.5, "doc_a".to_string(), "doc_a".to_string()),
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+            ],
+        };
+        let result =
+            assert_source_ground_truth_exact(&index, &fixture, 1e-9, |document: &TestDocument| {
+                document.id.clone()
+            })
+            .await;
+
+        ensure!(
+            result.is_err(),
+            "source ground-truth exact should reject wrong top_n score"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_ground_truth_exact_rejects_mismatched_decoded_document_id() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
+        let index = StaticIndex {
+            id_results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+            doc_results: vec![
+                (1.0, "doc_a".to_string(), "wrong_doc".to_string()),
+                (0.0, "doc_b".to_string(), "doc_b".to_string()),
+            ],
+        };
+        let result =
+            assert_source_ground_truth_exact(&index, &fixture, 1e-9, |document: &TestDocument| {
+                document.id.clone()
+            })
+            .await;
+
+        ensure!(
+            result.is_err(),
+            "source ground-truth exact should reject mismatched decoded document id"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn source_ground_truth_recall_rejects_metric_mismatch() -> Result<()> {
         let fixture =
             AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::L1, 3, 1.0))?;
         let index = StaticIndex {
-            results: vec![(-0.0, "doc_a".to_string()), (-2.0, "doc_b".to_string())],
+            id_results: vec![(-0.0, "doc_a".to_string()), (-2.0, "doc_b".to_string())],
+            doc_results: vec![
+                (-0.0, "doc_a".to_string(), "doc_a".to_string()),
+                (-2.0, "doc_b".to_string(), "doc_b".to_string()),
+            ],
         };
         let result = assert_source_ground_truth_recall(&index, &fixture, 1.0).await;
 
@@ -1876,7 +2078,8 @@ mod tests {
 
     #[derive(Clone)]
     struct StaticIndex {
-        results: Vec<(f64, String)>,
+        id_results: Vec<(f64, String)>,
+        doc_results: Vec<(f64, String, String)>,
     }
 
     impl VectorStoreIndex for StaticIndex {
@@ -1888,12 +2091,12 @@ mod tests {
         ) -> impl std::future::Future<
             Output = std::result::Result<Vec<(f64, String, T)>, VectorStoreError>,
         > + WasmCompatSend {
-            let results = self.results.clone();
+            let results = self.doc_results.clone();
             async move {
                 results
                     .iter()
-                    .map(|(score, id)| {
-                        let document = serde_json::from_value(json!({ "id": id }))?;
+                    .map(|(score, id, document_id)| {
+                        let document = serde_json::from_value(json!({ "id": document_id }))?;
                         Ok((*score, id.clone(), document))
                     })
                     .collect::<std::result::Result<Vec<_>, VectorStoreError>>()
@@ -1906,7 +2109,7 @@ mod tests {
         ) -> impl std::future::Future<
             Output = std::result::Result<Vec<(f64, String)>, VectorStoreError>,
         > + WasmCompatSend {
-            let results = self.results.clone();
+            let results = self.id_results.clone();
             async move { Ok(results) }
         }
     }
