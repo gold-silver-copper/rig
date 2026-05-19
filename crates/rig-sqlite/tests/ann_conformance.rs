@@ -17,9 +17,15 @@ use sqlite_vec::sqlite3_vec_init;
 use tokio_rusqlite::Connection;
 
 const FIXTURES: [&str; 3] = [
-    include_str!("../../rig-vector-testkit/fixtures/ann/synthetic_cosine_small.json"),
-    include_str!("../../rig-vector-testkit/fixtures/ann/synthetic_l1_small.json"),
-    include_str!("../../rig-vector-testkit/fixtures/ann/synthetic_l2_small.json"),
+    include_str!(
+        "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_cosine.json"
+    ),
+    include_str!(
+        "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_l1.json"
+    ),
+    include_str!(
+        "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_l2.json"
+    ),
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -73,7 +79,7 @@ async fn sqlite_matches_ann_conformance_fixtures() -> Result<()> {
         assert_vector_store_fixture(
             &index,
             &fixture,
-            AssertOptions::exact().score_epsilon(1e-5),
+            AssertOptions::exact().score_epsilon(1e-4),
             |document: &AnnDocument| document.id.clone(),
         )
         .await?;

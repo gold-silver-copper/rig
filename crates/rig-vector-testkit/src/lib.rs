@@ -34,11 +34,34 @@ pub struct AnnFixture {
     name: String,
     metric: AnnMetric,
     dimensions: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<AnnFixtureSource>,
     documents: Vec<FixtureDocument>,
     queries: Vec<FixtureQuery>,
 }
 
 impl AnnFixture {
+    /// Creates and validates a fixture.
+    pub fn new(
+        name: String,
+        metric: AnnMetric,
+        dimensions: usize,
+        source: Option<AnnFixtureSource>,
+        documents: Vec<FixtureDocument>,
+        queries: Vec<FixtureQuery>,
+    ) -> Result<Self> {
+        let fixture = Self {
+            name,
+            metric,
+            dimensions,
+            source,
+            documents,
+            queries,
+        };
+        fixture.validate()?;
+        Ok(fixture)
+    }
+
     /// Parses and validates a fixture from JSON.
     pub fn from_json(json: &str) -> Result<Self> {
         let fixture = serde_json::from_str::<Self>(json).context("failed to parse ANN fixture")?;
@@ -59,6 +82,11 @@ impl AnnFixture {
     /// Vector dimensionality for all documents and queries in the fixture.
     pub fn dimensions(&self) -> usize {
         self.dimensions
+    }
+
+    /// Source metadata for generated fixtures.
+    pub fn source(&self) -> Option<&AnnFixtureSource> {
+        self.source.as_ref()
     }
 
     /// Documents to insert into the vector store under test.
@@ -172,6 +200,33 @@ impl AnnFixture {
 
         Ok(())
     }
+}
+
+/// Provenance metadata for a generated ANN fixture.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AnnFixtureSource {
+    /// Source kind, for example `ann-benchmarks-hdf5`.
+    pub kind: String,
+    /// Source dataset name.
+    pub dataset: String,
+    /// Source URL, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Source dataset metric, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_metric: Option<String>,
+    /// First train row used as a fixture document.
+    pub train_start: usize,
+    /// Number of train rows used as fixture documents.
+    pub train_count: usize,
+    /// First test row used as a fixture query.
+    pub test_start: usize,
+    /// Number of test rows used as fixture queries.
+    pub test_count: usize,
+    /// Number of expected neighbors generated for non-threshold queries.
+    pub top_k: usize,
+    /// Tool that generated the fixture.
+    pub generated_by: String,
 }
 
 /// A document row in an ANN conformance fixture.
