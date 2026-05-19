@@ -1,0 +1,32 @@
+[package]
+name = "rig-vector-testkit"
+version = "0.1.0"
+edition = { workspace = true }
+description = "Shared vector-store conformance fixtures and assertions for Rig"
+license = "MIT"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[features]
+ann-benchmarks = ["dep:hdf5-reader", "dep:ndarray"]
+
+[[bin]]
+name = "hdf5_vector_fixture"
+path = "src/bin/hdf5_vector_fixture.rs"
+required-features = ["ann-benchmarks"]
+
+[dependencies]
+anyhow = { workspace = true }
+hdf5-reader = { version = "0.5.0", default-features = false, optional = true }
+ndarray = { version = "0.17", optional = true }
+rig-core = { path = "../rig-core", version = "0.37.0", default-features = false }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
