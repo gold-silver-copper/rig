@@ -957,6 +957,109 @@ where
     Ok(())
 }
 
+/// Asserts exact source-ground-truth order and scores for exact backends.
+///
+/// This helper only uses source neighbors that are present in the compact
+/// fixture and have fixture document IDs. It rejects source metrics that do not
+/// match the fixture metric because Rig score conversion is metric-specific.
+pub async fn assert_source_ground_truth_exact<I, F>(
+    index: &I,
+    fixture: &AnnFixture,
+    score_epsilon: f64,
+) -> Result<()>
+where
+    I: VectorStoreIndex<Filter = F>,
+    F: SearchFilter + WasmCompatSend + WasmCompatSync,
+{
+    fixture.validate()?;
+    ensure!(
+        score_epsilon.is_finite() && score_epsilon >= 0.0,
+        "score epsilon must be finite and non-negative"
+    );
+
+    let mut compared_queries = 0usize;
+    for query in fixture.queries() {
+        let Some(source_ground_truth) = &query.source_ground_truth else {
+            continue;
+        };
+        ensure!(
+            source_ground_truth.metric == fixture.metric(),
+            "fixture '{}' query '{}' source ground-truth metric {:?} does not match fixture metric {:?}",
+            fixture.name(),
+            query.id,
+            source_ground_truth.metric,
+            fixture.metric()
+        );
+        let expected = source_ground_truth
+            .neighbors
+            .iter()
+            .filter_map(|neighbor| neighbor.id.as_ref().map(|id| (id.as_str(), neighbor.score)))
+            .collect::<Vec<_>>();
+        if expected.is_empty() {
+            continue;
+        }
+
+        let samples =
+            u64::try_from(expected.len()).context("source expected count did not fit in u64")?;
+        let actual = index
+            .top_n_ids(request_for_query_samples::<F>(query, samples))
+            .await
+            .with_context(|| {
+                format!(
+                    "top_n_ids failed for fixture '{}' query '{}' source ground-truth exact assertion",
+                    fixture.name(),
+                    query.id
+                )
+            })?;
+        let expected_ids = expected.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let actual_ids = actual.iter().map(|(_, id)| id.as_str()).collect::<Vec<_>>();
+
+        ensure!(
+            actual.len() == expected.len(),
+            "fixture '{}' query '{}' source ground-truth exact returned {} rows, expected {}; expected ids: {:?}; actual ids: {:?}",
+            fixture.name(),
+            query.id,
+            actual.len(),
+            expected.len(),
+            expected_ids,
+            actual_ids
+        );
+
+        for (rank, ((actual_score, actual_id), (expected_id, expected_score))) in
+            actual.iter().zip(expected.iter()).enumerate()
+        {
+            ensure!(
+                actual_id == expected_id,
+                "fixture '{}' query '{}' source ground-truth exact rank {rank} returned id '{}' where '{}' was expected; expected ids: {:?}; actual ids: {:?}",
+                fixture.name(),
+                query.id,
+                actual_id,
+                expected_id,
+                expected_ids,
+                actual_ids
+            );
+            ensure_score_close(
+                *actual_score,
+                *expected_score,
+                score_epsilon,
+                fixture.name(),
+                &query.id,
+                expected_id,
+                "source ground-truth exact",
+            )?;
+        }
+        compared_queries += 1;
+    }
+
+    ensure!(
+        compared_queries > 0,
+        "fixture '{}' has no source ground-truth neighbors present in compact documents",
+        fixture.name()
+    );
+
+    Ok(())
+}
+
 fn request_for_query<F>(query: &FixtureQuery) -> VectorSearchRequest<F>
 where
     F: SearchFilter,
@@ -1524,6 +1627,53 @@ mod tests {
         };
 
         assert_source_ground_truth_recall(&index, &fixture, 1.0).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_ground_truth_exact_accepts_correct_order_and_scores() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
+        let index = StaticIndex {
+            results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+        };
+
+        assert_source_ground_truth_exact(&index, &fixture, 1e-9).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_ground_truth_exact_rejects_wrong_order() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
+        let index = StaticIndex {
+            results: vec![(0.0, "doc_b".to_string()), (1.0, "doc_a".to_string())],
+        };
+        let result = assert_source_ground_truth_exact(&index, &fixture, 1e-9).await;
+
+        ensure!(
+            result.is_err(),
+            "source ground-truth exact should reject wrong order"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_ground_truth_exact_rejects_wrong_score() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
+        let index = StaticIndex {
+            results: vec![(0.5, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+        };
+        let result = assert_source_ground_truth_exact(&index, &fixture, 1e-9).await;
+
+        ensure!(
+            result.is_err(),
+            "source ground-truth exact should reject wrong score"
+        );
 
         Ok(())
     }
