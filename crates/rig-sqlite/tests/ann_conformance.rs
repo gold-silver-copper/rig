@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sqlite_vec::sqlite3_vec_init;
 use tokio_rusqlite::Connection;
 
-const FIXTURES: [&str; 3] = [
+const FIXTURES: [&str; 6] = [
     include_str!(
         "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_cosine.json"
     ),
@@ -26,6 +26,9 @@ const FIXTURES: [&str; 3] = [
     include_str!(
         "../../rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_l2.json"
     ),
+    include_str!("../../rig-vector-testkit/fixtures/ann/vibe_yi_128_ip_cosine.json"),
+    include_str!("../../rig-vector-testkit/fixtures/ann/vibe_yi_128_ip_l1.json"),
+    include_str!("../../rig-vector-testkit/fixtures/ann/vibe_yi_128_ip_l2.json"),
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

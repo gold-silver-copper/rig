@@ -26,6 +26,7 @@ struct Args {
     output: PathBuf,
     name: String,
     dataset: String,
+    source_kind: String,
     url: Option<String>,
     source_metric: Option<String>,
     metric: AnnMetric,
@@ -41,6 +42,7 @@ impl Args {
         let mut output = None;
         let mut name = None;
         let mut dataset = None;
+        let mut source_kind = "ann-benchmarks-hdf5".to_string();
         let mut url = None;
         let mut source_metric = None;
         let mut metric = None;
@@ -56,6 +58,7 @@ impl Args {
                 "--output" => output = Some(PathBuf::from(next_value(&mut args, "--output")?)),
                 "--name" => name = Some(next_value(&mut args, "--name")?),
                 "--dataset" => dataset = Some(next_value(&mut args, "--dataset")?),
+                "--source-kind" => source_kind = next_value(&mut args, "--source-kind")?,
                 "--url" => url = Some(next_value(&mut args, "--url")?),
                 "--source-metric" => {
                     source_metric = Some(next_value(&mut args, "--source-metric")?)
@@ -89,6 +92,10 @@ impl Args {
         let dataset = dataset.context("--dataset is required")?;
         let metric = metric.context("--metric is required")?;
 
+        ensure!(
+            !source_kind.trim().is_empty(),
+            "--source-kind must not be empty"
+        );
         ensure!(documents > 0, "--documents must be greater than zero");
         ensure!(queries > 0, "--queries must be greater than zero");
         ensure!(top_k > 0, "--top-k must be greater than zero");
@@ -108,6 +115,7 @@ impl Args {
             output,
             name,
             dataset,
+            source_kind,
             url,
             source_metric,
             metric,
@@ -188,7 +196,7 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
         args.metric,
         dimensions,
         Some(AnnFixtureSource {
-            kind: "ann-benchmarks-hdf5".to_string(),
+            kind: args.source_kind.clone(),
             dataset: args.dataset.clone(),
             url: args.url.clone(),
             source_metric: args.source_metric.clone(),
@@ -379,7 +387,7 @@ fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<Str
 
 fn print_help() {
     println!(
-        "Generate a compact Rig vector-store fixture from an ANN-Benchmarks HDF5 file.\n\
+        "Generate a compact Rig vector-store fixture from a benchmark HDF5 file.\n\
 \n\
 Usage:\n\
   ann_benchmarks_fixture \\\n\
@@ -387,6 +395,7 @@ Usage:\n\
     --output crates/rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_cosine.json \\\n\
     --name ann_benchmarks_random_xs_20_angular_cosine \\\n\
     --dataset random-xs-20-angular \\\n\
+    --source-kind ann-benchmarks-hdf5 \\\n\
     --url https://ann-benchmarks.com/random-xs-20-angular.hdf5 \\\n\
     --source-metric angular \\\n\
     --metric cosine \\\n\
