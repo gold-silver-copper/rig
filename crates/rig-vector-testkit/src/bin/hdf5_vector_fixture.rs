@@ -199,7 +199,7 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
             test_start: 0,
             test_count: args.queries,
             top_k: args.top_k,
-            generated_by: "cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_fixture".to_string(),
+            generated_by: "cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture".to_string(),
         }),
         documents,
         queries,
@@ -346,10 +346,10 @@ fn print_help() {
         "Generate a compact Rig vector-store fixture from a benchmark HDF5 file.\n\
 \n\
 Usage:\n\
-  ann_benchmarks_fixture \\\n\
+  hdf5_vector_fixture \\\n\
     --input random-xs-20-angular.hdf5 \\\n\
-    --output crates/rig-vector-testkit/fixtures/ann/ann_benchmarks_random_xs_20_angular_cosine.json \\\n\
-    --name ann_benchmarks_random_xs_20_angular_cosine \\\n\
+    --output crates/rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_cosine.json \\\n\
+    --name benchmark_derived_ann_random_xs_20_angular_cosine \\\n\
     --dataset random-xs-20-angular \\\n\
     --source-kind ann-benchmarks-hdf5 \\\n\
     --url https://ann-benchmarks.com/random-xs-20-angular.hdf5 \\\n\

@@ -12,7 +12,7 @@
     "test_start": 0,
     "test_count": 3,
     "top_k": 5,
-    "generated_by": "cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_fixture"
+    "generated_by": "cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture"
   },
   "documents": [
     {

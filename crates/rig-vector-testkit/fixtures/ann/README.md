@@ -33,7 +33,7 @@ Regenerate the fixtures with:
 curl -L https://ann-benchmarks.com/random-xs-20-angular.hdf5 -o /tmp/random-xs-20-angular.hdf5
 curl -L https://huggingface.co/datasets/vector-index-bench/vibe/resolve/main/glove-200-cosine.hdf5 -o /tmp/vibe-glove-200-cosine.hdf5
 
-cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_fixture -- \
+cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture -- \
   --input /tmp/random-xs-20-angular.hdf5 \
   --output crates/rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_cosine.json \
   --name benchmark_derived_ann_random_xs_20_angular_cosine \
@@ -47,7 +47,7 @@ cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_f
   --top-k 5 \
   --threshold-keep 3
 
-cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_fixture -- \
+cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture -- \
   --input /tmp/random-xs-20-angular.hdf5 \
   --output crates/rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_l1.json \
   --name benchmark_derived_ann_random_xs_20_angular_l1 \
@@ -61,7 +61,7 @@ cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_f
   --top-k 5 \
   --threshold-keep 3
 
-cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_fixture -- \
+cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture -- \
   --input /tmp/random-xs-20-angular.hdf5 \
   --output crates/rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_l2.json \
   --name benchmark_derived_ann_random_xs_20_angular_l2 \
@@ -75,7 +75,7 @@ cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_f
   --top-k 5 \
   --threshold-keep 3
 
-cargo run -p rig-vector-testkit --features ann-benchmarks --bin ann_benchmarks_fixture -- \
+cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture -- \
   --input /tmp/vibe-glove-200-cosine.hdf5 \
   --output crates/rig-vector-testkit/fixtures/ann/benchmark_derived_vibe_glove_200_cosine.json \
   --name benchmark_derived_vibe_glove_200_cosine \

@@ -16,8 +16,8 @@ doctest = false
 ann-benchmarks = ["dep:hdf5-reader", "dep:ndarray"]
 
 [[bin]]
-name = "ann_benchmarks_fixture"
-path = "src/bin/ann_benchmarks_fixture.rs"
+name = "hdf5_vector_fixture"
+path = "src/bin/hdf5_vector_fixture.rs"
 required-features = ["ann-benchmarks"]
 
 [dependencies]

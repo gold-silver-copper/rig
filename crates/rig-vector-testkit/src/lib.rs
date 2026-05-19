@@ -625,34 +625,59 @@ fn assert_neighbors(
     options: &AssertOptions,
     label: &str,
 ) -> Result<()> {
+    let expected_ids = expected
+        .iter()
+        .map(|neighbor| neighbor.id.as_str())
+        .collect::<Vec<_>>();
+    let actual_ids = actual.iter().map(|(_, id)| id.as_str()).collect::<Vec<_>>();
+
     if options.exact_order {
         ensure!(
             actual.len() == expected.len(),
-            "fixture '{}' query '{}' {label} returned {} rows, expected {}",
+            "fixture '{}' query '{}' {label} returned {} rows, expected {}; expected ids: {:?}; actual ids: {:?}",
             fixture.name(),
             query.id,
             actual.len(),
-            expected.len()
+            expected.len(),
+            expected_ids,
+            actual_ids
         );
 
-        for ((actual_score, actual_id), expected) in actual.iter().zip(expected.iter()) {
+        for (rank, ((actual_score, actual_id), expected)) in
+            actual.iter().zip(expected.iter()).enumerate()
+        {
             ensure!(
                 actual_id == &expected.id,
-                "fixture '{}' query '{}' {label} returned id '{}' where '{}' was expected",
+                "fixture '{}' query '{}' {label} rank {rank} returned id '{}' where '{}' was expected; expected ids: {:?}; actual ids: {:?}",
                 fixture.name(),
                 query.id,
                 actual_id,
-                expected.id
+                expected.id,
+                expected_ids,
+                actual_ids
             );
-            ensure_score_close(
-                *actual_score,
+            let delta = (*actual_score - expected.score).abs();
+            ensure!(
+                actual_score.is_finite(),
+                "fixture '{}' query '{}' {label} rank {rank} score for '{}' was not finite: {}",
+                fixture.name(),
+                query.id,
+                expected.id,
+                actual_score
+            );
+            ensure!(
+                delta <= options.score_epsilon,
+                "fixture '{}' query '{}' {label} rank {rank} score for '{}' was {}, expected {} within {}; delta {}; expected ids: {:?}; actual ids: {:?}",
+                fixture.name(),
+                query.id,
+                expected.id,
+                actual_score,
                 expected.score,
                 options.score_epsilon,
-                fixture.name(),
-                &query.id,
-                &expected.id,
-                label,
-            )?;
+                delta,
+                expected_ids,
+                actual_ids
+            );
         }
     } else {
         let hits = expected
@@ -666,10 +691,12 @@ fn assert_neighbors(
         let recall = hits as f64 / expected.len() as f64;
         ensure!(
             recall >= options.min_recall,
-            "fixture '{}' query '{}' {label} recall {recall:.3} was below required {:.3}",
+            "fixture '{}' query '{}' {label} recall {recall:.3} was below required {:.3}; expected ids: {:?}; actual ids: {:?}",
             fixture.name(),
             query.id,
-            options.min_recall
+            options.min_recall,
+            expected_ids,
+            actual_ids
         );
 
         for expected in expected {
