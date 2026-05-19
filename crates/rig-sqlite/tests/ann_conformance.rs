@@ -1,0 +1,134 @@
+use std::os::raw::c_char;
+use std::sync::Once;
+
+use anyhow::Result;
+use rig_core::embeddings::{EmbedError, Embedding, TextEmbedder};
+use rig_core::{Embed, OneOrMany};
+use rig_sqlite::{
+    Column, ColumnValue, SqliteDistanceMetric, SqliteVectorIndex, SqliteVectorStore,
+    SqliteVectorStoreTable,
+};
+use rig_vector_testkit::{
+    AnnFixture, AnnMetric, AssertOptions, FixtureEmbeddingModel, assert_vector_store_fixture,
+};
+use rusqlite::ffi::{sqlite3, sqlite3_api_routines, sqlite3_auto_extension};
+use serde::{Deserialize, Serialize};
+use sqlite_vec::sqlite3_vec_init;
+use tokio_rusqlite::Connection;
+
+const FIXTURES: [&str; 3] = [
+    include_str!("../../rig-vector-testkit/fixtures/ann/synthetic_cosine_small.json"),
+    include_str!("../../rig-vector-testkit/fixtures/ann/synthetic_l1_small.json"),
+    include_str!("../../rig-vector-testkit/fixtures/ann/synthetic_l2_small.json"),
+];
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct AnnDocument {
+    id: String,
+    text: String,
+}
+
+impl Embed for AnnDocument {
+    fn embed(&self, embedder: &mut TextEmbedder) -> Result<(), EmbedError> {
+        embedder.embed(self.text.clone());
+        Ok(())
+    }
+}
+
+impl SqliteVectorStoreTable for AnnDocument {
+    fn name() -> &'static str {
+        "ann_documents"
+    }
+
+    fn schema() -> Vec<Column> {
+        vec![
+            Column::new("id", "TEXT PRIMARY KEY"),
+            Column::new("text", "TEXT"),
+        ]
+    }
+
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
+        vec![
+            ("id", Box::new(self.id.clone())),
+            ("text", Box::new(self.text.clone())),
+        ]
+    }
+}
+
+type SqliteExtensionFn =
+    unsafe extern "C" fn(*mut sqlite3, *mut *mut c_char, *const sqlite3_api_routines) -> i32;
+
+#[tokio::test]
+async fn sqlite_matches_ann_conformance_fixtures() -> Result<()> {
+    register_sqlite_vec_extension();
+
+    for fixture_json in FIXTURES {
+        let fixture = AnnFixture::from_json(fixture_json)?;
+        let index = sqlite_index_for_fixture(&fixture).await?;
+
+        assert_vector_store_fixture(
+            &index,
+            &fixture,
+            AssertOptions::exact().score_epsilon(1e-5),
+            |document: &AnnDocument| document.id.clone(),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn sqlite_index_for_fixture(
+    fixture: &AnnFixture,
+) -> Result<SqliteVectorIndex<FixtureEmbeddingModel, AnnDocument>> {
+    let conn = Connection::open(format!("file:{}?mode=memory", fixture.name())).await?;
+    let model = FixtureEmbeddingModel::from_fixture(fixture)?;
+    let vector_store =
+        SqliteVectorStore::with_distance_metric(conn, &model, sqlite_metric(fixture.metric()))
+            .await?;
+
+    vector_store.add_rows(rows_for_fixture(fixture)).await?;
+
+    Ok(vector_store.index(model))
+}
+
+fn rows_for_fixture(fixture: &AnnFixture) -> Vec<(AnnDocument, OneOrMany<Embedding>)> {
+    fixture
+        .documents()
+        .iter()
+        .map(|document| {
+            (
+                AnnDocument {
+                    id: document.id.clone(),
+                    text: document.text.clone(),
+                },
+                OneOrMany::one(Embedding {
+                    document: document.text.clone(),
+                    vec: document.vector.clone(),
+                }),
+            )
+        })
+        .collect()
+}
+
+fn sqlite_metric(metric: AnnMetric) -> SqliteDistanceMetric {
+    match metric {
+        AnnMetric::Cosine => SqliteDistanceMetric::Cosine,
+        AnnMetric::L1 => SqliteDistanceMetric::L1,
+        AnnMetric::L2 => SqliteDistanceMetric::L2,
+    }
+}
+
+fn register_sqlite_vec_extension() {
+    static REGISTER_SQLITE_VEC: Once = Once::new();
+
+    REGISTER_SQLITE_VEC.call_once(|| unsafe {
+        sqlite3_auto_extension(Some(std::mem::transmute::<*const (), SqliteExtensionFn>(
+            sqlite3_vec_init as *const (),
+        )));
+    });
+}

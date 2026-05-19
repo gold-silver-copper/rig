@@ -1,0 +1,71 @@
+{
+  "name": "synthetic_l2_small",
+  "metric": "l2",
+  "dimensions": 2,
+  "documents": [
+    {
+      "id": "l2_a",
+      "text": "doc:l2:a",
+      "vector": [0.0, 0.0]
+    },
+    {
+      "id": "l2_b",
+      "text": "doc:l2:b",
+      "vector": [1.0, 0.0]
+    },
+    {
+      "id": "l2_c",
+      "text": "doc:l2:c",
+      "vector": [2.0, 0.0]
+    },
+    {
+      "id": "l2_d",
+      "text": "doc:l2:d",
+      "vector": [3.0, 0.0]
+    }
+  ],
+  "queries": [
+    {
+      "id": "l2_q0",
+      "text": "query:l2:origin",
+      "vector": [0.0, 0.0],
+      "top_k": 4,
+      "threshold": null,
+      "expected": [
+        {
+          "id": "l2_a",
+          "score": -0.0
+        },
+        {
+          "id": "l2_b",
+          "score": -1.0
+        },
+        {
+          "id": "l2_c",
+          "score": -2.0
+        },
+        {
+          "id": "l2_d",
+          "score": -3.0
+        }
+      ]
+    },
+    {
+      "id": "l2_q_threshold",
+      "text": "query:l2:threshold",
+      "vector": [0.0, 0.0],
+      "top_k": 4,
+      "threshold": -1.5,
+      "expected": [
+        {
+          "id": "l2_a",
+          "score": -0.0
+        },
+        {
+          "id": "l2_b",
+          "score": -1.0
+        }
+      ]
+    }
+  ]
+}

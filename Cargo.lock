@@ -9468,6 +9468,7 @@ dependencies = [
  "chrono",
  "httpmock",
  "rig-core",
+ "rig-vector-testkit",
  "rusqlite",
  "serde",
  "serde_json",
@@ -9492,6 +9493,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "rig-vector-testkit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rig-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -27,5 +27,6 @@ chrono = { workspace = true }
 [dev-dependencies]
 anyhow = { workspace = true }
 httpmock = { workspace = true }
+rig-vector-testkit = { path = "../rig-vector-testkit" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
