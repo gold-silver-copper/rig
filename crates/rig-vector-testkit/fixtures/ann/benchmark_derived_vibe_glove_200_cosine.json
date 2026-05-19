@@ -9,8 +9,10 @@
     "source_metric": "cosine",
     "train_start": 0,
     "train_count": 12,
+    "train_total": 1192514,
     "test_start": 0,
     "test_count": 3,
+    "test_total": 1000,
     "top_k": 5,
     "generated_by": "cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture"
   },
@@ -2717,7 +2719,38 @@
           "id": "vibe:glove-200-cosine:train:8",
           "score": 0.10270590335130692
         }
-      ]
+      ],
+      "source_ground_truth": {
+        "metric": "cosine",
+        "source_metric": "cosine",
+        "neighbors": [
+          {
+            "source_index": 872946,
+            "distance": 0.5692448318004608,
+            "score": 0.4307551681995392
+          },
+          {
+            "source_index": 1136655,
+            "distance": 0.5846778750419617,
+            "score": 0.41532212495803833
+          },
+          {
+            "source_index": 1186507,
+            "distance": 0.5875209867954254,
+            "score": 0.4124790132045746
+          },
+          {
+            "source_index": 499937,
+            "distance": 0.5875329375267029,
+            "score": 0.4124670624732971
+          },
+          {
+            "source_index": 118634,
+            "distance": 0.5944027602672577,
+            "score": 0.4055972397327423
+          }
+        ]
+      }
     },
     {
       "id": "vibe:glove-200-cosine:test:1",
@@ -2947,7 +2980,38 @@
           "id": "vibe:glove-200-cosine:train:0",
           "score": 0.13354599475860596
         }
-      ]
+      ],
+      "source_ground_truth": {
+        "metric": "cosine",
+        "source_metric": "cosine",
+        "neighbors": [
+          {
+            "source_index": 14069,
+            "distance": 0.5176255106925964,
+            "score": 0.48237448930740356
+          },
+          {
+            "source_index": 153313,
+            "distance": 0.5696166455745697,
+            "score": 0.4303833544254303
+          },
+          {
+            "source_index": 186759,
+            "distance": 0.5741573870182037,
+            "score": 0.42584261298179626
+          },
+          {
+            "source_index": 596471,
+            "distance": 0.5744214951992035,
+            "score": 0.4255785048007965
+          },
+          {
+            "source_index": 976109,
+            "distance": 0.5778150260448456,
+            "score": 0.4221849739551544
+          }
+        ]
+      }
     },
     {
       "id": "vibe:glove-200-cosine:test:2",
@@ -3169,7 +3233,38 @@
           "id": "vibe:glove-200-cosine:train:11",
           "score": 0.14546599984169006
         }
-      ]
+      ],
+      "source_ground_truth": {
+        "metric": "cosine",
+        "source_metric": "cosine",
+        "neighbors": [
+          {
+            "source_index": 1086727,
+            "distance": 0.5162166655063629,
+            "score": 0.4837833344936371
+          },
+          {
+            "source_index": 578199,
+            "distance": 0.5426373779773712,
+            "score": 0.4573626220226288
+          },
+          {
+            "source_index": 781710,
+            "distance": 0.5551876127719879,
+            "score": 0.4448123872280121
+          },
+          {
+            "source_index": 309484,
+            "distance": 0.5610306560993195,
+            "score": 0.43896934390068054
+          },
+          {
+            "source_index": 1055944,
+            "distance": 0.5632219314575195,
+            "score": 0.43677806854248047
+          }
+        ]
+      }
     }
   ]
 }

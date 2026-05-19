@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail, ensure};
 use hdf5_reader::{H5Type, Hdf5File, SliceInfo, SliceInfoElem};
 use rig_vector_testkit::{
-    AnnFixture, AnnFixtureSource, AnnMetric, FixtureDocument, FixtureQuery,
-    compute_expected_neighbors,
+    AnnFixture, AnnFixtureSource, AnnMetric, FixtureDocument, FixtureQuery, SourceGroundTruth,
+    SourceNeighbor, compute_expected_neighbors, score_from_distance,
 };
 
 fn main() -> Result<()> {
@@ -132,6 +132,12 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
         .with_context(|| format!("failed to open '{}'", args.input.display()))?;
     let train = file.dataset("/train").context("missing /train dataset")?;
     let test = file.dataset("/test").context("missing /test dataset")?;
+    let (train_total, train_dimensions) = dense_dataset_shape(&train, "/train")?;
+    let (test_total, test_dimensions) = dense_dataset_shape(&test, "/test")?;
+    ensure!(
+        train_dimensions == test_dimensions,
+        "train dimensions {train_dimensions} did not match test dimensions {test_dimensions}"
+    );
 
     let train_vectors =
         read_dense_rows(&train, 0, args.documents).context("failed to read train rows")?;
@@ -158,6 +164,18 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
             vector: vector.clone(),
         })
         .collect::<Vec<_>>();
+    let document_ids_by_source_index = documents
+        .iter()
+        .enumerate()
+        .map(|(index, document)| (index, document.id.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
+    let source_ground_truth = read_source_ground_truth(
+        &file,
+        args,
+        train_total,
+        test_total,
+        &document_ids_by_source_index,
+    )?;
 
     let last_query_index = args.queries.saturating_sub(1);
     let queries = query_vectors
@@ -181,6 +199,14 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
                 top_k,
                 threshold,
                 expected,
+                source_ground_truth: source_ground_truth
+                    .as_ref()
+                    .map(|ground_truth| {
+                        ground_truth.get(query_index).cloned().with_context(|| {
+                            format!("missing source ground truth row for query {query_index}")
+                        })
+                    })
+                    .transpose()?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -196,8 +222,10 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
             source_metric: args.source_metric.clone(),
             train_start: 0,
             train_count: args.documents,
+            train_total: Some(train_total),
             test_start: 0,
             test_count: args.queries,
+            test_total: Some(test_total),
             top_k: args.top_k,
             generated_by: "cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture".to_string(),
         }),
@@ -211,19 +239,7 @@ fn read_dense_rows(
     start: u64,
     row_count: usize,
 ) -> Result<Vec<Vec<f64>>> {
-    let shape = dataset.shape();
-    ensure!(
-        shape.len() == 2,
-        "expected a dense 2-D dataset, got shape {shape:?}"
-    );
-    let total_rows = shape
-        .first()
-        .copied()
-        .context("dense dataset shape did not include row count")?;
-    let dimensions = shape
-        .get(1)
-        .copied()
-        .context("dense dataset shape did not include dimensions")?;
+    let (total_rows, dimensions) = dense_dataset_shape_u64(dataset, "dense dataset")?;
     let row_count_u64 = u64::try_from(row_count).context("row count did not fit in u64")?;
     let end = start
         .checked_add(row_count_u64)
@@ -256,6 +272,262 @@ fn read_dense_rows(
             read_dense_rows_with_type::<u8>(dataset, &selection, row_count, dimensions)
                 .with_context(|| format!("failed to read dense rows as float data: {float_error}"))
         })
+}
+
+fn dense_dataset_shape(dataset: &hdf5_reader::Dataset, name: &str) -> Result<(usize, usize)> {
+    let (rows, columns) = dense_dataset_shape_u64(dataset, name)?;
+    Ok((
+        usize::try_from(rows).context("dataset row count did not fit in usize")?,
+        usize::try_from(columns).context("dataset dimension count did not fit in usize")?,
+    ))
+}
+
+fn dense_dataset_shape_u64(dataset: &hdf5_reader::Dataset, name: &str) -> Result<(u64, u64)> {
+    let shape = dataset.shape();
+    ensure!(
+        shape.len() == 2,
+        "expected {name} to be a dense 2-D dataset, got shape {shape:?}"
+    );
+    let total_rows = shape
+        .first()
+        .copied()
+        .context("dense dataset shape did not include row count")?;
+    let dimensions = shape
+        .get(1)
+        .copied()
+        .context("dense dataset shape did not include dimensions")?;
+    Ok((total_rows, dimensions))
+}
+
+fn read_source_ground_truth(
+    file: &Hdf5File,
+    args: &Args,
+    train_total: usize,
+    test_total: usize,
+    document_ids_by_source_index: &std::collections::HashMap<usize, String>,
+) -> Result<Option<Vec<SourceGroundTruth>>> {
+    let (neighbors, distances) = match (
+        file.dataset("/neighbors").ok(),
+        file.dataset("/distances").ok(),
+    ) {
+        (Some(neighbors), Some(distances)) => (neighbors, distances),
+        (None, None) => return Ok(None),
+        _ => bail!("source HDF5 must contain both /neighbors and /distances or neither"),
+    };
+    let metric = source_metric_to_ann_metric(args.source_metric.as_deref(), args.metric)?;
+    let neighbor_shape = shape_2d(&neighbors, "/neighbors")?;
+    let distance_shape = shape_2d(&distances, "/distances")?;
+    ensure_ground_truth_shapes(
+        neighbor_shape,
+        distance_shape,
+        test_total,
+        args.queries,
+        args.top_k,
+    )?;
+
+    let source_indices = read_index_rows(&neighbors, 0, args.queries, args.top_k)
+        .context("failed to read /neighbors")?;
+    let source_distances = read_distance_rows(&distances, 0, args.queries, args.top_k)
+        .context("failed to read /distances")?;
+
+    let ground_truth = source_indices
+        .into_iter()
+        .zip(source_distances)
+        .enumerate()
+        .map(|(query_index, (indices, distances))| -> Result<SourceGroundTruth> {
+            let neighbors = indices
+                .into_iter()
+                .zip(distances)
+                .map(|(source_index, distance)| -> Result<SourceNeighbor> {
+                    ensure!(
+                        source_index < train_total,
+                        "source neighbor index {source_index} for query {query_index} exceeds train total {train_total}"
+                    );
+                    Ok(SourceNeighbor {
+                        source_index,
+                        id: document_ids_by_source_index.get(&source_index).cloned(),
+                        distance,
+                        score: score_from_distance(metric, distance)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(SourceGroundTruth {
+                metric,
+                source_metric: args.source_metric.clone(),
+                neighbors,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(Some(ground_truth))
+}
+
+fn shape_2d(dataset: &hdf5_reader::Dataset, name: &str) -> Result<(usize, usize)> {
+    dense_dataset_shape(dataset, name)
+}
+
+fn ensure_ground_truth_shapes(
+    neighbor_shape: (usize, usize),
+    distance_shape: (usize, usize),
+    test_total: usize,
+    requested_queries: usize,
+    requested_top_k: usize,
+) -> Result<()> {
+    ensure!(
+        neighbor_shape == distance_shape,
+        "/neighbors shape {neighbor_shape:?} did not match /distances shape {distance_shape:?}"
+    );
+    ensure!(
+        neighbor_shape.0 == test_total,
+        "/neighbors row count {} did not match /test row count {test_total}",
+        neighbor_shape.0
+    );
+    ensure!(
+        requested_queries <= neighbor_shape.0,
+        "requested {requested_queries} source ground-truth queries, but /neighbors has {} rows",
+        neighbor_shape.0
+    );
+    ensure!(
+        requested_top_k <= neighbor_shape.1,
+        "requested source top_k {requested_top_k}, but /neighbors has only {} columns",
+        neighbor_shape.1
+    );
+    Ok(())
+}
+
+fn read_index_rows(
+    dataset: &hdf5_reader::Dataset,
+    start: u64,
+    row_count: usize,
+    column_count: usize,
+) -> Result<Vec<Vec<usize>>> {
+    read_index_rows_with_type::<u64>(dataset, start, row_count, column_count)
+        .or_else(|u64_error| {
+            read_index_rows_with_type::<u32>(dataset, start, row_count, column_count)
+                .with_context(|| format!("failed to read index rows as u64: {u64_error}"))
+        })
+        .or_else(|unsigned_error| {
+            read_index_rows_with_type::<i64>(dataset, start, row_count, column_count).with_context(
+                || format!("failed to read index rows as unsigned data: {unsigned_error}"),
+            )
+        })
+        .or_else(|i64_error| {
+            read_index_rows_with_type::<i32>(dataset, start, row_count, column_count)
+                .with_context(|| format!("failed to read index rows as i64: {i64_error}"))
+        })
+}
+
+fn read_index_rows_with_type<T>(
+    dataset: &hdf5_reader::Dataset,
+    start: u64,
+    row_count: usize,
+    column_count: usize,
+) -> Result<Vec<Vec<usize>>>
+where
+    T: H5Type + Copy + TryInto<usize>,
+    <T as TryInto<usize>>::Error: std::fmt::Debug,
+{
+    let rows = read_matrix_selection_with_type::<T>(dataset, start, row_count, column_count)?;
+    rows.into_iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            row.into_iter()
+                .enumerate()
+                .map(|(column_index, value)| {
+                    value.try_into().map_err(|error| {
+                        anyhow::anyhow!(
+                            "source neighbor index at row {row_index} column {column_index} was invalid: {error:?}"
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .collect()
+}
+
+fn read_distance_rows(
+    dataset: &hdf5_reader::Dataset,
+    start: u64,
+    row_count: usize,
+    column_count: usize,
+) -> Result<Vec<Vec<f64>>> {
+    read_distance_rows_with_type::<f32>(dataset, start, row_count, column_count).or_else(
+        |f32_error| {
+            read_distance_rows_with_type::<f64>(dataset, start, row_count, column_count)
+                .with_context(|| format!("failed to read distance rows as f32: {f32_error}"))
+        },
+    )
+}
+
+fn read_distance_rows_with_type<T>(
+    dataset: &hdf5_reader::Dataset,
+    start: u64,
+    row_count: usize,
+    column_count: usize,
+) -> Result<Vec<Vec<f64>>>
+where
+    T: H5Type + Copy + Into<f64>,
+{
+    let rows = read_matrix_selection_with_type::<T>(dataset, start, row_count, column_count)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| row.into_iter().map(Into::into).collect())
+        .collect())
+}
+
+fn read_matrix_selection_with_type<T>(
+    dataset: &hdf5_reader::Dataset,
+    start: u64,
+    row_count: usize,
+    column_count: usize,
+) -> Result<Vec<Vec<T>>>
+where
+    T: H5Type + Copy,
+{
+    let column_count_u64 =
+        u64::try_from(column_count).context("column count did not fit in u64")?;
+    let row_count_u64 = u64::try_from(row_count).context("row count did not fit in u64")?;
+    let selection = SliceInfo {
+        selections: vec![
+            SliceInfoElem::Slice {
+                start,
+                end: start
+                    .checked_add(row_count_u64)
+                    .context("row selection overflowed")?,
+                step: 1,
+            },
+            SliceInfoElem::Slice {
+                start: 0,
+                end: column_count_u64,
+                step: 1,
+            },
+        ],
+    };
+    let rows: ndarray::ArrayD<T> = dataset.read_slice(&selection)?;
+    let shape = rows.shape();
+    ensure!(
+        shape == [row_count, column_count],
+        "selected source ground-truth rows had shape {shape:?}, expected [{row_count}, {column_count}]"
+    );
+    let data = rows
+        .as_slice_memory_order()
+        .context("selected source ground-truth rows were not contiguous")?;
+    let mut output = Vec::with_capacity(row_count);
+    for row in 0..row_count {
+        let row_start = row
+            .checked_mul(column_count)
+            .context("selected source row offset overflowed")?;
+        let row_end = row_start
+            .checked_add(column_count)
+            .context("selected source row end overflowed")?;
+        output.push(
+            data.get(row_start..row_end)
+                .context("selected source row was outside dense data")?
+                .to_vec(),
+        );
+    }
+
+    Ok(output)
 }
 
 fn read_dense_rows_with_type<T>(
@@ -330,6 +602,23 @@ fn parse_metric(value: &str) -> Result<AnnMetric> {
     }
 }
 
+fn source_metric_to_ann_metric(
+    source_metric: Option<&str>,
+    fallback: AnnMetric,
+) -> Result<AnnMetric> {
+    let Some(source_metric) = source_metric else {
+        return Ok(fallback);
+    };
+    match source_metric {
+        "angular" | "cosine" => Ok(AnnMetric::Cosine),
+        "euclidean" | "l2" => Ok(AnnMetric::L2),
+        "manhattan" | "l1" => Ok(AnnMetric::L1),
+        other => bail!(
+            "unsupported source metric '{other}', expected angular, cosine, euclidean, l2, manhattan, or l1"
+        ),
+    }
+}
+
 fn parse_usize(value: &str, flag: &str) -> Result<usize> {
     value
         .parse::<usize>()
@@ -360,4 +649,55 @@ Usage:\n\
     --top-k 5 \\\n\
     --threshold-keep 3"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Result, ensure};
+
+    use super::*;
+
+    #[test]
+    fn ground_truth_shape_validation_accepts_matching_shapes() -> Result<()> {
+        ensure_ground_truth_shapes((10, 100), (10, 100), 10, 3, 5)?;
+        Ok(())
+    }
+
+    #[test]
+    fn ground_truth_shape_validation_rejects_mismatched_neighbor_distance_shapes() -> Result<()> {
+        let result = ensure_ground_truth_shapes((10, 100), (10, 99), 10, 3, 5);
+
+        ensure!(
+            result.is_err(),
+            "shape validation should reject mismatched /neighbors and /distances shapes"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn ground_truth_shape_validation_rejects_too_few_columns() -> Result<()> {
+        let result = ensure_ground_truth_shapes((10, 4), (10, 4), 10, 3, 5);
+
+        ensure!(
+            result.is_err(),
+            "shape validation should reject source ground truth with too few columns"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn source_metric_mapping_accepts_external_metric_names() -> Result<()> {
+        ensure!(source_metric_to_ann_metric(Some("angular"), AnnMetric::L2)? == AnnMetric::Cosine);
+        ensure!(
+            source_metric_to_ann_metric(Some("euclidean"), AnnMetric::Cosine)? == AnnMetric::L2
+        );
+        ensure!(
+            source_metric_to_ann_metric(Some("manhattan"), AnnMetric::Cosine)? == AnnMetric::L1
+        );
+        ensure!(source_metric_to_ann_metric(None, AnnMetric::L1)? == AnnMetric::L1);
+
+        Ok(())
+    }
 }

@@ -18,6 +18,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 const FIXTURE_EXPECTED_SCORE_EPSILON: f64 = 1e-9;
+const SOURCE_GROUND_TRUTH_SCORE_EPSILON: f64 = 1e-4;
 
 /// Distance metric used by an ANN conformance fixture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -142,6 +143,7 @@ impl AnnFixture {
         );
 
         let mut document_ids = HashSet::new();
+        let mut documents_by_id = HashMap::new();
         let mut embedding_texts = HashSet::new();
         for document in &self.documents {
             ensure_non_empty(&document.id, "document id", &self.name)?;
@@ -159,6 +161,11 @@ impl AnnFixture {
                 document.text
             );
             ensure_vector_dimensions(&document.vector, self.dimensions, &self.name, &document.id)?;
+            documents_by_id.insert(document.id.as_str(), document);
+        }
+
+        if let Some(source) = &self.source {
+            source.validate(&self.name)?;
         }
 
         for query in &self.queries {
@@ -245,6 +252,16 @@ impl AnnFixture {
                     "fixture/vector oracle",
                 )?;
             }
+
+            if let Some(source_ground_truth) = &query.source_ground_truth {
+                source_ground_truth.validate(
+                    &self.name,
+                    query,
+                    self.source.as_ref(),
+                    &document_ids,
+                    &documents_by_id,
+                )?;
+            }
         }
 
         Ok(())
@@ -268,14 +285,72 @@ pub struct AnnFixtureSource {
     pub train_start: usize,
     /// Number of train rows used as fixture documents.
     pub train_count: usize,
+    /// Total number of source train rows, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub train_total: Option<usize>,
     /// First test row used as a fixture query.
     pub test_start: usize,
     /// Number of test rows used as fixture queries.
     pub test_count: usize,
+    /// Total number of source test rows, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_total: Option<usize>,
     /// Number of expected neighbors generated for non-threshold queries.
     pub top_k: usize,
     /// Tool that generated the fixture.
     pub generated_by: String,
+}
+
+impl AnnFixtureSource {
+    fn validate(&self, fixture_name: &str) -> Result<()> {
+        ensure_non_empty(&self.kind, "source kind", fixture_name)?;
+        ensure_non_empty(&self.dataset, "source dataset", fixture_name)?;
+        ensure_non_empty(&self.generated_by, "source generator", fixture_name)?;
+        ensure!(
+            self.train_count > 0,
+            "ANN fixture '{fixture_name}' source train_count must be greater than zero"
+        );
+        ensure!(
+            self.test_count > 0,
+            "ANN fixture '{fixture_name}' source test_count must be greater than zero"
+        );
+        ensure!(
+            self.top_k > 0,
+            "ANN fixture '{fixture_name}' source top_k must be greater than zero"
+        );
+        if let Some(train_total) = self.train_total {
+            let train_end = self
+                .train_start
+                .checked_add(self.train_count)
+                .context("source train row range overflowed")?;
+            ensure!(
+                train_end <= train_total,
+                "ANN fixture '{fixture_name}' source train range {train_start}..{train_end} exceeds total {train_total}",
+                train_start = self.train_start
+            );
+        }
+        if let Some(test_total) = self.test_total {
+            let test_end = self
+                .test_start
+                .checked_add(self.test_count)
+                .context("source test row range overflowed")?;
+            ensure!(
+                test_end <= test_total,
+                "ANN fixture '{fixture_name}' source test range {test_start}..{test_end} exceeds total {test_total}",
+                test_start = self.test_start
+            );
+        }
+
+        Ok(())
+    }
+
+    fn includes_train_index(&self, source_index: usize) -> Result<bool> {
+        let train_end = self
+            .train_start
+            .checked_add(self.train_count)
+            .context("source train row range overflowed")?;
+        Ok((self.train_start..train_end).contains(&source_index))
+    }
 }
 
 /// A document row in an ANN conformance fixture.
@@ -304,6 +379,9 @@ pub struct FixtureQuery {
     pub threshold: Option<f64>,
     /// Expected neighbors after applying `top_k` and `threshold`.
     pub expected: Vec<ExpectedNeighbor>,
+    /// Optional nearest-neighbor ground truth from the source dataset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ground_truth: Option<SourceGroundTruth>,
 }
 
 /// Expected nearest-neighbor result for a fixture query.
@@ -313,6 +391,143 @@ pub struct ExpectedNeighbor {
     pub id: String,
     /// Expected backend-facing score.
     pub score: f64,
+}
+
+/// Source-dataset nearest-neighbor ground truth for a fixture query.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SourceGroundTruth {
+    /// Metric used by the source distances, mapped into Rig's supported metrics.
+    pub metric: AnnMetric,
+    /// Original source metric label, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_metric: Option<String>,
+    /// Source neighbors in source rank order.
+    pub neighbors: Vec<SourceNeighbor>,
+}
+
+impl SourceGroundTruth {
+    fn validate(
+        &self,
+        fixture_name: &str,
+        query: &FixtureQuery,
+        source: Option<&AnnFixtureSource>,
+        document_ids: &HashSet<&str>,
+        documents_by_id: &HashMap<&str, &FixtureDocument>,
+    ) -> Result<()> {
+        ensure!(
+            source.is_some(),
+            "ANN fixture '{fixture_name}' query '{}' has source ground truth without source metadata",
+            query.id
+        );
+        ensure!(
+            !self.neighbors.is_empty(),
+            "ANN fixture '{fixture_name}' query '{}' source ground truth must not be empty",
+            query.id
+        );
+        let top_k = usize::try_from(query.top_k).context("query top_k did not fit in usize")?;
+        ensure!(
+            self.neighbors.len() <= top_k,
+            "ANN fixture '{fixture_name}' query '{}' source ground truth has {} neighbors but query top_k is {top_k}",
+            query.id,
+            self.neighbors.len()
+        );
+        if let Some(source_metric) = &self.source_metric {
+            ensure_non_empty(source_metric, "source ground-truth metric", fixture_name)?;
+        }
+
+        let mut source_indices = HashSet::new();
+        let source = source.context("source metadata should be present")?;
+        for neighbor in &self.neighbors {
+            ensure!(
+                source_indices.insert(neighbor.source_index),
+                "ANN fixture '{fixture_name}' query '{}' has duplicate source neighbor index {}",
+                query.id,
+                neighbor.source_index
+            );
+            if let Some(train_total) = source.train_total {
+                ensure!(
+                    neighbor.source_index < train_total,
+                    "ANN fixture '{fixture_name}' query '{}' source neighbor index {} exceeds train total {train_total}",
+                    query.id,
+                    neighbor.source_index
+                );
+            }
+            ensure!(
+                neighbor.distance.is_finite(),
+                "ANN fixture '{fixture_name}' query '{}' source distance for index {} must be finite",
+                query.id,
+                neighbor.source_index
+            );
+            ensure!(
+                neighbor.score.is_finite(),
+                "ANN fixture '{fixture_name}' query '{}' source score for index {} must be finite",
+                query.id,
+                neighbor.source_index
+            );
+
+            if source.includes_train_index(neighbor.source_index)? {
+                ensure!(
+                    neighbor.id.is_some(),
+                    "ANN fixture '{fixture_name}' query '{}' source neighbor index {} is in the compact fixture but has no document id",
+                    query.id,
+                    neighbor.source_index
+                );
+            }
+
+            if let Some(id) = &neighbor.id {
+                ensure!(
+                    document_ids.contains(id.as_str()),
+                    "ANN fixture '{fixture_name}' query '{}' source ground truth references unknown document id '{}'",
+                    query.id,
+                    id
+                );
+                let document = documents_by_id
+                    .get(id.as_str())
+                    .context("document id should have been indexed")?;
+                let expected_score = score_vector(self.metric, &query.vector, &document.vector)?;
+                ensure_score_close(
+                    neighbor.score,
+                    expected_score,
+                    SOURCE_GROUND_TRUTH_SCORE_EPSILON,
+                    fixture_name,
+                    &query.id,
+                    id,
+                    "source ground truth/vector oracle",
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// One source-dataset neighbor entry.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SourceNeighbor {
+    /// Row index in the source `/train` dataset.
+    pub source_index: usize,
+    /// Fixture document ID when the source row is included in the compact fixture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Raw distance from the source `/distances` dataset.
+    pub distance: f64,
+    /// Distance converted into Rig's higher-is-better score convention.
+    pub score: f64,
+}
+
+/// Converts a raw source distance into Rig's higher-is-better score convention.
+pub fn score_from_distance(metric: AnnMetric, distance: f64) -> Result<f64> {
+    ensure!(distance.is_finite(), "source distance must be finite");
+    ensure!(
+        distance >= 0.0,
+        "source distance must be non-negative, got {distance}"
+    );
+    let score = match metric {
+        AnnMetric::Cosine => 1.0 - distance,
+        AnnMetric::L1 | AnnMetric::L2 => -distance,
+    };
+    ensure!(score.is_finite(), "converted source score was not finite");
+    Ok(score)
 }
 
 /// Computes exact expected neighbors from document vectors and a query vector.
@@ -604,6 +819,87 @@ where
     Ok(())
 }
 
+/// Asserts recall against source-dataset neighbors that are present in a fixture.
+///
+/// This helper is intentionally separate from [`assert_vector_store_fixture`].
+/// It is only valid when the source ground-truth metric matches the fixture's
+/// backend metric. Normal conformance should continue to use the compact
+/// fixture oracle recomputed from committed vectors.
+pub async fn assert_source_ground_truth_recall<I, F>(
+    index: &I,
+    fixture: &AnnFixture,
+    min_recall: f64,
+) -> Result<()>
+where
+    I: VectorStoreIndex<Filter = F>,
+    F: SearchFilter + WasmCompatSend + WasmCompatSync,
+{
+    fixture.validate()?;
+    ensure!(
+        min_recall.is_finite() && (0.0..=1.0).contains(&min_recall),
+        "minimum recall must be finite and between 0.0 and 1.0"
+    );
+
+    let mut compared_queries = 0usize;
+    for query in fixture.queries() {
+        let Some(source_ground_truth) = &query.source_ground_truth else {
+            continue;
+        };
+        ensure!(
+            source_ground_truth.metric == fixture.metric(),
+            "fixture '{}' query '{}' source ground-truth metric {:?} does not match fixture metric {:?}",
+            fixture.name(),
+            query.id,
+            source_ground_truth.metric,
+            fixture.metric()
+        );
+        let expected_ids = source_ground_truth
+            .neighbors
+            .iter()
+            .filter_map(|neighbor| neighbor.id.as_deref())
+            .collect::<Vec<_>>();
+        if expected_ids.is_empty() {
+            continue;
+        }
+
+        let samples = u64::try_from(source_ground_truth.neighbors.len())
+            .context("source ground-truth neighbor count did not fit in u64")?;
+        let actual = index
+            .top_n_ids(request_for_query_samples::<F>(query, samples))
+            .await
+            .with_context(|| {
+                format!(
+                    "top_n_ids failed for fixture '{}' query '{}' source ground-truth recall",
+                    fixture.name(),
+                    query.id
+                )
+            })?;
+        let actual_ids = actual.iter().map(|(_, id)| id.as_str()).collect::<Vec<_>>();
+        let hits = expected_ids
+            .iter()
+            .filter(|expected_id| actual_ids.contains(expected_id))
+            .count();
+        let recall = hits as f64 / expected_ids.len() as f64;
+        ensure!(
+            recall >= min_recall,
+            "fixture '{}' query '{}' source ground-truth recall {recall:.3} was below required {min_recall:.3}; expected ids: {:?}; actual ids: {:?}",
+            fixture.name(),
+            query.id,
+            expected_ids,
+            actual_ids
+        );
+        compared_queries += 1;
+    }
+
+    ensure!(
+        compared_queries > 0,
+        "fixture '{}' has no source ground-truth neighbors present in compact documents",
+        fixture.name()
+    );
+
+    Ok(())
+}
+
 fn request_for_query<F>(query: &FixtureQuery) -> VectorSearchRequest<F>
 where
     F: SearchFilter,
@@ -615,6 +911,16 @@ where
         builder = builder.threshold(threshold);
     }
     builder.build()
+}
+
+fn request_for_query_samples<F>(query: &FixtureQuery, samples: u64) -> VectorSearchRequest<F>
+where
+    F: SearchFilter,
+{
+    VectorSearchRequest::<F>::builder()
+        .query(query.text.clone())
+        .samples(samples)
+        .build()
 }
 
 fn assert_neighbors(
@@ -907,6 +1213,42 @@ mod tests {
     }
 
     #[test]
+    fn distance_to_score_conversion_uses_rig_score_convention() -> Result<()> {
+        ensure!(score_from_distance(AnnMetric::Cosine, 0.25)? == 0.75);
+        ensure!(score_from_distance(AnnMetric::L1, 3.5)? == -3.5);
+        ensure!(score_from_distance(AnnMetric::L2, 2.0)? == -2.0);
+        ensure!(score_from_distance(AnnMetric::Cosine, f64::NAN).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn validation_rejects_out_of_bounds_source_neighbor_index() -> Result<()> {
+        let result =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 1, 0.0));
+
+        ensure!(
+            result.is_err(),
+            "fixture validation should reject out-of-bounds source neighbor index"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn validation_rejects_source_score_that_differs_from_vector_oracle() -> Result<()> {
+        let result =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 0.5));
+
+        ensure!(
+            result.is_err(),
+            "fixture validation should reject wrong source ground-truth score"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn threshold_equality_is_included_in_vector_oracle() -> Result<()> {
         let fixture = AnnFixture::from_json(&threshold_equality_fixture_json())?;
         let query = fixture
@@ -1029,6 +1371,36 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn source_ground_truth_recall_accepts_present_source_ids() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::Cosine, 3, 1.0))?;
+        let index = StaticIndex {
+            results: vec![(1.0, "doc_a".to_string()), (0.0, "doc_b".to_string())],
+        };
+
+        assert_source_ground_truth_recall(&index, &fixture, 1.0).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_ground_truth_recall_rejects_metric_mismatch() -> Result<()> {
+        let fixture =
+            AnnFixture::from_json(&source_ground_truth_fixture_json(AnnMetric::L1, 3, 1.0))?;
+        let index = StaticIndex {
+            results: vec![(-0.0, "doc_a".to_string()), (-2.0, "doc_b".to_string())],
+        };
+        let result = assert_source_ground_truth_recall(&index, &fixture, 1.0).await;
+
+        ensure!(
+            result.is_err(),
+            "source ground-truth recall should reject metric mismatches"
+        );
+
+        Ok(())
+    }
+
     #[derive(Clone)]
     struct StaticIndex {
         results: Vec<(f64, String)>,
@@ -1106,6 +1478,88 @@ mod tests {
                     "top_k": 3,
                     "threshold": null,
                     "expected": expected
+                }
+            ]
+        })
+        .to_string()
+    }
+
+    fn source_ground_truth_fixture_json(
+        metric: AnnMetric,
+        train_total: usize,
+        first_source_score: f64,
+    ) -> String {
+        let (metric_name, expected) = match metric {
+            AnnMetric::Cosine => (
+                "cosine",
+                json!([
+                    {"id": "doc_a", "score": 1.0},
+                    {"id": "doc_b", "score": 0.0}
+                ]),
+            ),
+            AnnMetric::L1 => (
+                "l1",
+                json!([
+                    {"id": "doc_a", "score": -0.0},
+                    {"id": "doc_b", "score": -2.0}
+                ]),
+            ),
+            AnnMetric::L2 => (
+                "l2",
+                json!([
+                    {"id": "doc_a", "score": -0.0},
+                    {"id": "doc_b", "score": -1.4142135381698608_f64}
+                ]),
+            ),
+        };
+        json!({
+            "name": "source_ground_truth",
+            "metric": metric_name,
+            "dimensions": 2,
+            "source": {
+                "kind": "test-hdf5",
+                "dataset": "test",
+                "source_metric": "angular",
+                "train_start": 0,
+                "train_count": 3,
+                "train_total": train_total,
+                "test_start": 0,
+                "test_count": 1,
+                "test_total": 1,
+                "top_k": 2,
+                "generated_by": "test"
+            },
+            "documents": [
+                {"id": "doc_a", "text": "doc:a", "vector": [1.0, 0.0]},
+                {"id": "doc_b", "text": "doc:b", "vector": [0.0, 1.0]},
+                {"id": "doc_c", "text": "doc:c", "vector": [-1.0, 0.0]}
+            ],
+            "queries": [
+                {
+                    "id": "query",
+                    "text": "query",
+                    "vector": [1.0, 0.0],
+                    "top_k": 2,
+                    "threshold": null,
+                    "expected": expected,
+                    "source_ground_truth": {
+                        "metric": "cosine",
+                        "source_metric": "angular",
+                        "neighbors": [
+                            {
+                                "source_index": 0,
+                                "id": "doc_a",
+                                "distance": 0.0,
+                                "score": first_source_score
+                            },
+                            {
+                                "source_index": 1,
+                                "id": "doc_b",
+                                "distance": 1.0,
+                                "score": 0.0
+                            }
+                        ]
+                    }
                 }
             ]
         })

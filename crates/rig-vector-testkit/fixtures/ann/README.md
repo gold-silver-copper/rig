@@ -16,6 +16,23 @@ conventions:
 Fixture validation recomputes that oracle from the committed vectors, so stale
 or manually incorrect `expected` values fail before any vector store is queried.
 
+When a source HDF5 file also contains `/neighbors` and `/distances`, the
+generator records them as optional `source_ground_truth` on each query. Rig
+vector stores return scores rather than raw distances, so those raw source
+distances are also converted into Rig's higher-is-better score convention:
+
+- source angular/cosine distance: `1.0 - distance`
+- source euclidean/L2 distance: `-distance`
+- source manhattan/L1 distance: `-distance`
+
+This source ground truth is provenance and optional recall data. Normal CI still
+asserts against the recomputed compact-fixture oracle. The source neighbor IDs
+are only populated when the source train row is included in the compact fixture;
+otherwise the source row index, raw distance, and converted score are retained
+without a fixture document ID. If a fixture is rescored under a different metric
+than the source dataset, `source_ground_truth.metric` records the source metric;
+the source-ground-truth recall helper rejects those metric mismatches.
+
 Source datasets:
 
 ```text

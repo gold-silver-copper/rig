@@ -9,8 +9,10 @@
     "source_metric": "angular",
     "train_start": 0,
     "train_count": 16,
+    "train_total": 9000,
     "test_start": 0,
     "test_count": 3,
+    "test_total": 1000,
     "top_k": 5,
     "generated_by": "cargo run -p rig-vector-testkit --features ann-benchmarks --bin hdf5_vector_fixture"
   },
@@ -481,7 +483,38 @@
           "id": "ann-benchmarks:random-xs-20-angular:train:15",
           "score": -130.69485473632812
         }
-      ]
+      ],
+      "source_ground_truth": {
+        "metric": "cosine",
+        "source_metric": "angular",
+        "neighbors": [
+          {
+            "source_index": 3618,
+            "distance": 0.010235665366053581,
+            "score": 0.9897643346339464
+          },
+          {
+            "source_index": 8213,
+            "distance": 0.012162447907030582,
+            "score": 0.9878375520929694
+          },
+          {
+            "source_index": 4462,
+            "distance": 0.012165430001914501,
+            "score": 0.9878345699980855
+          },
+          {
+            "source_index": 6709,
+            "distance": 0.012288324534893036,
+            "score": 0.987711675465107
+          },
+          {
+            "source_index": 3975,
+            "distance": 0.012412669137120247,
+            "score": 0.9875873308628798
+          }
+        ]
+      }
     },
     {
       "id": "ann-benchmarks:random-xs-20-angular:test:1",
@@ -531,7 +564,38 @@
           "id": "ann-benchmarks:random-xs-20-angular:train:3",
           "score": -142.62437438964844
         }
-      ]
+      ],
+      "source_ground_truth": {
+        "metric": "cosine",
+        "source_metric": "angular",
+        "neighbors": [
+          {
+            "source_index": 3693,
+            "distance": 0.012212836183607578,
+            "score": 0.9877871638163924
+          },
+          {
+            "source_index": 1017,
+            "distance": 0.012324320152401924,
+            "score": 0.9876756798475981
+          },
+          {
+            "source_index": 8498,
+            "distance": 0.013444456271827221,
+            "score": 0.9865555437281728
+          },
+          {
+            "source_index": 3013,
+            "distance": 0.01376796793192625,
+            "score": 0.9862320320680737
+          },
+          {
+            "source_index": 6272,
+            "distance": 0.014643581584095955,
+            "score": 0.985356418415904
+          }
+        ]
+      }
     },
     {
       "id": "ann-benchmarks:random-xs-20-angular:test:2",
@@ -573,7 +637,38 @@
           "id": "ann-benchmarks:random-xs-20-angular:train:4",
           "score": -119.4617691040039
         }
-      ]
+      ],
+      "source_ground_truth": {
+        "metric": "cosine",
+        "source_metric": "angular",
+        "neighbors": [
+          {
+            "source_index": 7743,
+            "distance": 0.007285275962203741,
+            "score": 0.9927147240377963
+          },
+          {
+            "source_index": 737,
+            "distance": 0.012364388443529606,
+            "score": 0.9876356115564704
+          },
+          {
+            "source_index": 3127,
+            "distance": 0.01265803538262844,
+            "score": 0.9873419646173716
+          },
+          {
+            "source_index": 323,
+            "distance": 0.013344552367925644,
+            "score": 0.9866554476320744
+          },
+          {
+            "source_index": 6284,
+            "distance": 0.013965053483843803,
+            "score": 0.9860349465161562
+          }
+        ]
+      }
     }
   ]
 }
