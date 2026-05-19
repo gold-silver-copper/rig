@@ -2,7 +2,8 @@ use std::os::raw::c_char;
 use std::sync::Once;
 
 use anyhow::Result;
-use rig_core::embeddings::{EmbedError, Embedding, TextEmbedder};
+use rig_core::embeddings::{EmbedError, Embedding, EmbeddingsBuilder, TextEmbedder};
+use rig_core::vector_store::InsertDocuments;
 use rig_core::{Embed, OneOrMany};
 use rig_sqlite::{
     Column, ColumnValue, SqliteDistanceMetric, SqliteVectorIndex, SqliteVectorStore,
@@ -30,6 +31,9 @@ const FIXTURES: [&str; 4] = [
         "../../rig-vector-testkit/fixtures/ann/benchmark_derived_vibe_glove_200_cosine.json"
     ),
 ];
+const INSERT_DOCUMENTS_FIXTURE: &str = include_str!(
+    "../../rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_cosine.json"
+);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct AnnDocument {
@@ -91,6 +95,24 @@ async fn sqlite_matches_ann_conformance_fixtures() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn sqlite_insert_documents_matches_ann_conformance_fixture() -> Result<()> {
+    register_sqlite_vec_extension();
+
+    let fixture = AnnFixture::from_json(INSERT_DOCUMENTS_FIXTURE)?;
+    let index = sqlite_index_for_fixture_with_insert_documents(&fixture).await?;
+
+    assert_vector_store_fixture(
+        &index,
+        &fixture,
+        AssertOptions::exact().score_epsilon(1e-4),
+        |document: &AnnDocument| document.id.clone(),
+    )
+    .await?;
+
+    Ok(())
+}
+
 async fn sqlite_index_for_fixture(
     fixture: &AnnFixture,
 ) -> Result<SqliteVectorIndex<FixtureEmbeddingModel, AnnDocument>> {
@@ -105,6 +127,40 @@ async fn sqlite_index_for_fixture(
     vector_store.add_rows(rows_for_fixture(fixture)).await?;
 
     Ok(vector_store.index(model))
+}
+
+async fn sqlite_index_for_fixture_with_insert_documents(
+    fixture: &AnnFixture,
+) -> Result<SqliteVectorIndex<FixtureEmbeddingModel, AnnDocument>> {
+    let conn = Connection::open(format!(
+        "file:{}_insert_documents?mode=memory",
+        fixture.name()
+    ))
+    .await?;
+    let model = FixtureEmbeddingModel::from_fixture(fixture)?;
+    let vector_store =
+        SqliteVectorStore::with_distance_metric(conn, &model, sqlite_metric(fixture.metric()))
+            .await?;
+    let documents = documents_for_fixture(fixture);
+    let embeddings = EmbeddingsBuilder::new(model.clone())
+        .documents(documents)?
+        .build()
+        .await?;
+
+    vector_store.insert_documents(embeddings).await?;
+
+    Ok(vector_store.index(model))
+}
+
+fn documents_for_fixture(fixture: &AnnFixture) -> Vec<AnnDocument> {
+    fixture
+        .documents()
+        .iter()
+        .map(|document| AnnDocument {
+            id: document.id.clone(),
+            text: document.text.clone(),
+        })
+        .collect()
 }
 
 fn rows_for_fixture(fixture: &AnnFixture) -> Vec<(AnnDocument, OneOrMany<Embedding>)> {

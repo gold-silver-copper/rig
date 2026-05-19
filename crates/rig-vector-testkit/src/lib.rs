@@ -416,7 +416,7 @@ impl FixtureEmbeddingModel {
 }
 
 impl EmbeddingModel for FixtureEmbeddingModel {
-    const MAX_DOCUMENTS: usize = usize::MAX;
+    const MAX_DOCUMENTS: usize = 1024;
 
     type Client = ();
 
@@ -839,7 +839,9 @@ fn insert_embedding(
 #[cfg(test)]
 mod tests {
     use anyhow::{Context, Result, ensure};
-    use rig_core::embeddings::EmbeddingModel;
+    use rig_core::embeddings::{
+        Embed, EmbedError, EmbeddingModel, EmbeddingsBuilder, TextEmbedder,
+    };
     use rig_core::vector_store::VectorStoreError;
     use rig_core::vector_store::request::Filter;
     use serde::Deserialize;
@@ -965,6 +967,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fixture_embedding_model_can_build_document_embeddings() -> Result<()> {
+        let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_a", "score": 1.0},
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_c", "score": -1.0}
+        ])))?;
+        let model = FixtureEmbeddingModel::from_fixture(&fixture)?;
+        let embeddings = EmbeddingsBuilder::new(model)
+            .documents([
+                EmbeddableTestDocument::new("doc:a"),
+                EmbeddableTestDocument::new("doc:b"),
+            ])?
+            .build()
+            .await?;
+        let vectors_by_text = embeddings
+            .into_iter()
+            .map(|(document, embedding)| (document.text, embedding.first().vec))
+            .collect::<HashMap<_, _>>();
+
+        ensure!(
+            vectors_by_text.get("doc:a") == Some(&vec![1.0, 0.0]),
+            "unexpected embedding for doc:a: {vectors_by_text:?}"
+        );
+        ensure!(
+            vectors_by_text.get("doc:b") == Some(&vec![0.0, 1.0]),
+            "unexpected embedding for doc:b: {vectors_by_text:?}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn approximate_recall_mode_accepts_partial_expected_ids() -> Result<()> {
         let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
             {"id": "doc_a", "score": 1.0},
@@ -1035,6 +1069,23 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct TestDocument {
         id: String,
+    }
+
+    struct EmbeddableTestDocument {
+        text: String,
+    }
+
+    impl EmbeddableTestDocument {
+        fn new(text: impl Into<String>) -> Self {
+            Self { text: text.into() }
+        }
+    }
+
+    impl Embed for EmbeddableTestDocument {
+        fn embed(&self, embedder: &mut TextEmbedder) -> std::result::Result<(), EmbedError> {
+            embedder.embed(self.text.clone());
+            Ok(())
+        }
     }
 
     fn simple_cosine_fixture_json(expected: serde_json::Value) -> String {
