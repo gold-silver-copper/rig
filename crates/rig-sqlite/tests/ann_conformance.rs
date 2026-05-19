@@ -10,7 +10,8 @@ use rig_sqlite::{
     SqliteVectorStoreTable,
 };
 use rig_vector_testkit::{
-    AnnFixture, AnnMetric, AssertOptions, FixtureEmbeddingModel, assert_vector_store_fixture,
+    AnnFixture, AnnMetric, AssertOptions, FixtureEmbeddingModel, assert_source_ground_truth_recall,
+    assert_vector_store_fixture,
 };
 use rusqlite::ffi::{sqlite3, sqlite3_api_routines, sqlite3_auto_extension};
 use serde::{Deserialize, Serialize};
@@ -31,10 +32,6 @@ const FIXTURES: [&str; 4] = [
         "../../rig-vector-testkit/fixtures/ann/benchmark_derived_vibe_glove_200_cosine.json"
     ),
 ];
-const INSERT_DOCUMENTS_FIXTURE: &str = include_str!(
-    "../../rig-vector-testkit/fixtures/ann/benchmark_derived_ann_random_xs_20_angular_cosine.json"
-);
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct AnnDocument {
     id: String,
@@ -90,6 +87,9 @@ async fn sqlite_matches_ann_conformance_fixtures() -> Result<()> {
             |document: &AnnDocument| document.id.clone(),
         )
         .await?;
+        if fixture_has_native_source_ground_truth(&fixture) {
+            assert_source_ground_truth_recall(&index, &fixture, 1.0).await?;
+        }
     }
 
     Ok(())
@@ -99,18 +99,35 @@ async fn sqlite_matches_ann_conformance_fixtures() -> Result<()> {
 async fn sqlite_insert_documents_matches_ann_conformance_fixture() -> Result<()> {
     register_sqlite_vec_extension();
 
-    let fixture = AnnFixture::from_json(INSERT_DOCUMENTS_FIXTURE)?;
-    let index = sqlite_index_for_fixture_with_insert_documents(&fixture).await?;
+    for fixture_json in FIXTURES {
+        let fixture = AnnFixture::from_json(fixture_json)?;
+        let index = sqlite_index_for_fixture_with_insert_documents(&fixture).await?;
 
-    assert_vector_store_fixture(
-        &index,
-        &fixture,
-        AssertOptions::exact().score_epsilon(1e-4),
-        |document: &AnnDocument| document.id.clone(),
-    )
-    .await?;
+        assert_vector_store_fixture(
+            &index,
+            &fixture,
+            AssertOptions::exact().score_epsilon(1e-4),
+            |document: &AnnDocument| document.id.clone(),
+        )
+        .await?;
+    }
 
     Ok(())
+}
+
+fn fixture_has_native_source_ground_truth(fixture: &AnnFixture) -> bool {
+    fixture.queries().iter().any(|query| {
+        query
+            .source_ground_truth
+            .as_ref()
+            .is_some_and(|ground_truth| {
+                ground_truth.metric == fixture.metric()
+                    && ground_truth
+                        .neighbors
+                        .iter()
+                        .any(|neighbor| neighbor.id.is_some())
+            })
+    })
 }
 
 async fn sqlite_index_for_fixture(

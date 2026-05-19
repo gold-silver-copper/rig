@@ -139,10 +139,18 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
         "train dimensions {train_dimensions} did not match test dimensions {test_dimensions}"
     );
 
-    let train_vectors =
-        read_dense_rows(&train, 0, args.documents).context("failed to read train rows")?;
     let query_vectors =
         read_dense_rows(&test, 0, args.queries).context("failed to read test rows")?;
+    let mut source_ground_truth = read_source_ground_truth(
+        &file,
+        args,
+        train_total,
+        test_total,
+        &std::collections::HashMap::new(),
+    )?;
+    let train_indices = selected_train_indices(args.documents, source_ground_truth.as_deref());
+    let train_vectors = read_dense_rows_for_indices(&train, &train_indices)
+        .context("failed to read selected train rows")?;
     let dimensions = train_vectors
         .first()
         .map(Vec::len)
@@ -157,25 +165,22 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
     let source_prefix = args.source_kind.trim_end_matches("-hdf5");
     let documents = train_vectors
         .iter()
-        .enumerate()
-        .map(|(index, vector)| FixtureDocument {
-            id: format!("{source_prefix}:{}:train:{index}", args.dataset),
-            text: format!("{source_prefix}:{}:train:{index}", args.dataset),
+        .zip(train_indices.iter())
+        .map(|(vector, source_index)| FixtureDocument {
+            id: format!("{source_prefix}:{}:train:{source_index}", args.dataset),
+            text: format!("{source_prefix}:{}:train:{source_index}", args.dataset),
             vector: vector.clone(),
         })
         .collect::<Vec<_>>();
     let document_ids_by_source_index = documents
         .iter()
-        .enumerate()
-        .map(|(index, document)| (index, document.id.clone()))
+        .zip(train_indices.iter())
+        .map(|(document, source_index)| (*source_index, document.id.clone()))
         .collect::<std::collections::HashMap<_, _>>();
-    let source_ground_truth = read_source_ground_truth(
-        &file,
-        args,
-        train_total,
-        test_total,
+    add_source_ground_truth_ids(
+        source_ground_truth.as_deref_mut(),
         &document_ids_by_source_index,
-    )?;
+    );
 
     let last_query_index = args.queries.saturating_sub(1);
     let queries = query_vectors
@@ -221,7 +226,8 @@ fn build_fixture(args: &Args) -> Result<AnnFixture> {
             url: args.url.clone(),
             source_metric: args.source_metric.clone(),
             train_start: 0,
-            train_count: args.documents,
+            train_count: train_indices.len(),
+            train_indices: Some(train_indices),
             train_total: Some(train_total),
             test_start: 0,
             test_count: args.queries,
@@ -272,6 +278,63 @@ fn read_dense_rows(
             read_dense_rows_with_type::<u8>(dataset, &selection, row_count, dimensions)
                 .with_context(|| format!("failed to read dense rows as float data: {float_error}"))
         })
+}
+
+fn read_dense_rows_for_indices(
+    dataset: &hdf5_reader::Dataset,
+    indices: &[usize],
+) -> Result<Vec<Vec<f64>>> {
+    indices
+        .iter()
+        .map(|index| {
+            let start = u64::try_from(*index).context("source train index did not fit in u64")?;
+            let mut rows = read_dense_rows(dataset, start, 1)
+                .with_context(|| format!("failed to read train row {index}"))?;
+            rows.pop()
+                .with_context(|| format!("train row {index} yielded no vector"))
+        })
+        .collect()
+}
+
+fn selected_train_indices(
+    prefix_count: usize,
+    source_ground_truth: Option<&[SourceGroundTruth]>,
+) -> Vec<usize> {
+    let mut indices = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for index in 0..prefix_count {
+        if seen.insert(index) {
+            indices.push(index);
+        }
+    }
+    if let Some(source_ground_truth) = source_ground_truth {
+        for source_index in source_ground_truth
+            .iter()
+            .flat_map(|ground_truth| ground_truth.neighbors.iter())
+            .map(|neighbor| neighbor.source_index)
+        {
+            if seen.insert(source_index) {
+                indices.push(source_index);
+            }
+        }
+    }
+
+    indices
+}
+
+fn add_source_ground_truth_ids(
+    source_ground_truth: Option<&mut [SourceGroundTruth]>,
+    document_ids_by_source_index: &std::collections::HashMap<usize, String>,
+) {
+    if let Some(source_ground_truth) = source_ground_truth {
+        for ground_truth in source_ground_truth {
+            for neighbor in &mut ground_truth.neighbors {
+                neighbor.id = document_ids_by_source_index
+                    .get(&neighbor.source_index)
+                    .cloned();
+            }
+        }
+    }
 }
 
 fn dense_dataset_shape(dataset: &hdf5_reader::Dataset, name: &str) -> Result<(usize, usize)> {

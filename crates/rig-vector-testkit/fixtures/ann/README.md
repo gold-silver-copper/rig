@@ -4,10 +4,10 @@ These compact JSON fixtures are generated from external HDF5 benchmark vector
 datasets, but they do not vendor those source HDF5 files and do not claim to
 replay the benchmark projects' full ground-truth tasks.
 
-The generator reads a small prefix of each source file's `train` vectors as
-fixture documents and a small prefix of `test` vectors as fixture queries. It
-then computes exact neighbors over that compact subset with Rig score
-conventions:
+The generator reads a small prefix of each source file's `train` vectors plus
+the selected queries' source-neighbor `train` rows as fixture documents. It
+reads a small prefix of `test` vectors as fixture queries, then computes exact
+neighbors over that compact subset with Rig score conventions:
 
 - cosine: cosine similarity
 - l1: negative L1 distance
@@ -27,11 +27,10 @@ distances are also converted into Rig's higher-is-better score convention:
 
 This source ground truth is provenance and optional recall data. Normal CI still
 asserts against the recomputed compact-fixture oracle. The source neighbor IDs
-are only populated when the source train row is included in the compact fixture;
-otherwise the source row index, raw distance, and converted score are retained
-without a fixture document ID. If a fixture is rescored under a different metric
-than the source dataset, `source_ground_truth.metric` records the source metric;
-the source-ground-truth recall helper rejects those metric mismatches.
+are populated when the source train row is included in the compact fixture. If a
+fixture is rescored under a different metric than the source dataset,
+`source_ground_truth.metric` records the source metric; the
+source-ground-truth recall helper rejects those metric mismatches.
 
 Source datasets:
 

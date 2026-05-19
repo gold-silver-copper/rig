@@ -285,6 +285,10 @@ pub struct AnnFixtureSource {
     pub train_start: usize,
     /// Number of train rows used as fixture documents.
     pub train_count: usize,
+    /// Exact source train row indices included as fixture documents, when the
+    /// compact fixture is not a contiguous prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub train_indices: Option<Vec<usize>>,
     /// Total number of source train rows, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub train_total: Option<usize>,
@@ -318,16 +322,39 @@ impl AnnFixtureSource {
             self.top_k > 0,
             "ANN fixture '{fixture_name}' source top_k must be greater than zero"
         );
+        if let Some(train_indices) = &self.train_indices {
+            ensure!(
+                train_indices.len() == self.train_count,
+                "ANN fixture '{fixture_name}' source train_indices length {} did not match train_count {}",
+                train_indices.len(),
+                self.train_count
+            );
+            let mut seen = HashSet::new();
+            for train_index in train_indices {
+                ensure!(
+                    seen.insert(*train_index),
+                    "ANN fixture '{fixture_name}' source train_indices contains duplicate index {train_index}"
+                );
+                if let Some(train_total) = self.train_total {
+                    ensure!(
+                        *train_index < train_total,
+                        "ANN fixture '{fixture_name}' source train index {train_index} exceeds total {train_total}"
+                    );
+                }
+            }
+        }
         if let Some(train_total) = self.train_total {
             let train_end = self
                 .train_start
                 .checked_add(self.train_count)
                 .context("source train row range overflowed")?;
-            ensure!(
-                train_end <= train_total,
-                "ANN fixture '{fixture_name}' source train range {train_start}..{train_end} exceeds total {train_total}",
-                train_start = self.train_start
-            );
+            if self.train_indices.is_none() {
+                ensure!(
+                    train_end <= train_total,
+                    "ANN fixture '{fixture_name}' source train range {train_start}..{train_end} exceeds total {train_total}",
+                    train_start = self.train_start
+                );
+            }
         }
         if let Some(test_total) = self.test_total {
             let test_end = self
@@ -345,6 +372,9 @@ impl AnnFixtureSource {
     }
 
     fn includes_train_index(&self, source_index: usize) -> Result<bool> {
+        if let Some(train_indices) = &self.train_indices {
+            return Ok(train_indices.contains(&source_index));
+        }
         let train_end = self
             .train_start
             .checked_add(self.train_count)
@@ -874,7 +904,34 @@ where
                     query.id
                 )
             })?;
+        let samples = usize::try_from(samples).context("source samples did not fit in usize")?;
+        ensure!(
+            actual.len() <= samples,
+            "fixture '{}' query '{}' source ground-truth recall returned {} rows, exceeding requested samples {samples}",
+            fixture.name(),
+            query.id,
+            actual.len()
+        );
         let actual_ids = actual.iter().map(|(_, id)| id.as_str()).collect::<Vec<_>>();
+        let mut actual_id_set = HashSet::new();
+        for (score, id) in &actual {
+            ensure!(
+                score.is_finite(),
+                "fixture '{}' query '{}' source ground-truth recall score for '{}' was not finite: {}",
+                fixture.name(),
+                query.id,
+                id,
+                score
+            );
+            ensure!(
+                actual_id_set.insert(id.as_str()),
+                "fixture '{}' query '{}' source ground-truth recall returned duplicate id '{}'; actual ids: {:?}",
+                fixture.name(),
+                query.id,
+                id,
+                actual_ids
+            );
+        }
         let hits = expected_ids
             .iter()
             .filter(|expected_id| actual_ids.contains(expected_id))
@@ -986,6 +1043,36 @@ fn assert_neighbors(
             );
         }
     } else {
+        let top_k = usize::try_from(query.top_k).context("query top_k did not fit in usize")?;
+        ensure!(
+            actual.len() <= top_k,
+            "fixture '{}' query '{}' {label} returned {} rows, exceeding top_k {top_k}; expected ids: {:?}; actual ids: {:?}",
+            fixture.name(),
+            query.id,
+            actual.len(),
+            expected_ids,
+            actual_ids
+        );
+        let mut actual_id_set = HashSet::new();
+        for (score, id) in actual {
+            ensure!(
+                score.is_finite(),
+                "fixture '{}' query '{}' {label} score for '{}' was not finite: {}",
+                fixture.name(),
+                query.id,
+                id,
+                score
+            );
+            ensure!(
+                actual_id_set.insert(id.as_str()),
+                "fixture '{}' query '{}' {label} returned duplicate id '{}'; actual ids: {:?}",
+                fixture.name(),
+                query.id,
+                id,
+                actual_ids
+            );
+        }
+
         let hits = expected
             .iter()
             .filter(|expected| {
@@ -1367,6 +1454,63 @@ mod tests {
             |document: &TestDocument| document.id.clone(),
         )
         .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approximate_recall_mode_rejects_too_many_results() -> Result<()> {
+        let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_a", "score": 1.0},
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_c", "score": -1.0}
+        ])))?;
+        let index = StaticIndex {
+            results: vec![
+                (1.0, "doc_a".to_string()),
+                (0.0, "doc_b".to_string()),
+                (-1.0, "doc_c".to_string()),
+                (-2.0, "doc_extra".to_string()),
+            ],
+        };
+        let result = assert_vector_store_fixture(
+            &index,
+            &fixture,
+            AssertOptions::exact().recall_at_least(0.3),
+            |document: &TestDocument| document.id.clone(),
+        )
+        .await;
+
+        ensure!(
+            result.is_err(),
+            "approximate recall mode should reject results longer than top_k"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approximate_recall_mode_rejects_duplicate_result_ids() -> Result<()> {
+        let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
+            {"id": "doc_a", "score": 1.0},
+            {"id": "doc_b", "score": 0.0},
+            {"id": "doc_c", "score": -1.0}
+        ])))?;
+        let index = StaticIndex {
+            results: vec![(1.0, "doc_a".to_string()), (1.0, "doc_a".to_string())],
+        };
+        let result = assert_vector_store_fixture(
+            &index,
+            &fixture,
+            AssertOptions::exact().recall_at_least(0.3),
+            |document: &TestDocument| document.id.clone(),
+        )
+        .await;
+
+        ensure!(
+            result.is_err(),
+            "approximate recall mode should reject duplicate ids"
+        );
 
         Ok(())
     }
