@@ -1345,6 +1345,185 @@ mod tests {
 
     use super::*;
 
+    const COMMITTED_FIXTURES: [CommittedFixtureSpec; 4] = [
+        CommittedFixtureSpec {
+            json: include_str!(
+                "../fixtures/ann/benchmark_derived_ann_random_xs_20_angular_cosine.json"
+            ),
+            metric: AnnMetric::Cosine,
+            source_metric: "angular",
+            has_native_source_ground_truth: true,
+        },
+        CommittedFixtureSpec {
+            json: include_str!(
+                "../fixtures/ann/benchmark_derived_ann_random_xs_20_angular_l1.json"
+            ),
+            metric: AnnMetric::L1,
+            source_metric: "angular",
+            has_native_source_ground_truth: false,
+        },
+        CommittedFixtureSpec {
+            json: include_str!(
+                "../fixtures/ann/benchmark_derived_ann_random_xs_20_angular_l2.json"
+            ),
+            metric: AnnMetric::L2,
+            source_metric: "angular",
+            has_native_source_ground_truth: false,
+        },
+        CommittedFixtureSpec {
+            json: include_str!("../fixtures/ann/benchmark_derived_vibe_glove_200_cosine.json"),
+            metric: AnnMetric::Cosine,
+            source_metric: "cosine",
+            has_native_source_ground_truth: true,
+        },
+    ];
+
+    #[test]
+    fn committed_ann_fixtures_are_valid() -> Result<()> {
+        for spec in COMMITTED_FIXTURES {
+            let fixture = AnnFixture::from_json(spec.json)?;
+            ensure!(
+                fixture.metric() == spec.metric,
+                "fixture '{}' metric {:?} did not match expected {:?}",
+                fixture.name(),
+                fixture.metric(),
+                spec.metric
+            );
+            ensure!(
+                !fixture.documents().is_empty(),
+                "fixture '{}' should include documents",
+                fixture.name()
+            );
+            ensure!(
+                !fixture.queries().is_empty(),
+                "fixture '{}' should include queries",
+                fixture.name()
+            );
+
+            let source = fixture.source().with_context(|| {
+                format!(
+                    "fixture '{}' should include source metadata",
+                    fixture.name()
+                )
+            })?;
+            ensure!(
+                source.source_metric.as_deref() == Some(spec.source_metric),
+                "fixture '{}' source metric {:?} did not match expected '{}'",
+                fixture.name(),
+                source.source_metric,
+                spec.source_metric
+            );
+            ensure!(
+                source.train_count == fixture.documents().len(),
+                "fixture '{}' source train_count {} did not match document count {}",
+                fixture.name(),
+                source.train_count,
+                fixture.documents().len()
+            );
+            let train_indices = source.train_indices.as_ref().with_context(|| {
+                format!(
+                    "fixture '{}' should record source train_indices",
+                    fixture.name()
+                )
+            })?;
+            ensure!(
+                train_indices.len() == fixture.documents().len(),
+                "fixture '{}' train_indices length {} did not match document count {}",
+                fixture.name(),
+                train_indices.len(),
+                fixture.documents().len()
+            );
+
+            let source_ground_truth_count = fixture
+                .queries()
+                .iter()
+                .filter(|query| query.source_ground_truth.is_some())
+                .count();
+            ensure!(
+                source_ground_truth_count == fixture.queries().len(),
+                "fixture '{}' should include source ground truth on every query",
+                fixture.name()
+            );
+
+            for query in fixture.queries() {
+                let oracle = fixture.expected_neighbors(query)?;
+                ensure!(
+                    oracle.len() == query.expected.len(),
+                    "fixture '{}' query '{}' oracle length changed",
+                    fixture.name(),
+                    query.id
+                );
+                for (actual, expected) in query.expected.iter().zip(oracle.iter()) {
+                    ensure!(
+                        actual.id == expected.id,
+                        "fixture '{}' query '{}' committed expected id '{}' did not match oracle id '{}'",
+                        fixture.name(),
+                        query.id,
+                        actual.id,
+                        expected.id
+                    );
+                    ensure_score_close(
+                        actual.score,
+                        expected.score,
+                        FIXTURE_EXPECTED_SCORE_EPSILON,
+                        fixture.name(),
+                        &query.id,
+                        &actual.id,
+                        "committed fixture/vector oracle",
+                    )?;
+                }
+
+                let source_ground_truth = query
+                    .source_ground_truth
+                    .as_ref()
+                    .context("source ground truth should be present")?;
+                let ids_present = source_ground_truth
+                    .neighbors
+                    .iter()
+                    .filter(|neighbor| neighbor.id.is_some())
+                    .count();
+                ensure!(
+                    ids_present > 0,
+                    "fixture '{}' query '{}' should include fixture ids for source neighbors",
+                    fixture.name(),
+                    query.id
+                );
+
+                if spec.has_native_source_ground_truth {
+                    ensure!(
+                        source_ground_truth.metric == fixture.metric(),
+                        "fixture '{}' query '{}' should use native source metric {:?}",
+                        fixture.name(),
+                        query.id,
+                        fixture.metric()
+                    );
+                    ensure!(
+                        ids_present == source_ground_truth.neighbors.len(),
+                        "fixture '{}' query '{}' should map every source neighbor to a fixture id",
+                        fixture.name(),
+                        query.id
+                    );
+                } else {
+                    ensure!(
+                        source_ground_truth.metric != fixture.metric(),
+                        "fixture '{}' query '{}' should record intentional source metric mismatch",
+                        fixture.name(),
+                        query.id
+                    );
+                    ensure!(
+                        source_ground_truth.source_metric.as_deref() == Some(spec.source_metric),
+                        "fixture '{}' query '{}' source ground-truth metric label should be '{}'",
+                        fixture.name(),
+                        query.id,
+                        spec.source_metric
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     #[test]
     fn validation_accepts_expected_values_that_match_vector_oracle() -> Result<()> {
         let fixture = AnnFixture::from_json(&simple_cosine_fixture_json(json!([
@@ -1752,6 +1931,14 @@ mod tests {
             embedder.embed(self.text.clone());
             Ok(())
         }
+    }
+
+    #[derive(Clone, Copy)]
+    struct CommittedFixtureSpec {
+        json: &'static str,
+        metric: AnnMetric,
+        source_metric: &'static str,
+        has_native_source_ground_truth: bool,
     }
 
     fn simple_cosine_fixture_json(expected: serde_json::Value) -> String {
