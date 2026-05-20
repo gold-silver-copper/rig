@@ -24,7 +24,7 @@ required-features = ["ann-benchmarks"]
 anyhow = { workspace = true }
 hdf5-reader = { version = "0.5.0", default-features = false, optional = true }
 ndarray = { version = "0.17", optional = true }
-rig-core = { path = "../rig-core", version = "0.37.0", default-features = false }
+rig-core = { path = "../rig-core", version = "0.37.1", default-features = false }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 

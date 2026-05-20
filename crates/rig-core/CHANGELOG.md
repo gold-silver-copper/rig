@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.37.1](https://github.com/gold-silver-copper/rig/compare/rig-core-v0.37.0...rig-core-v0.37.1) - 2026-05-20
+
+### Added
+
+- *(gemini)* expose finish_reason and model_version on StreamingCompletionResponse ([#1776](https://github.com/gold-silver-copper/rig/pull/1776)) (by @mateobelanger)
+
+### Fixed
+
+- stream ToolCallDelta in prompt_request ([#1789](https://github.com/gold-silver-copper/rig/pull/1789)) (by @notV4l) - #1789
+- fix sqlite threshold and null tool call streaming ([#1786](https://github.com/gold-silver-copper/rig/pull/1786)) (by @gold-silver-copper) - #1786
+- *(anthropic)* serialize ToolResultContent::Image with source wrapper ([#1772](https://github.com/gold-silver-copper/rig/pull/1772)) (by @Cyanistic)
+
+### Other
+
+- Expose per-completion-call usage in agent responses ([#1787](https://github.com/gold-silver-copper/rig/pull/1787)) (by @gold-silver-copper) - #1787
+- Add replayable provider cassette tests ([#1769](https://github.com/gold-silver-copper/rig/pull/1769)) (by @gold-silver-copper) - #1769
+
+### Contributors
+
+* @notV4l
+* @gold-silver-copper
+* @mateobelanger
+* @Cyanistic
 ## [0.37.0](https://github.com/0xPlaygrounds/rig/compare/rig-core-v0.36.0...rig-core-v0.37.0) - 2026-05-13
 
 ### Added
