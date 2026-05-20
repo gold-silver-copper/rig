@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.7](https://github.com/gold-silver-copper/rig/compare/rig-vertexai-v0.3.6...rig-vertexai-v0.3.7) - 2026-05-20
+
+### Added
+
+- *(anthropic)* support document citations ([#1778](https://github.com/gold-silver-copper/rig/pull/1778)) (by @temrjan)
+
+### Contributors
+
+* @temrjan
 ## [0.3.6](https://github.com/0xPlaygrounds/rig/compare/rig-vertexai-v0.3.5...rig-vertexai-v0.3.6) - 2026-05-13
 
 ### Fixed
