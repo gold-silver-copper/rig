@@ -980,7 +980,7 @@ mod tests {
     use crate::agent::AgentBuilder;
     use crate::client::ProviderClient;
     use crate::client::completion::CompletionClient;
-    use crate::completion::{CompletionRequest, Usage};
+    use crate::completion::{CompletionRequest, ToolDefinition, Usage};
     use crate::message::{
         AssistantContent, DocumentSourceKind, ImageMediaType, Message, ReasoningContent,
         ToolResultContent, UserContent,
@@ -990,7 +990,11 @@ mod tests {
     use crate::test_utils::{
         AppendFailingMemory, FailingMemory, MockCompletionModel, MockResponse, MockStreamEvent,
     };
+    use crate::tool::Tool;
     use futures::StreamExt;
+    use schemars::{JsonSchema, schema_for};
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -1379,6 +1383,51 @@ mod tests {
         ]])
     }
 
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+    struct JavaScriptProgram {
+        title: String,
+        description: String,
+        code: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct ExecutorResponse(std::result::Result<serde_json::Value, String>);
+
+    impl ExecutorResponse {
+        fn ok(value: serde_json::Value) -> Self {
+            Self(Ok(value))
+        }
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("JavaScript tool error")]
+    struct JavaScriptToolError;
+
+    #[derive(Deserialize, Serialize)]
+    struct JavaScript;
+
+    impl Tool for JavaScript {
+        const NAME: &'static str = "JavaScript";
+        type Error = JavaScriptToolError;
+        type Args = JavaScriptProgram;
+        type Output = ExecutorResponse;
+
+        async fn definition(&self, _prompt: String) -> ToolDefinition {
+            ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "JavaScript runtime with an array of tools for completing the tasks assigned by the user".to_string(),
+                parameters: schema_for!(JavaScriptProgram).to_value(),
+            }
+        }
+
+        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+            Ok(ExecutorResponse::ok(json!({
+                "code": args.code,
+                "status": "executed"
+            })))
+        }
+    }
+
     #[derive(Clone)]
     struct TerminateOnStreamFinish;
 
@@ -1545,6 +1594,138 @@ mod tests {
         let requests = recorded.requests();
         assert_eq!(requests.len(), 2);
         assert!(validate_follow_up_tool_history(&requests[1]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn stream_prompt_reproduces_default_api_tool_error_then_empty_final_response() {
+        const DEFAULT_API_TOOL_ERROR: &str = "Toolset error: ToolNotFoundError: default_api";
+
+        let model = MockCompletionModel::from_stream_turns([
+            vec![
+                MockStreamEvent::tool_call(
+                    "tool_call_default_api",
+                    "default_api",
+                    json!({
+                        "title": "Find bundle",
+                        "description": "Find a bundle",
+                        "code": "async function findBundle() { return Ryzome.listBundle(\"6a07410250db81016def9dd1\", 1); } findBundle();",
+                    }),
+                )
+                .with_call_id("call_default_api"),
+                MockStreamEvent::final_response_with_total_tokens(4),
+            ],
+            vec![MockStreamEvent::final_response_with_total_tokens(1)],
+        ]);
+        let recorded = model.clone();
+        let agent = AgentBuilder::new(model).tool(JavaScript).build();
+        let empty_history: &[Message] = &[];
+
+        let mut stream = agent
+            .stream_prompt("find the bundle")
+            .with_history(empty_history)
+            .multi_turn(3)
+            .await;
+        let mut saw_default_api_tool_call = false;
+        let mut tool_result_text = None;
+        let mut final_response_text = None;
+        let mut final_history = None;
+
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ToolCall { tool_call, .. },
+                )) => {
+                    if tool_call.function.name == "default_api" {
+                        saw_default_api_tool_call = true;
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult {
+                    tool_result,
+                    ..
+                })) => {
+                    let text = tool_result
+                        .content
+                        .iter()
+                        .filter_map(|content| match content {
+                            ToolResultContent::Text(text) => Some(text.text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    tool_result_text = Some(text);
+                }
+                Ok(MultiTurnStreamItem::FinalResponse(res)) => {
+                    final_response_text = Some(res.response().to_owned());
+                    final_history = res.history().map(|history| history.to_vec());
+                    break;
+                }
+                Ok(_) => {}
+                Err(err) => panic!("unexpected streaming error: {err:?}"),
+            }
+        }
+
+        assert!(
+            saw_default_api_tool_call,
+            "the fixture should reproduce Gemini emitting a default_api tool call"
+        );
+        assert_eq!(
+            tool_result_text.as_deref(),
+            Some(DEFAULT_API_TOOL_ERROR),
+            "current streaming behavior turns an unknown tool into a tool-result string"
+        );
+        assert_eq!(
+            final_response_text.as_deref(),
+            Some(""),
+            "the follow-up textless turn currently yields an empty final response"
+        );
+
+        let requests = recorded.requests();
+        assert_eq!(
+            requests.len(),
+            2,
+            "current behavior makes a second model turn after the unknown tool"
+        );
+        assert!(
+            requests[0]
+                .tools
+                .iter()
+                .any(|tool| tool.name == "JavaScript"),
+            "the request declares the JavaScript tool"
+        );
+        assert!(
+            requests[0]
+                .tools
+                .iter()
+                .all(|tool| tool.name != "default_api"),
+            "default_api is not a declared tool"
+        );
+
+        let history = final_history.expect("with_history should expose final history");
+        assert!(history.iter().any(|message| matches!(
+            message,
+            Message::Assistant { content, .. }
+                if content.iter().any(|content| matches!(
+                    content,
+                    AssistantContent::ToolCall(tool_call)
+                        if tool_call.function.name == "default_api"
+                ))
+        )));
+        assert!(history.iter().any(|message| matches!(
+            message,
+            Message::User { content }
+                if content.iter().any(|content| matches!(
+                    content,
+                    UserContent::ToolResult(tool_result)
+                        if tool_result
+                            .content
+                            .iter()
+                            .any(|content| matches!(
+                                content,
+                                ToolResultContent::Text(text)
+                                    if text.text == DEFAULT_API_TOOL_ERROR
+                            ))
+                ))
+        )));
     }
 
     #[tokio::test]

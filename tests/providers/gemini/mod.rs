@@ -17,4 +17,6 @@ mod cassette {
     mod transcription;
 }
 
-mod live {}
+mod live {
+    mod default_api;
+}
