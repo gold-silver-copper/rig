@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.2.7](https://github.com/gold-silver-copper/rig/compare/rig-sqlite-v0.2.6...rig-sqlite-v0.2.7) - 2026-05-21
+
+### Fixed
+
+- *(sqlite)* support document metadata filters ([#1793](https://github.com/gold-silver-copper/rig/pull/1793)) (by @gold-silver-copper)
+- fix sqlite threshold and null tool call streaming ([#1786](https://github.com/gold-silver-copper/rig/pull/1786)) (by @gold-silver-copper) - #1786
+
+### Contributors
+
+* @gold-silver-copper
 ## [0.2.6](https://github.com/0xPlaygrounds/rig/compare/rig-sqlite-v0.2.5...rig-sqlite-v0.2.6) - 2026-05-13
 
 ### Other

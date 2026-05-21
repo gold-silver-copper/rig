@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.37.1](https://github.com/gold-silver-copper/rig/compare/rig-v0.37.0...rig-v0.37.1) - 2026-05-21
+
+### Added
+
+- *(anthropic)* support document citations ([#1778](https://github.com/gold-silver-copper/rig/pull/1778)) (by @temrjan)
+
+### Fixed
+
+- fix sqlite threshold and null tool call streaming ([#1786](https://github.com/gold-silver-copper/rig/pull/1786)) (by @gold-silver-copper) - #1786
+
+### Other
+
+- *(deps)* bump tokio-tungstenite from 0.23.1 to 0.28.0 ([#1784](https://github.com/gold-silver-copper/rig/pull/1784)) (by @dependabot[bot])
+- *(deps)* bump rmcp from 1.6.0 to 1.7.0 ([#1783](https://github.com/gold-silver-copper/rig/pull/1783)) (by @dependabot[bot])
+- *(deps)* bump tokio from 1.52.1 to 1.52.3 ([#1782](https://github.com/gold-silver-copper/rig/pull/1782)) (by @dependabot[bot])
+- Expose per-completion-call usage in agent responses ([#1787](https://github.com/gold-silver-copper/rig/pull/1787)) (by @gold-silver-copper) - #1787
+- *(gemini)* add streaming metadata cassettes ([#1777](https://github.com/gold-silver-copper/rig/pull/1777)) (by @gold-silver-copper)
+- Add replayable provider cassette tests ([#1769](https://github.com/gold-silver-copper/rig/pull/1769)) (by @gold-silver-copper) - #1769
+
+### Contributors
+
+* @dependabot[bot]
+* @temrjan
+* @gold-silver-copper
 ## [0.37.0](https://github.com/0xPlaygrounds/rig/compare/rig-v0.36.0...rig-v0.37.0) - 2026-05-13
 
 ### Added
