@@ -41,7 +41,7 @@ use gemini_api_types::{
     GenerationConfig, Part, PartKind, Role, Tool,
 };
 use serde_json::{Map, Value};
-use std::convert::TryFrom;
+use std::{collections::BTreeSet, convert::TryFrom};
 use tracing::{Level, enabled, info_span};
 use tracing_futures::Instrument;
 
@@ -111,6 +111,8 @@ where
         };
 
         let request = create_request_body(completion_request)?;
+        let declared_function_names = declared_function_names(&request);
+        let code_execution_enabled = code_execution_enabled(&request);
 
         if enabled!(Level::TRACE) {
             tracing::trace!(
@@ -141,7 +143,7 @@ where
 
                 let response_text = String::from_utf8_lossy(&response_body).to_string();
 
-                let response: GenerateContentResponse = serde_json::from_slice(&response_body)
+                let mut response: GenerateContentResponse = serde_json::from_slice(&response_body)
                     .map_err(|err| {
                         tracing::error!(
                             error = %err,
@@ -162,6 +164,12 @@ where
                         serde_json::to_string_pretty(&response)?
                     );
                 }
+
+                normalize_generate_content_response(
+                    &mut response,
+                    &declared_function_names,
+                    code_execution_enabled,
+                )?;
 
                 response.try_into()
             } else {
@@ -331,6 +339,187 @@ fn extract_tools_from_additional_params(
     Ok(Vec::new())
 }
 
+pub(crate) fn declared_function_names(request: &GenerateContentRequest) -> BTreeSet<String> {
+    let Some(tools) = request.tools.as_ref() else {
+        return BTreeSet::new();
+    };
+
+    tools
+        .iter()
+        .filter_map(|tool| tool.get("functionDeclarations"))
+        .filter_map(Value::as_array)
+        .flat_map(|declarations| declarations.iter())
+        .filter_map(|declaration| declaration.get("name"))
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+pub(crate) fn code_execution_enabled(request: &GenerateContentRequest) -> bool {
+    request.tools.as_ref().is_some_and(|tools| {
+        tools.iter().any(|tool| {
+            tool.get("codeExecution")
+                .or_else(|| tool.get("code_execution"))
+                .is_some_and(|value| !value.is_null())
+        })
+    })
+}
+
+pub(crate) fn normalize_generate_content_response(
+    response: &mut GenerateContentResponse,
+    declared_names: &BTreeSet<String>,
+    code_execution_enabled: bool,
+) -> Result<(), CompletionError> {
+    for candidate in &mut response.candidates {
+        let Some(content) = candidate.content.as_mut() else {
+            continue;
+        };
+
+        validate_gemini_parts(&mut content.parts, declared_names, code_execution_enabled)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_gemini_parts(
+    parts: &mut [Part],
+    declared_names: &BTreeSet<String>,
+    code_execution_enabled: bool,
+) -> Result<(), CompletionError> {
+    for part in parts {
+        match &mut part.part {
+            PartKind::Text(text) => validate_gemini_text_part(text, declared_names)?,
+            PartKind::FunctionCall(function_call) => {
+                normalize_gemini_function_call(function_call, declared_names)?;
+            }
+            PartKind::ExecutableCode(_) | PartKind::CodeExecutionResult(_) => {
+                validate_gemini_code_execution_part(code_execution_enabled)?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_gemini_text_part(
+    text: &str,
+    declared_names: &BTreeSet<String>,
+) -> Result<(), CompletionError> {
+    if !declared_names.is_empty() && looks_like_malformed_default_api_tool_code(text) {
+        return Err(CompletionError::ResponseError(
+            "Gemini returned default_api tool-code text instead of a structured functionCall"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn normalize_gemini_function_call(
+    function_call: &mut gemini_api_types::FunctionCall,
+    declared_names: &BTreeSet<String>,
+) -> Result<(), CompletionError> {
+    let raw_name = function_call.name.clone();
+    let Some(normalized_name) = normalize_gemini_function_name(&raw_name, declared_names)? else {
+        return Ok(());
+    };
+
+    if normalized_name != raw_name {
+        tracing::warn!(
+            provider = "gemini",
+            raw_function_name = raw_name.as_str(),
+            normalized_function_name = normalized_name.as_str(),
+            "Normalized Gemini function call name"
+        );
+        function_call.name = normalized_name;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_gemini_code_execution_part(
+    code_execution_enabled: bool,
+) -> Result<(), CompletionError> {
+    if code_execution_enabled {
+        return Ok(());
+    }
+
+    Err(CompletionError::ResponseError(
+        "Gemini returned code-execution output but code execution was not enabled".to_string(),
+    ))
+}
+
+fn normalize_gemini_function_name(
+    raw_name: &str,
+    declared_names: &BTreeSet<String>,
+) -> Result<Option<String>, CompletionError> {
+    if declared_names.is_empty() || declared_names.contains(raw_name) {
+        return Ok(None);
+    }
+
+    let Some(default_api_suffix) = raw_name
+        .strip_prefix("default_api.")
+        .or_else(|| raw_name.strip_prefix("default_api:"))
+    else {
+        return Err(unknown_gemini_function_call_error(raw_name, declared_names));
+    };
+
+    if default_api_suffix.is_empty() {
+        return Err(unknown_gemini_function_call_error(raw_name, declared_names));
+    }
+
+    let matches = declared_names
+        .iter()
+        .filter(|declared| {
+            declared.as_str() == default_api_suffix
+                || declared
+                    .rsplit(['.', ':'])
+                    .next()
+                    .is_some_and(|name| name == default_api_suffix)
+        })
+        .collect::<Vec<_>>();
+
+    match matches.as_slice() {
+        [single] => Ok(Some((*single).clone())),
+        [] => Err(unknown_gemini_function_call_error(raw_name, declared_names)),
+        _ => Err(CompletionError::ResponseError(format!(
+            "Gemini returned ambiguous functionCall name `{raw_name}`; declared functions are: {}",
+            format_declared_names(declared_names)
+        ))),
+    }
+}
+
+fn looks_like_malformed_default_api_tool_code(text: &str) -> bool {
+    text.contains("default_api")
+        && (text.contains("tool_code")
+            || text.contains("print(default_api")
+            || text.contains("<ctrl97>")
+            || text.contains("```"))
+}
+
+fn unknown_gemini_function_call_error(
+    raw_name: &str,
+    declared_names: &BTreeSet<String>,
+) -> CompletionError {
+    CompletionError::ResponseError(format!(
+        "Gemini returned unknown functionCall name `{raw_name}`; declared functions are: {}",
+        format_declared_names(declared_names)
+    ))
+}
+
+fn format_declared_names(declared_names: &BTreeSet<String>) -> String {
+    if declared_names.is_empty() {
+        "<none>".to_string()
+    } else {
+        declared_names
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 pub(crate) fn resolve_request_model(
     default_model: &str,
     completion_request: &CompletionRequest,
@@ -474,16 +663,20 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                             }
                         }
                         PartKind::FunctionCall(function_call) => {
-                            completion::AssistantContent::ToolCall(
-                                message::ToolCall::new(
+                            let mut tool_call = message::ToolCall::new(
+                                function_call.name.clone(),
+                                message::ToolFunction::new(
                                     function_call.name.clone(),
-                                    message::ToolFunction::new(
-                                        function_call.name.clone(),
-                                        function_call.args.clone(),
-                                    ),
-                                )
-                                .with_signature(thought_signature.clone()),
+                                    function_call.args.clone(),
+                                ),
                             )
+                            .with_signature(thought_signature.clone());
+
+                            if let Some(id) = function_call.id.clone() {
+                                tool_call = tool_call.with_call_id(id);
+                            }
+
+                            completion::AssistantContent::ToolCall(tool_call)
                         }
                         _ => {
                             return Err(CompletionError::ResponseError(
@@ -810,7 +1003,11 @@ pub mod gemini_api_types {
                     part: PartKind::Text(text),
                     additional_params: None,
                 }),
-                message::UserContent::ToolResult(message::ToolResult { id, content, .. }) => {
+                message::UserContent::ToolResult(message::ToolResult {
+                    id,
+                    call_id,
+                    content,
+                }) => {
                     let mut response_json: Option<serde_json::Value> = None;
                     let mut parts: Vec<FunctionResponsePart> = Vec::new();
 
@@ -886,6 +1083,7 @@ pub mod gemini_api_types {
                         thought: Some(false),
                         thought_signature: None,
                         part: PartKind::FunctionResponse(FunctionResponse {
+                            id: call_id,
                             name: id,
                             response: response_json,
                             parts: if parts.is_empty() { None } else { Some(parts) },
@@ -1193,6 +1391,7 @@ pub mod gemini_api_types {
                 thought: Some(false),
                 thought_signature: tool_call.signature,
                 part: PartKind::FunctionCall(FunctionCall {
+                    id: tool_call.call_id,
                     name: tool_call.function.name,
                     args: tool_call.function.arguments,
                 }),
@@ -1217,6 +1416,9 @@ pub mod gemini_api_types {
     /// FunctionDeclaration.name with the arguments and their values.
     #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
     pub struct FunctionCall {
+        /// Optional provider call identifier returned by Gemini 3+ for function response correlation.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub id: Option<String>,
         /// Required. The name of the function to call. Must be a-z, A-Z, 0-9, or contain underscores
         /// and dashes, with a maximum length of 63.
         pub name: String,
@@ -1227,6 +1429,7 @@ pub mod gemini_api_types {
     impl From<message::ToolCall> for FunctionCall {
         fn from(tool_call: message::ToolCall) -> Self {
             Self {
+                id: tool_call.call_id,
                 name: tool_call.function.name,
                 args: tool_call.function.arguments,
             }
@@ -1238,6 +1441,9 @@ pub mod gemini_api_types {
     /// This should contain the result of aFunctionCall made based on model prediction.
     #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
     pub struct FunctionResponse {
+        /// Optional provider call identifier that matches the function call being answered.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub id: Option<String>,
         /// The name of the function to call. Must be a-z, A-Z, 0-9, or contain underscores and dashes,
         /// with a maximum length of 63.
         pub name: String,
@@ -2033,6 +2239,12 @@ pub mod gemini_api_types {
         Auto,
         None,
         Any {
+            #[serde(rename = "allowedFunctionNames")]
+            #[serde(skip_serializing_if = "Option::is_none")]
+            allowed_function_names: Option<Vec<String>>,
+        },
+        Validated {
+            #[serde(rename = "allowedFunctionNames")]
             #[serde(skip_serializing_if = "Option::is_none")]
             allowed_function_names: Option<Vec<String>>,
         },
@@ -2139,13 +2351,181 @@ mod tests {
     }
 
     #[test]
+    fn test_normalizes_default_api_qualified_function_call() {
+        let declared_names = std::collections::BTreeSet::from(["JavaScript".to_string()]);
+        let mut function_call = gemini_api_types::FunctionCall {
+            id: Some("call_123".to_string()),
+            name: "default_api.JavaScript".to_string(),
+            args: json!({"code": "return 4;"}),
+        };
+
+        normalize_gemini_function_call(&mut function_call, &declared_names).unwrap();
+
+        assert_eq!(function_call.name, "JavaScript");
+        assert_eq!(function_call.id.as_deref(), Some("call_123"));
+    }
+
+    #[test]
+    fn test_rejects_bare_default_api_function_call() {
+        let declared_names = std::collections::BTreeSet::from(["JavaScript".to_string()]);
+        let mut function_call = gemini_api_types::FunctionCall {
+            id: Some("call_123".to_string()),
+            name: "default_api".to_string(),
+            args: json!({}),
+        };
+
+        let err = normalize_gemini_function_call(&mut function_call, &declared_names).unwrap_err();
+
+        assert!(err.to_string().contains("default_api"));
+        assert!(err.to_string().contains("JavaScript"));
+    }
+
+    #[test]
+    fn test_rejects_default_api_tool_code_text() {
+        let declared_names = std::collections::BTreeSet::from(["JavaScript".to_string()]);
+        let err = validate_gemini_text_part(
+            "```tool_code\nprint(default_api.JavaScript(code=\"return 4\"))\n```",
+            &declared_names,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("default_api tool-code text"));
+    }
+
+    #[test]
+    fn test_rejects_executable_code_when_code_execution_disabled() {
+        let err = validate_gemini_code_execution_part(false).unwrap_err();
+
+        assert!(err.to_string().contains("code execution was not enabled"));
+    }
+
+    #[test]
+    fn test_function_calling_config_serializes_validated_mode() {
+        let config = ToolConfig {
+            function_calling_config: Some(FunctionCallingMode::Validated {
+                allowed_function_names: Some(vec!["execute_cortex_javascript".to_string()]),
+            }),
+        };
+
+        let value = serde_json::to_value(config).unwrap();
+
+        assert_eq!(value["functionCallingConfig"]["mode"], "VALIDATED");
+        assert_eq!(
+            value["functionCallingConfig"]["allowedFunctionNames"][0],
+            "execute_cortex_javascript"
+        );
+    }
+
+    #[test]
+    fn test_specific_tool_choice_serializes_allowed_function_names() {
+        let mode = FunctionCallingMode::try_from(message::ToolChoice::Specific {
+            function_names: vec!["execute_cortex_javascript".to_string()],
+        })
+        .unwrap();
+        let config = ToolConfig {
+            function_calling_config: Some(mode),
+        };
+
+        let value = serde_json::to_value(config).unwrap();
+
+        assert_eq!(value["functionCallingConfig"]["mode"], "ANY");
+        assert_eq!(
+            value["functionCallingConfig"]["allowedFunctionNames"][0],
+            "execute_cortex_javascript"
+        );
+    }
+
+    #[test]
+    fn test_response_normalization_rejects_unknown_function_call() {
+        let declared_names = std::collections::BTreeSet::from(["JavaScript".to_string()]);
+        let mut response = GenerateContentResponse {
+            response_id: "response_123".to_string(),
+            candidates: vec![ContentCandidate {
+                content: Some(Content {
+                    parts: vec![Part {
+                        thought: Some(false),
+                        thought_signature: None,
+                        part: PartKind::FunctionCall(gemini_api_types::FunctionCall {
+                            id: Some("call_123".to_string()),
+                            name: "default_api".to_string(),
+                            args: json!({}),
+                        }),
+                        additional_params: None,
+                    }],
+                    role: Some(Role::Model),
+                }),
+                finish_reason: None,
+                safety_ratings: None,
+                citation_metadata: None,
+                token_count: None,
+                avg_logprobs: None,
+                logprobs_result: None,
+                index: None,
+                finish_message: None,
+            }],
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+        };
+
+        let err =
+            normalize_generate_content_response(&mut response, &declared_names, false).unwrap_err();
+
+        assert!(err.to_string().contains("unknown functionCall name"));
+    }
+
+    #[test]
+    fn test_completion_response_preserves_function_call_id() {
+        let response = GenerateContentResponse {
+            response_id: "response_123".to_string(),
+            candidates: vec![ContentCandidate {
+                content: Some(Content {
+                    parts: vec![Part {
+                        thought: Some(false),
+                        thought_signature: Some("signature_123".to_string()),
+                        part: PartKind::FunctionCall(gemini_api_types::FunctionCall {
+                            id: Some("call_123".to_string()),
+                            name: "JavaScript".to_string(),
+                            args: json!({"code": "return 4;"}),
+                        }),
+                        additional_params: None,
+                    }],
+                    role: Some(Role::Model),
+                }),
+                finish_reason: None,
+                safety_ratings: None,
+                citation_metadata: None,
+                token_count: None,
+                avg_logprobs: None,
+                logprobs_result: None,
+                index: None,
+                finish_message: None,
+            }],
+            prompt_feedback: None,
+            usage_metadata: None,
+            model_version: None,
+        };
+
+        let response: crate::completion::CompletionResponse<GenerateContentResponse> =
+            response.try_into().unwrap();
+        let tool_call = match response.choice.first() {
+            crate::completion::AssistantContent::ToolCall(tool_call) => tool_call,
+            other => panic!("expected tool call, got {other:?}"),
+        };
+
+        assert_eq!(tool_call.id, "JavaScript");
+        assert_eq!(tool_call.call_id.as_deref(), Some("call_123"));
+        assert_eq!(tool_call.signature.as_deref(), Some("signature_123"));
+    }
+
+    #[test]
     fn test_deserialize_message_user() {
         let raw_message = r#"{
             "parts": [
                 {"text": "Hello, world!"},
                 {"inlineData": {"mimeType": "image/png", "data": "base64encodeddata"}},
-                {"functionCall": {"name": "test_function", "args": {"arg1": "value1"}}},
-                {"functionResponse": {"name": "test_function", "response": {"result": "success"}}},
+                {"functionCall": {"id": "call_123", "name": "test_function", "args": {"arg1": "value1"}}},
+                {"functionResponse": {"id": "call_123", "name": "test_function", "response": {"result": "success"}}},
                 {"fileData": {"mimeType": "application/pdf", "fileUri": "http://example.com/file.pdf"}},
                 {"executableCode": {"code": "print('Hello, world!')", "language": "PYTHON"}},
                 {"codeExecutionResult": {"output": "Hello, world!", "outcome": "OUTCOME_OK"}}
@@ -2190,6 +2570,7 @@ mod tests {
             ..
         } = &parts[2]
         {
+            assert_eq!(function_call.id.as_deref(), Some("call_123"));
             assert_eq!(function_call.name, "test_function");
             assert_eq!(
                 function_call.args.as_object().unwrap().get("arg1").unwrap(),
@@ -2204,6 +2585,7 @@ mod tests {
             ..
         } = &parts[3]
         {
+            assert_eq!(function_response.id.as_deref(), Some("call_123"));
             assert_eq!(function_response.name, "test_function");
             assert_eq!(
                 function_response
@@ -2429,7 +2811,7 @@ mod tests {
     fn test_message_conversion_tool_call() {
         let tool_call = message::ToolCall {
             id: "test_tool".to_string(),
-            call_id: None,
+            call_id: Some("call_123".to_string()),
             function: message::ToolFunction {
                 name: "test_function".to_string(),
                 arguments: json!({"arg1": "value1"}),
@@ -2451,6 +2833,7 @@ mod tests {
             ..
         }) = content.parts.first()
         {
+            assert_eq!(function_call.id.as_deref(), Some("call_123"));
             assert_eq!(function_call.name, "test_function");
             assert_eq!(
                 function_call.args.as_object().unwrap().get("arg1").unwrap(),
@@ -2458,6 +2841,32 @@ mod tests {
             );
         } else {
             panic!("Expected function call part");
+        }
+    }
+
+    #[test]
+    fn test_message_conversion_tool_result_preserves_call_id() {
+        let user_content = message::UserContent::tool_result_with_call_id(
+            "test_function",
+            "call_123".to_string(),
+            OneOrMany::one(message::ToolResultContent::text(r#"{"result":"ok"}"#)),
+        );
+        let part: Part = user_content.try_into().unwrap();
+
+        if let PartKind::FunctionResponse(function_response) = part.part {
+            assert_eq!(function_response.id.as_deref(), Some("call_123"));
+            assert_eq!(function_response.name, "test_function");
+            assert_eq!(
+                function_response
+                    .response
+                    .as_ref()
+                    .and_then(|response| response.get("result"))
+                    .and_then(|result| result.get("result"))
+                    .and_then(|result| result.as_str()),
+                Some("ok")
+            );
+        } else {
+            panic!("Expected function response part");
         }
     }
 

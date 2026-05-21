@@ -1,0 +1,41 @@
+when:
+  path: /v1beta/models/gemini-3-flash-preview:streamGenerateContent
+  method: POST
+  query_param:
+  - name: alt
+    value: sse
+  - name: key
+    value: '[REDACTED]'
+  header:
+  - name: accept
+    value: text/event-stream
+  - name: content-type
+    value: application/json
+  body: '{"contents":[{"parts":[{"text":"Call `lookup_harbor_label` exactly once before answering. After the tool result is available, answer in one short sentence that includes the exact tool output.","thought":false}],"role":"user"}],"generationConfig":{"maxOutputTokens":4096,"temperature":1.0,"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"medium"}},"safetySettings":null,"systemInstruction":{"parts":[{"text":"You must call the requested tool before writing any normal text. After the tool result is available, do not call any more tools and answer in one short sentence that includes the exact tool output.","thought":false}],"role":"model"},"toolConfig":null,"tools":[{"codeExecution":null,"functionDeclarations":[{"description":"Return the alpha signal marker.","name":"lookup_harbor_label","parameters":{"properties":{},"required":[],"type":"object"}}]}]}'
+then:
+  status: 200
+  header:
+  - name: content-type
+    value: text/event-stream
+  body: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"args\":{},\"id\":\"vgin8i84\",\"name\":\"lookup_harbor_label\"},\"thoughtSignature\":\"signature_REDACTED_1\"}],\"role\":\"model\"},\"index\":0}],\"modelVersion\":\"gemini-3-flash-preview\",\"responseId\":\"id_REDACTED_1\",\"usageMetadata\":{\"candidatesTokenCount\":13,\"promptTokenCount\":103,\"promptTokensDetails\":[{\"modality\":\"TEXT\",\"tokenCount\":103}],\"serviceTier\":\"standard\",\"thoughtsTokenCount\":128,\"totalTokenCount\":244}}\r\n\r\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"gemini-3-flash-preview\",\"responseId\":\"id_REDACTED_1\",\"usageMetadata\":{\"candidatesTokenCount\":13,\"promptTokenCount\":103,\"promptTokensDetails\":[{\"modality\":\"TEXT\",\"tokenCount\":103}],\"serviceTier\":\"standard\",\"thoughtsTokenCount\":128,\"totalTokenCount\":244}}\r\n\r\n"
+---
+when:
+  path: /v1beta/models/gemini-3-flash-preview:streamGenerateContent
+  method: POST
+  query_param:
+  - name: alt
+    value: sse
+  - name: key
+    value: '[REDACTED]'
+  header:
+  - name: accept
+    value: text/event-stream
+  - name: content-type
+    value: application/json
+  body: '{"contents":[{"parts":[{"text":"Call `lookup_harbor_label` exactly once before answering. After the tool result is available, answer in one short sentence that includes the exact tool output.","thought":false}],"role":"user"},{"parts":[{"functionCall":{"args":{},"id":"vgin8i84","name":"lookup_harbor_label"},"thought":false,"thoughtSignature":"signature_REDACTED_1"}],"role":"model"},{"parts":[{"functionResponse":{"id":"vgin8i84","name":"lookup_harbor_label","response":{"result":"crimson-harbor"}},"thought":false}],"role":"user"}],"generationConfig":{"maxOutputTokens":4096,"temperature":1.0,"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"medium"}},"safetySettings":null,"systemInstruction":{"parts":[{"text":"You must call the requested tool before writing any normal text. After the tool result is available, do not call any more tools and answer in one short sentence that includes the exact tool output.","thought":false}],"role":"model"},"toolConfig":null,"tools":[{"codeExecution":null,"functionDeclarations":[{"description":"Return the alpha signal marker.","name":"lookup_harbor_label","parameters":{"properties":{},"required":[],"type":"object"}}]}]}'
+then:
+  status: 200
+  header:
+  - name: content-type
+    value: text/event-stream
+  body: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"The harbor\"}],\"role\":\"model\"},\"index\":0}],\"modelVersion\":\"gemini-3-flash-preview\",\"responseId\":\"id_REDACTED_2\",\"usageMetadata\":{\"candidatesTokenCount\":2,\"promptTokenCount\":137,\"promptTokensDetails\":[{\"modality\":\"TEXT\",\"tokenCount\":137}],\"serviceTier\":\"standard\",\"totalTokenCount\":139}}\r\n\r\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" label retrieved is crimson-harbor.\"}],\"role\":\"model\"},\"index\":0}],\"modelVersion\":\"gemini-3-flash-preview\",\"responseId\":\"id_REDACTED_2\",\"usageMetadata\":{\"candidatesTokenCount\":10,\"promptTokenCount\":137,\"promptTokensDetails\":[{\"modality\":\"TEXT\",\"tokenCount\":137}],\"serviceTier\":\"standard\",\"totalTokenCount\":147}}\r\n\r\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"gemini-3-flash-preview\",\"responseId\":\"id_REDACTED_2\",\"usageMetadata\":{\"candidatesTokenCount\":10,\"promptTokenCount\":265,\"promptTokensDetails\":[{\"modality\":\"TEXT\",\"tokenCount\":265}],\"serviceTier\":\"standard\",\"totalTokenCount\":275}}\r\n\r\n"

@@ -8,7 +8,9 @@ use super::completion::gemini_api_types::{
     ContentCandidate, FinishReason, ModalityTokenCount, Part, PartKind, TrafficType,
 };
 use super::completion::{
-    CompletionModel, create_request_body, resolve_request_model, streaming_endpoint,
+    CompletionModel, code_execution_enabled, create_request_body, declared_function_names,
+    normalize_gemini_function_call, resolve_request_model, streaming_endpoint,
+    validate_gemini_code_execution_part, validate_gemini_text_part,
 };
 use crate::completion::message::ReasoningContent;
 use crate::completion::{CompletionError, CompletionRequest, GetTokenUsage};
@@ -113,6 +115,8 @@ where
             tracing::Span::current()
         };
         let request = create_request_body(completion_request)?;
+        let declared_function_names = declared_function_names(&request);
+        let code_execution_enabled = code_execution_enabled(&request);
 
         if enabled!(Level::TRACE) {
             tracing::trace!(
@@ -137,6 +141,7 @@ where
             let mut final_usage = None;
             let mut final_finish_reason: Option<FinishReason> = None;
             let mut final_model_version: Option<String> = None;
+            let mut terminal_protocol_error = false;
             while let Some(event_result) = event_source.next().await {
                 match event_result {
                     Ok(Event::Open) => {
@@ -195,6 +200,7 @@ where
                             tracing::trace!(reason = ?choice.finish_reason, "There is no part in the streaming content");
                         }
 
+                        let mut fatal_part_error = false;
                         for part in content.parts {
                             match part {
                                 Part {
@@ -203,6 +209,11 @@ where
                                     thought_signature,
                                     ..
                                 } => {
+                                    if let Err(error) = validate_gemini_text_part(&text, &declared_function_names) {
+                                        yield Err(error);
+                                        fatal_part_error = true;
+                                        break;
+                                    }
                                     if !text.is_empty() {
                                         if thought_signature.is_some() {
                                             // Signature arrives on the final chunk of a
@@ -228,24 +239,59 @@ where
                                     part: PartKind::Text(text),
                                     ..
                                 } => {
+                                    if let Err(error) = validate_gemini_text_part(&text, &declared_function_names) {
+                                        yield Err(error);
+                                        fatal_part_error = true;
+                                        break;
+                                    }
                                     if !text.is_empty() {
                                         yield Ok(streaming::RawStreamingChoice::Message(text));
                                     }
                                 },
                                 Part {
-                                    part: PartKind::FunctionCall(function_call),
+                                    part: PartKind::FunctionCall(mut function_call),
                                     thought_signature,
                                     ..
                                 } => {
-                                    yield Ok(streaming::RawStreamingChoice::ToolCall(
-                                        streaming::RawStreamingToolCall::new(function_call.name.clone(), function_call.name.clone(), function_call.args.clone())
-                                            .with_signature(thought_signature)
-                                    ));
+                                    if let Err(error) = normalize_gemini_function_call(&mut function_call, &declared_function_names) {
+                                        yield Err(error);
+                                        fatal_part_error = true;
+                                        break;
+                                    }
+
+                                    let mut tool_call = streaming::RawStreamingToolCall::new(
+                                        function_call.name.clone(),
+                                        function_call.name.clone(),
+                                        function_call.args.clone(),
+                                    )
+                                    .with_signature(thought_signature);
+
+                                    if let Some(id) = function_call.id {
+                                        tool_call = tool_call.with_call_id(id);
+                                    }
+
+                                    yield Ok(streaming::RawStreamingChoice::ToolCall(tool_call));
+                                },
+                                Part {
+                                    part: part_kind @ (PartKind::ExecutableCode(_) | PartKind::CodeExecutionResult(_)),
+                                    ..
+                                } => {
+                                    if let Err(error) = validate_gemini_code_execution_part(code_execution_enabled) {
+                                        yield Err(error);
+                                        fatal_part_error = true;
+                                        break;
+                                    }
+                                    tracing::warn!(?part_kind, "Unsupported Gemini code execution streaming part");
                                 },
                                 part => {
                                     tracing::warn!(?part, "Unsupported response type with streaming");
                                 }
                             }
+                        }
+
+                        if fatal_part_error {
+                            terminal_protocol_error = true;
+                            break;
                         }
 
                         // Check if this is the final response
@@ -267,11 +313,13 @@ where
             // Ensure event source is closed when stream ends
             event_source.close();
 
-            yield Ok(streaming::RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
-                usage_metadata: final_usage.unwrap_or_default(),
-                finish_reason: final_finish_reason,
-                model_version: final_model_version,
-            }));
+            if !terminal_protocol_error {
+                yield Ok(streaming::RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
+                    usage_metadata: final_usage.unwrap_or_default(),
+                    finish_reason: final_finish_reason,
+                    model_version: final_model_version,
+                }));
+            }
         }.instrument(span);
 
         Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
