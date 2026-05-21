@@ -11,7 +11,10 @@ use crate::{
     json_utils,
     memory::ConversationMemory,
     message::{AssistantContent, ToolChoice, ToolResultContent, UserContent},
-    tool::server::ToolServerHandle,
+    tool::{
+        ToolSetError,
+        server::{ToolServerError, ToolServerHandle},
+    },
     wasm_compat::{WasmBoxedFuture, WasmCompatSend},
 };
 use futures::{StreamExt, stream};
@@ -732,6 +735,17 @@ where
                             let output = match tool_server_handle.call_tool(tool_name, &args).await
                             {
                                 Ok(res) => res,
+                                Err(ToolServerError::ToolsetError(
+                                    ToolSetError::ToolNotFoundError(name),
+                                )) => {
+                                    tracing::warn!(
+                                        tool_name = name.as_str(),
+                                        "Model requested an unknown tool"
+                                    );
+                                    return Err(PromptError::ToolError(
+                                        ToolSetError::ToolNotFoundError(name),
+                                    ));
+                                }
                                 Err(e) => {
                                     tracing::warn!("Error while executing tool: {e}");
                                     e.to_string()
@@ -1015,8 +1029,10 @@ mod tests {
         },
         message::{Text, UserContent},
         test_utils::{
-            AppendFailingMemory, CountingMemory, FailingMemory, MockCompletionModel, MockTurn,
+            AppendFailingMemory, CountingMemory, FailingMemory, MockCompletionModel,
+            MockStringOutputTool, MockTurn,
         },
+        tool::ToolSetError,
     };
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -1229,12 +1245,12 @@ mod tests {
             reasoning_tokens: 0,
         };
         let model = MockCompletionModel::new([
-            MockTurn::tool_call("tool_call_1", "missing_tool", json!({"input": "value"}))
+            MockTurn::tool_call("tool_call_1", "string_output", json!({"input": "value"}))
                 .with_call_id("call_1")
                 .with_usage(first_call_usage),
             MockTurn::text("").with_usage(second_call_usage),
         ]);
-        let agent = AgentBuilder::new(model).build();
+        let agent = AgentBuilder::new(model).tool(MockStringOutputTool).build();
 
         let response = agent
             .prompt("do tool work")
@@ -1306,6 +1322,30 @@ mod tests {
         let requests = agent.model.requests();
         assert_eq!(requests.len(), 2);
         validate_follow_up_tool_history(&requests[1]);
+    }
+
+    #[tokio::test]
+    async fn prompt_request_fails_fast_on_unknown_tool_call() {
+        let model = MockCompletionModel::new([
+            MockTurn::tool_call("tool_call_1", "default_api", json!({"input": "value"}))
+                .with_call_id("call_1"),
+            MockTurn::text("should not be called"),
+        ]);
+        let recorded = model.clone();
+        let agent = AgentBuilder::new(model).tool(MockStringOutputTool).build();
+
+        let err = agent
+            .prompt("do tool work")
+            .max_turns(3)
+            .await
+            .expect_err("unknown tool should fail");
+
+        assert!(matches!(
+            err,
+            PromptError::ToolError(ToolSetError::ToolNotFoundError(name))
+                if name == "default_api"
+        ));
+        assert_eq!(recorded.requests().len(), 1);
     }
 
     #[tokio::test]

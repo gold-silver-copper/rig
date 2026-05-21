@@ -5,7 +5,7 @@ use rig::completion::CompletionModel;
 use rig::message::ToolChoice;
 use rig::providers::gemini;
 use rig::providers::gemini::completion::gemini_api_types::{
-    AdditionalParameters, GenerationConfig,
+    AdditionalParameters, GenerationConfig, ThinkingConfig, ThinkingLevel,
 };
 use rig::streaming::StreamingPrompt;
 
@@ -22,6 +22,39 @@ use crate::support::{
 fn streaming_tool_params() -> serde_json::Value {
     serde_json::to_value(AdditionalParameters::default().with_config(GenerationConfig::default()))
         .expect("Gemini additional params should serialize")
+}
+
+fn gemini_3_streaming_tool_params() -> serde_json::Value {
+    let config = GenerationConfig {
+        thinking_config: Some(ThinkingConfig {
+            thinking_budget: None,
+            thinking_level: Some(ThinkingLevel::Medium),
+            include_thoughts: Some(true),
+        }),
+        ..Default::default()
+    };
+
+    serde_json::to_value(AdditionalParameters::default().with_config(config))
+        .expect("Gemini 3 additional params should serialize")
+}
+
+fn assert_tool_call_signatures_present(observation: &crate::support::StreamObservation) {
+    assert!(
+        !observation.tool_call_records.is_empty(),
+        "expected at least one streamed tool call"
+    );
+
+    let missing_signatures = observation
+        .tool_call_records
+        .iter()
+        .filter(|record| record.signature.as_deref().is_none_or(str::is_empty))
+        .map(|record| record.name.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing_signatures.is_empty(),
+        "expected every Gemini 3 streamed tool call to carry a thought signature; missing for {missing_signatures:?}"
+    );
 }
 
 #[tokio::test]
@@ -123,6 +156,35 @@ async fn streaming_tools_emit_tool_call_before_later_text() {
                 "lookup_harbor_label",
                 &[ALPHA_SIGNAL_OUTPUT],
             );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn gemini_3_streaming_tool_roundtrip_preserves_thought_signatures() {
+    super::super::support::with_gemini_cassette(
+        "streaming_tools/gemini_3_streaming_tool_roundtrip_preserves_thought_signatures",
+        |client| async move {
+            let agent = client
+                .agent(gemini::completion::GEMINI_3_FLASH_PREVIEW)
+                .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
+                .tool(AlphaSignal)
+                .additional_params(gemini_3_streaming_tool_params())
+                .build();
+
+            let mut stream = agent
+                .stream_prompt(ORDERED_TOOL_STREAM_PROMPT)
+                .multi_turn(5)
+                .await;
+            let observation = collect_stream_observation(&mut stream).await;
+
+            assert_tool_call_precedes_later_text(
+                &observation,
+                "lookup_harbor_label",
+                &[ALPHA_SIGNAL_OUTPUT],
+            );
+            assert_tool_call_signatures_present(&observation);
         },
     )
     .await;

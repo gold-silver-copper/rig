@@ -7,7 +7,7 @@ use crate::{
     memory::ConversationMemory,
     message::{AssistantContent, ToolChoice, ToolResult, ToolResultContent, UserContent},
     streaming::{StreamedAssistantContent, StreamedUserContent},
-    tool::server::ToolServerHandle,
+    tool::server::{ToolServerError, ToolServerHandle},
     wasm_compat::{WasmBoxedFuture, WasmCompatSend},
 };
 use futures::{Stream, StreamExt};
@@ -707,6 +707,17 @@ where
                                 let tool_result = match
                                 tool_server_handle.call_tool(&tool_call.function.name, &tool_args).await {
                                     Ok(thing) => thing,
+                                    Err(ToolServerError::ToolsetError(
+                                        ToolSetError::ToolNotFoundError(name),
+                                    )) => {
+                                        tracing::warn!(
+                                            tool_name = name.as_str(),
+                                            "Model requested an unknown tool"
+                                        );
+                                        return Err(StreamingError::Tool(
+                                            ToolSetError::ToolNotFoundError(name),
+                                        ));
+                                    }
                                     Err(e) => {
                                         tracing::warn!("Error while calling tool: {e}");
                                         e.to_string()
@@ -989,6 +1000,7 @@ mod tests {
     use crate::streaming::{StreamingPrompt, ToolCallDeltaContent};
     use crate::test_utils::{
         AppendFailingMemory, FailingMemory, MockCompletionModel, MockResponse, MockStreamEvent,
+        MockStringOutputTool,
     };
     use futures::StreamExt;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -1216,7 +1228,7 @@ mod tests {
             vec![
                 MockStreamEvent::tool_call(
                     "tool_call_1",
-                    "missing_tool",
+                    "string_output",
                     serde_json::json!({"input": "value"}),
                 )
                 .with_call_id("call_1"),
@@ -1360,7 +1372,7 @@ mod tests {
                 MockStreamEvent::text("I need a tool. "),
                 MockStreamEvent::tool_call(
                     "tool_call_1",
-                    "missing_tool",
+                    "string_output",
                     serde_json::json!({"input": "value"}),
                 )
                 .with_call_id("call_1"),
@@ -1485,7 +1497,7 @@ mod tests {
     async fn stream_prompt_continues_after_tool_call_turn() {
         let model = streaming_tool_then_text_model();
         let recorded = model.clone();
-        let agent = AgentBuilder::new(model).build();
+        let agent = AgentBuilder::new(model).tool(MockStringOutputTool).build();
         let empty_history: &[Message] = &[];
 
         let mut stream = agent
@@ -1545,6 +1557,65 @@ mod tests {
         let requests = recorded.requests();
         assert_eq!(requests.len(), 2);
         assert!(validate_follow_up_tool_history(&requests[1]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn stream_prompt_fails_fast_on_unknown_tool_call() {
+        let model = MockCompletionModel::from_stream_turns([
+            vec![
+                MockStreamEvent::tool_call(
+                    "tool_call_1",
+                    "default_api",
+                    serde_json::json!({"input": "value"}),
+                )
+                .with_call_id("call_1"),
+                MockStreamEvent::final_response_with_total_tokens(4),
+            ],
+            vec![
+                MockStreamEvent::text("should not be called"),
+                MockStreamEvent::final_response_with_total_tokens(6),
+            ],
+        ]);
+        let recorded = model.clone();
+        let agent = AgentBuilder::new(model).tool(MockStringOutputTool).build();
+        let empty_history: &[Message] = &[];
+
+        let mut stream = agent
+            .stream_prompt("do tool work")
+            .with_history(empty_history)
+            .multi_turn(3)
+            .await;
+        let mut saw_tool_result = false;
+        let mut saw_final_response = false;
+        let mut error_message = None;
+
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult {
+                    ..
+                })) => {
+                    saw_tool_result = true;
+                }
+                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                    saw_final_response = true;
+                }
+                Err(err) => {
+                    error_message = Some(err.to_string());
+                    break;
+                }
+                Ok(_) => {}
+            }
+        }
+
+        assert!(!saw_tool_result);
+        assert!(!saw_final_response);
+        assert!(
+            error_message
+                .as_deref()
+                .is_some_and(|message| message.contains("ToolNotFoundError: default_api")),
+            "expected unknown-tool error, got {error_message:?}"
+        );
+        assert_eq!(recorded.requests().len(), 1);
     }
 
     #[tokio::test]
@@ -1741,7 +1812,7 @@ mod tests {
             vec![
                 MockStreamEvent::tool_call(
                     "tool_call_1",
-                    "missing_tool",
+                    "string_output",
                     serde_json::json!({"input": "value"}),
                 )
                 .with_call_id("call_1"),
@@ -1752,7 +1823,7 @@ mod tests {
                 MockStreamEvent::final_response(second_call_usage),
             ],
         ]);
-        let agent = AgentBuilder::new(model).build();
+        let agent = AgentBuilder::new(model).tool(MockStringOutputTool).build();
         let empty_history: &[Message] = &[];
 
         let mut stream = agent
@@ -1852,7 +1923,7 @@ mod tests {
             vec![
                 MockStreamEvent::tool_call(
                     "tool_call_1",
-                    "missing_tool",
+                    "string_output",
                     serde_json::json!({"input": "value"}),
                 )
                 .with_call_id("call_1"),
@@ -1862,7 +1933,7 @@ mod tests {
                 MockStreamEvent::final_response(second_call_usage),
             ],
         ]);
-        let agent = AgentBuilder::new(model).build();
+        let agent = AgentBuilder::new(model).tool(MockStringOutputTool).build();
         let empty_history: &[Message] = &[];
 
         let mut stream = agent
@@ -1996,7 +2067,7 @@ mod tests {
     async fn tool_follow_up_history_preserves_structured_text_metadata() {
         let model = streaming_cited_text_then_tool_model();
         let recorded = model.clone();
-        let agent = AgentBuilder::new(model).build();
+        let agent = AgentBuilder::new(model).tool(MockStringOutputTool).build();
         let empty_history: &[Message] = &[];
 
         let mut stream = agent
