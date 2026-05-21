@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * @mateobelanger
 * @gold-silver-copper
+## [0.2.7](https://github.com/gold-silver-copper/rig/compare/rig-gemini-grpc-v0.2.6...rig-gemini-grpc-v0.2.7) - 2026-05-21
+
+### Added
+
+- *(anthropic)* support document citations ([#1778](https://github.com/gold-silver-copper/rig/pull/1778)) (by @temrjan)
+
+### Contributors
+
+* @temrjan
 
 ## [0.2.5](https://github.com/0xPlaygrounds/rig/compare/rig-gemini-grpc-v0.2.4...rig-gemini-grpc-v0.2.5) - 2026-04-28
 
