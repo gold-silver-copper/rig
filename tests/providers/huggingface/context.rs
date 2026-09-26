@@ -12,9 +12,7 @@ async fn context_smoke() {
         .iter()
         .copied()
         .fold(
-            rig::AgentBuilder::new(rig::model(
-                provider.completion("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"),
-            )),
+            rig::agent(provider.completion("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B")),
             rig::AgentBuilder::context,
         )
         .build();

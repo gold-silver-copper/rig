@@ -276,7 +276,7 @@ async fn cache_prompt_false_turns_the_cache_off_for_that_turn_only() {
 #[tokio::test]
 async fn agent_loop_does_not_move_its_own_prefix() {
     with_llamacpp_prompt_caching_cassette("prompt_caching/agent_loop", |client| async move {
-        let response = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+        let response = rig::agent(client.completion(CASSETTE_MODEL))
             .preamble(&probe_for("llamacpp agent loop").preamble)
             .tool(CacheProbeLookupTool)
             .temperature(0.0)

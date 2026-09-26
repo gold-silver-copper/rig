@@ -238,7 +238,7 @@ async fn run_model(client: OpenAI, cell: Cell) -> Observation {
 
 async fn run_agent(client: OpenAI, cell: Cell) -> Observation {
     let invocations = Arc::new(AtomicUsize::new(0));
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(model_name(cell.model))))
+    let agent = rig::agent(client.completion(model_name(cell.model)))
         .preamble(PREAMBLE)
         .tool(FileReport {
             invocations: Arc::clone(&invocations),

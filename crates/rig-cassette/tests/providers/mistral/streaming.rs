@@ -12,7 +12,7 @@ use super::DEFAULT_MODEL;
 #[ignore = "requires MISTRAL_API_KEY"]
 async fn streaming_smoke() {
     let client = OpenAI::from_env_with(&MISTRAL).expect("MISTRAL_API_KEY should be set");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(DEFAULT_MODEL)))
+    let agent = rig::agent(client.completion(DEFAULT_MODEL))
         .preamble(STREAMING_PREAMBLE)
         .build();
 
@@ -28,7 +28,7 @@ async fn streaming_smoke() {
 #[ignore = "requires MISTRAL_API_KEY"]
 async fn example_streaming_prompt() {
     let client = OpenAI::from_env_with(&MISTRAL).expect("MISTRAL_API_KEY should be set");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(DEFAULT_MODEL)))
+    let agent = rig::agent(client.completion(DEFAULT_MODEL))
         .preamble("Be precise and concise.")
         .temperature(0.5)
         .build();

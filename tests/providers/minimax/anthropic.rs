@@ -8,11 +8,11 @@ use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 #[tokio::test]
 #[ignore = "requires MINIMAX_API_KEY"]
 async fn anthropic_compatible_completion_smoke() {
-    let response = rig::AgentBuilder::new(rig::model(
+    let response = rig::agent(
         Anthropic::from_env_with(&anthropic_wire::MINIMAX)
             .expect("MINIMAX_API_KEY should be set")
             .completion(minimax::MINIMAX_M2),
-    ))
+    )
     .preamble(BASIC_PREAMBLE)
     .build()
     .prompt(BASIC_PROMPT)

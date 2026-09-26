@@ -155,11 +155,11 @@ impl AgentHook for PermissionHook {
 async fn permission_control_prompt_example() -> Result<()> {
     let _cleanup = FileCleanup::new()?;
 
-    let agent = rig::AgentBuilder::new(rig::model(
+    let agent = rig::agent(
         OpenAI::from_env_with(&MISTRAL)
             .expect("MISTRAL_API_KEY should be set")
             .completion(TOOL_MODEL),
-    ))
+    )
     .preamble("You are a helpful assistant that can read files using different methods.")
     .tool(ReadFileHead)
     .tool(ReadFileTail)
@@ -193,11 +193,11 @@ async fn permission_control_prompt_example() -> Result<()> {
 async fn permission_control_streaming_example() -> Result<()> {
     let _cleanup = FileCleanup::new()?;
 
-    let agent = rig::AgentBuilder::new(rig::model(
+    let agent = rig::agent(
         OpenAI::from_env_with(&MISTRAL)
             .expect("MISTRAL_API_KEY should be set")
             .completion(TOOL_MODEL),
-    ))
+    )
     .preamble("You are a helpful assistant that can read files using different methods.")
     .tool(ReadFileHead)
     .tool(ReadFileTail)

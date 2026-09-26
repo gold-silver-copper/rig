@@ -1,6 +1,5 @@
 use anyhow::Result;
 use rig::integrations::cli_chatbot::ChatBotBuilder;
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 use rig::{
     embeddings::EmbeddingsBuilder,
@@ -265,7 +264,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let index = vector_store.index(embedding_model);
 
     // Create RAG agent with a single context prompt and a dynamic tool source
-    let calculator_rag = AgentBuilder::new(rig::model(openai_client.completion(openai::GPT_4)))
+    let calculator_rag = rig::agent(openai_client.completion(openai::GPT_4))
         .preamble(
             "You are an assistant here to help the user select which tool is most appropriate to perform arithmetic operations.
             Follow these instructions closely.

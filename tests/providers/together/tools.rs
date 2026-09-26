@@ -11,13 +11,11 @@ use crate::support::{
 #[ignore = "requires TOGETHER_API_KEY"]
 async fn tools_smoke() {
     let provider = OpenAI::from_env_with(&TOGETHER).expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(
-        provider.completion(together::MIXTRAL_8X7B_INSTRUCT_V0_1),
-    ))
-    .preamble(TOOLS_PREAMBLE)
-    .tool(Adder)
-    .tool(Subtract)
-    .build();
+    let agent = rig::agent(provider.completion(together::MIXTRAL_8X7B_INSTRUCT_V0_1))
+        .preamble(TOOLS_PREAMBLE)
+        .tool(Adder)
+        .tool(Subtract)
+        .build();
 
     let response = agent
         .prompt(TOOLS_PROMPT)

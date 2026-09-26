@@ -10,7 +10,7 @@ use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 async fn completion_smoke() {
     let client =
         OpenAI::from_env_with(&openai_wire::MOONSHOT).expect("MOONSHOT_API_KEY should be set");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(moonshot::KIMI_K3)))
+    let agent = rig::agent(client.completion(moonshot::KIMI_K3))
         .preamble(BASIC_PREAMBLE)
         .temperature(0.5)
         .max_tokens(1024)

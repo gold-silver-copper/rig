@@ -282,7 +282,7 @@ async fn chat_blocking_agent_reports_the_truncation() {
     with_openai_truncation_cassette(
         "truncated_turn_matrix/chat_blocking_agent_reports_the_truncation",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion("gpt-5-nano")))
+            let agent = rig::agent(client.chat.completion("gpt-5-nano"))
                 .max_tokens(TINY_CAP)
                 .build();
 

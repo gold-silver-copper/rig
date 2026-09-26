@@ -27,7 +27,6 @@ use rig::agent::{
 };
 use rig::completion::{Document, Message};
 use rig::message::UserContent;
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 
 // ---------------------------------------------------------------------------
@@ -150,7 +149,7 @@ impl AgentHook for TurnCounterHook {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let agent = AgentBuilder::new(rig::model(OpenAI::from_env()?.completion(openai::GPT_4O)))
+    let agent = rig::agent(OpenAI::from_env()?.completion(openai::GPT_4O))
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .build();
 

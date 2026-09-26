@@ -9,11 +9,11 @@ use crate::support::{
 #[tokio::test]
 #[ignore = "requires a local Ollama server"]
 async fn example_streaming_with_tools() {
-    let agent = rig::AgentBuilder::new(rig::model(
+    let agent = rig::agent(
         Ollama::from_env()
             .expect("config should build from env")
             .completion("llama3.2"),
-    ))
+    )
     .preamble(
         "You are a calculator here to help the user perform arithmetic operations. \
              Use the tools provided to answer the user's question.",

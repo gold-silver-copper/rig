@@ -17,7 +17,7 @@ async fn test_azure_structured_output() -> anyhow::Result<()> {
     }
 
     let azure = OpenAI::from_env_with(&AZURE)?;
-    let agent = rig::AgentBuilder::new(rig::model(azure.completion(GPT_5_MINI)))
+    let agent = rig::agent(azure.completion(GPT_5_MINI))
         .preamble("You are a helpful assistant that extracts personal details.")
         .max_tokens(100)
         .output_schema::<Person>()

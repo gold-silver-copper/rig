@@ -8,7 +8,6 @@
 use std::sync::Arc;
 
 use rig::{
-    prelude::*,
     providers::openai::{self, OpenAI},
     tool::{rmcp::McpClientHandler, server::ToolServer},
 };
@@ -262,7 +261,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Connected to server: {server_info:#?}");
 
     let openai_client = OpenAI::from_env()?;
-    let agent = AgentBuilder::new(rig::model(openai_client.completion(openai::GPT_4O)))
+    let agent = rig::agent(openai_client.completion(openai::GPT_4O))
         .preamble("You are a helpful assistant who has access to a number of tools from an MCP server designed to be used for incrementing and decrementing a counter.")
         .tool_server_handle(tool_server_handle)
         .build();

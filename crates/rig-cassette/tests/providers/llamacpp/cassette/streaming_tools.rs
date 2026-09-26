@@ -33,7 +33,7 @@ async fn streaming_tools_smoke() {
     with_llamacpp_cassette(
         "streaming_tools/streaming_tools_smoke",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+            let agent = rig::agent(client.completion(CASSETTE_MODEL))
                 .preamble(STREAMING_TOOLS_PREAMBLE)
                 .tool(Adder)
                 .tool(Subtract)
@@ -55,7 +55,7 @@ async fn streaming_tools_smoke() {
 async fn example_streaming_with_tools() {
     with_llamacpp_cassette("streaming_tools/example_streaming_with_tools", |client| async move {
 
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+        let agent = rig::agent(client.completion(CASSETTE_MODEL))
             .preamble(
                 "You are a calculator here to help the user perform arithmetic operations. \
                  Use the tools provided to answer the user's question and answer in a full sentence.",
@@ -124,7 +124,7 @@ async fn streaming_tools_surface_two_distinct_tool_calls_before_final_answer() {
     with_llamacpp_cassette(
         "streaming_tools/streaming_tools_surface_two_distinct_tool_calls_before_final_answer",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+            let agent = rig::agent(client.completion(CASSETTE_MODEL))
                 .preamble(TWO_TOOL_STREAM_PREAMBLE)
                 .tool(AlphaSignal)
                 .tool(BetaSignal)
@@ -148,7 +148,7 @@ async fn streaming_tools_emit_tool_call_before_later_text() {
     with_llamacpp_cassette(
         "streaming_tools/streaming_tools_emit_tool_call_before_later_text",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+            let agent = rig::agent(client.completion(CASSETTE_MODEL))
                 .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
                 .tool(AlphaSignal)
                 .build();

@@ -3,7 +3,6 @@
 //! Run it to see the model use arithmetic tools instead of answering from scratch.
 
 use anyhow::Result;
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 use rig::tool::{DynamicTool, ToolOutput};
 use serde::Deserialize;
@@ -48,7 +47,7 @@ fn runtime_tools() -> Vec<DynamicTool> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let agent = AgentBuilder::new(rig::model(OpenAI::from_env()?.completion(openai::GPT_4O)))
+    let agent = rig::agent(OpenAI::from_env()?.completion(openai::GPT_4O))
         .preamble(
             "You are a calculator here to help the user perform arithmetic operations. \
              You must use the provided tools before answering.",

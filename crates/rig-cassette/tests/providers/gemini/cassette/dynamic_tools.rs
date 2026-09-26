@@ -58,15 +58,13 @@ async fn dynamic_tool_retrieved_and_merged_with_static() {
                 .expect("the tool context serializes");
             let index = build_tool_index(&client, &toolset).await;
 
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble(FORCE_TOOLS_PREAMBLE)
-            .temperature(0.0)
-            .tool(add)
-            .retrieved_tools(1, index, toolset)
-            .default_max_turns(3)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble(FORCE_TOOLS_PREAMBLE)
+                .temperature(0.0)
+                .tool(add)
+                .retrieved_tools(1, index, toolset)
+                .default_max_turns(3)
+                .build();
 
             let mut history = Vec::<Message>::new();
             let response = agent
@@ -106,14 +104,12 @@ async fn dynamic_only_agent_retrieves_tool_per_prompt() {
                 .expect("the tool context serializes");
             let index = build_tool_index(&client, &toolset).await;
 
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble(FORCE_TOOLS_PREAMBLE)
-            .temperature(0.0)
-            .retrieved_tools(1, index, toolset)
-            .default_max_turns(3)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble(FORCE_TOOLS_PREAMBLE)
+                .temperature(0.0)
+                .retrieved_tools(1, index, toolset)
+                .default_max_turns(3)
+                .build();
 
             let mut history = Vec::<Message>::new();
             let response = agent
@@ -151,13 +147,11 @@ async fn sample_caps_retrieved_definitions() {
                 .expect("the tool context serializes");
             let index = build_tool_index(&client, &toolset).await;
 
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble(FORCE_TOOLS_PREAMBLE)
-            .temperature(0.0)
-            .retrieved_tools(2, index, toolset)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble(FORCE_TOOLS_PREAMBLE)
+                .temperature(0.0)
+                .retrieved_tools(2, index, toolset)
+                .build();
 
             let defs = agent
                 .tool_definitions(Some(

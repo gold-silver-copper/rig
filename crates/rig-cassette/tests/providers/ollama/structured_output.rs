@@ -18,7 +18,7 @@ struct Character {
 #[ignore = "requires a local Ollama server"]
 async fn structured_output_prompt() {
     let ollama = Ollama::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(ollama.completion("qwen3:4b")))
+    let agent = rig::agent(ollama.completion("qwen3:4b"))
         .preamble("You are a creative fiction writer. Create detailed characters.")
         .output_schema::<Character>()
         .build();

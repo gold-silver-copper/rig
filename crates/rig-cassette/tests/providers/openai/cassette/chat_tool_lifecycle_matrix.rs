@@ -312,9 +312,9 @@ async fn run_model(client: OpenAiCassette, cell: Cell) -> Observation {
 
 async fn run_agent(client: OpenAiCassette, cell: Cell) -> Observation {
     let invocations = InvocationLog::default();
-    let builder = rig::AgentBuilder::new(rig::model(
+    let builder = rig::agent(
         client.chat.completion(model_name(cell.model)),
-    ))
+    )
     .preamble(PREAMBLE)
     .additional_params(
         json!({ "tool_choice": "required", "parallel_tool_calls": cell.shape == Shape::Parallel }),

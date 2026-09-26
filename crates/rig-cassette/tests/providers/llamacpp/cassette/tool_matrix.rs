@@ -221,7 +221,7 @@ async fn a_one_argument_tool_round_trips_its_value() {
     let observed = Arc::clone(&seen);
 
     with_llamacpp_competent_cassette("tool_matrix/one_argument_tool", move |client| async move {
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+        let agent = rig::agent(client.completion(CASSETTE_MODEL))
             .preamble("Use the population tool to answer. Report the number it returns verbatim.")
             .tool(Population { seen: observed })
             .max_tokens(512)
@@ -386,7 +386,7 @@ async fn a_tool_that_errors_reports_the_error_back_to_the_model() {
     let calls = Arc::clone(&vault.calls);
 
     with_llamacpp_competent_cassette("tool_matrix/tool_that_errors", move |client| async move {
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+        let agent = rig::agent(client.completion(CASSETTE_MODEL))
             .preamble(
                 "Use the open_vault tool when asked to open the vault. If it fails, \
                  tell the user it failed and why.",

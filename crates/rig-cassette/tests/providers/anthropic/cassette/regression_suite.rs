@@ -28,12 +28,10 @@ use crate::support::{
 #[tokio::test]
 async fn max_tokens_truncation_surfaces_as_length() {
     with_anthropic_cassette("regression/stop_reason_max_tokens", |client| async move {
-        let agent = rig::AgentBuilder::new(rig::model(
-            client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-        ))
-        .preamble(STREAMING_PREAMBLE)
-        .max_tokens(8)
-        .build();
+        let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+            .preamble(STREAMING_PREAMBLE)
+            .max_tokens(8)
+            .build();
 
         let mut stream = agent
             .prompt("Write a detailed five paragraph essay about the ocean.")
@@ -60,12 +58,10 @@ async fn max_tokens_truncation_surfaces_as_length() {
 #[tokio::test]
 async fn natural_stop_surfaces_as_stop() {
     with_anthropic_cassette("regression/stop_reason_end_turn", |client| async move {
-        let agent = rig::AgentBuilder::new(rig::model(
-            client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-        ))
-        .preamble(STREAMING_PREAMBLE)
-        .max_tokens(512)
-        .build();
+        let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+            .preamble(STREAMING_PREAMBLE)
+            .max_tokens(512)
+            .build();
 
         let mut stream = agent.prompt(STREAMING_PROMPT).stream();
         let (_response, provider_final): (_, rig::streaming::StreamFinal) =

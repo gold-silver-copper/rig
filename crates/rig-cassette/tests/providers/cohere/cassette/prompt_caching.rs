@@ -115,7 +115,7 @@ async fn agent_loop_does_not_move_its_own_prefix() {
     const SCENARIO: &str = "prompt_caching/agent_loop";
 
     with_cohere_prompt_caching_cassette("prompt_caching/agent_loop", |client| async move {
-        let response = rig::AgentBuilder::new(rig::model(client.completion(CACHE_MODEL)))
+        let response = rig::agent(client.completion(CACHE_MODEL))
             .preamble(&probe().preamble)
             .tool(CacheProbeLookupTool)
             .temperature(0.0)

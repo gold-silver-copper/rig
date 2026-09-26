@@ -13,9 +13,7 @@ async fn context_smoke() {
         .iter()
         .copied()
         .fold(
-            rig::AgentBuilder::new(rig::model(
-                provider.completion(together::MIXTRAL_8X7B_INSTRUCT_V0_1),
-            )),
+            rig::agent(provider.completion(together::MIXTRAL_8X7B_INSTRUCT_V0_1)),
             rig::AgentBuilder::context,
         )
         .build();

@@ -107,7 +107,7 @@ async fn remembers(
     prompts: &[&str],
     streamed: bool,
 ) -> rig::cassette::effect_log::EffectLog {
-    let builder = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+    let builder = rig::agent(client.completion(CLAUDE_SONNET_4_6))
         .name("golden")
         .preamble(BASIC_PREAMBLE)
         .temperature(0.0)
@@ -232,7 +232,7 @@ async fn clear_at_start_two_runs_effect_log_is_the_golden_fixture() {
 async fn history_bypass_effect_log_is_the_golden_fixture() {
     with_anthropic_corpus_memory_cassette("corpus_memory/history_bypass", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+        let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
             .name("golden")
             .preamble(BASIC_PREAMBLE)
             .temperature(0.0)
@@ -310,7 +310,7 @@ async fn host_bus_memory_effect_log_is_the_golden_fixture() {
 async fn serial_two_tools_effect_log_is_the_golden_fixture() {
     with_anthropic_corpus_memory_cassette("corpus_memory/serial_two_tools", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+        let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
             .name("golden")
             .configure_bus(ServingPolicy {
                 serial_per_handler: true,
@@ -353,7 +353,7 @@ async fn serial_two_tools_effect_log_is_the_golden_fixture() {
 /// An `Append` that fails: the record holds the error and the run ends
 /// in its answer regardless.
 async fn append_fails(client: Anthropic, streamed: bool) -> rig::cassette::effect_log::EffectLog {
-    let builder = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+    let builder = rig::agent(client.completion(CLAUDE_SONNET_4_6))
         .name("golden")
         .preamble(BASIC_PREAMBLE)
         .temperature(0.0)

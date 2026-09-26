@@ -61,7 +61,7 @@ async fn chat_completions_agent_prompt_completes() {
     with_mistralrs_completions_cassette(
         "chat_completions/chat_completions_agent_prompt_completes",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(model_name())))
+            let agent = rig::agent(client.completion(model_name()))
                 .preamble(SYSTEM_PROMPT)
                 .max_tokens(128)
                 .build();

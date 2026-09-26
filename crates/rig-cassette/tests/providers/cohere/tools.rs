@@ -10,7 +10,7 @@ use crate::support::{
 #[ignore = "requires COHERE_API_KEY"]
 async fn tools_smoke() {
     let cohere = Cohere::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(cohere.completion(cohere::COMMAND_A_03_2025)))
+    let agent = rig::agent(cohere.completion(cohere::COMMAND_A_03_2025))
         .preamble(TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)

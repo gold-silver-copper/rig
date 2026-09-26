@@ -397,7 +397,7 @@ async fn agent_blocking_reasoner_roundtrip_keeps_reasoning_first_in_history() {
         "reasoning_block_order/agent_blocking_reasoner_roundtrip_keeps_reasoning_first_in_history",
         |client| async move {
             let call_count = Arc::new(AtomicUsize::new(0));
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(MODEL)))
+            let agent = rig::agent(client.completion(MODEL))
                 .preamble(reasoning::TOOL_SYSTEM_PROMPT)
                 .tool(WeatherTool::new(call_count.clone()))
                 .additional_params(thinking_params())
@@ -445,7 +445,7 @@ async fn agent_streaming_reasoner_roundtrip_streams_reasoning_first() {
         "reasoning_block_order/agent_streaming_reasoner_roundtrip_streams_reasoning_first",
         |client| async move {
             let call_count = Arc::new(AtomicUsize::new(0));
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(MODEL)))
+            let agent = rig::agent(client.completion(MODEL))
                 .preamble(reasoning::TOOL_SYSTEM_PROMPT)
                 .tool(WeatherTool::new(call_count.clone()))
                 .additional_params(thinking_params())

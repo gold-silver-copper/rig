@@ -12,7 +12,7 @@ use rig::completion::CompletionRequestBuilder;
 #[tokio::test]
 async fn tool_call_roundtrip() {
     with_cohere_cassette("tools/tool_call_roundtrip", |client| async move {
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+        let agent = rig::agent(client.completion(CASSETTE_MODEL))
             .preamble(TOOLS_PREAMBLE)
             .tool(IntegerAdder)
             .tool(IntegerSubtract)

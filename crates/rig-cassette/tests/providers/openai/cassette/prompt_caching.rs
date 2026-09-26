@@ -260,7 +260,7 @@ async fn chat_completions_agent_loop_keeps_hitting_across_tool_turns() {
     with_openai_completions_prompt_caching_cassette(
         "prompt_caching/chat_completions_agent_loop",
         |client| async move {
-            let response = rig::AgentBuilder::new(rig::model(client.completion(CACHE_MODEL)))
+            let response = rig::agent(client.completion(CACHE_MODEL))
                 .preamble(&probe().preamble)
                 .tool(CacheProbeLookupTool)
                 .temperature(0.0)
@@ -294,19 +294,18 @@ async fn responses_agent_loop_keeps_hitting_across_tool_turns() {
     with_openai_prompt_caching_cassette(
         "prompt_caching/responses_agent_loop",
         |client| async move {
-            let response =
-                rig::AgentBuilder::new(rig::model(client.openai.completion(CACHE_MODEL)))
-                    .preamble(&probe().preamble)
-                    .tool(CacheProbeLookupTool)
-                    .temperature(0.0)
-                    .additional_params(json!({
-                        "prompt_cache_key": "rig-cache-conformance-openai-agent",
-                    }))
-                    .build()
-                    .prompt(AGENT_CACHE_PROMPT)
-                    .max_turns(6)
-                    .await
-                    .expect("openai responses agent cache probe should complete");
+            let response = rig::agent(client.openai.completion(CACHE_MODEL))
+                .preamble(&probe().preamble)
+                .tool(CacheProbeLookupTool)
+                .temperature(0.0)
+                .additional_params(json!({
+                    "prompt_cache_key": "rig-cache-conformance-openai-agent",
+                }))
+                .build()
+                .prompt(AGENT_CACHE_PROMPT)
+                .max_turns(6)
+                .await
+                .expect("openai responses agent cache probe should complete");
 
             let observation = observation_from_completion_calls(response.completion_calls());
             assert_agent_growth_still_hits(

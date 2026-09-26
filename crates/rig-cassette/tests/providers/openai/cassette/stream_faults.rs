@@ -83,7 +83,7 @@ async fn setup_failure_fails_the_run_with_the_recorded_status() {
         "error_envelope/nonexistent_model_streaming_error_preserves_status_and_body",
         |client| async move {
             let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-            let agent = rig::AgentBuilder::new(rig::model(client.openai.completion(MISSING_MODEL)))
+            let agent = rig::agent(client.openai.completion(MISSING_MODEL))
                 .max_tokens(SETUP_MAX_TOKENS)
                 .record_to(recorder.clone())
                 .build();
@@ -240,7 +240,7 @@ async fn error_event_after_content_fails_with_the_provider_error() {
 async fn dropping_the_stream_at_the_first_delta_records_a_cancel() {
     with_openai_cassette("streaming/streaming_smoke", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-        let agent = rig::AgentBuilder::new(rig::model(client.openai.completion(GPT_4O)))
+        let agent = rig::agent(client.openai.completion(GPT_4O))
             .preamble(STREAMING_PREAMBLE)
             .record_to(recorder.clone())
             .build();

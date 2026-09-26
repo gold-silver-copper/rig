@@ -186,7 +186,7 @@ async fn unicode_split_across_stream_chunks_reassembles() {
     with_llamacpp_cassette(
         "content_matrix/unicode_across_chunks",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+            let agent = rig::agent(client.completion(CASSETTE_MODEL))
                 .preamble(
                     "Reply with exactly the text you are asked for and nothing else. \
                  No explanation, no quotes.",

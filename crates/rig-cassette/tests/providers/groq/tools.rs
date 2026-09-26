@@ -10,8 +10,8 @@ use super::TOOLS_MODEL;
 #[ignore = "requires GROQ_API_KEY"]
 async fn tools_smoke() {
     let groq = OpenAI::from_env_with(&GROQ).expect("GROQ_API_KEY should be set");
-    let agent = rig::AgentBuilder::new(rig::model(groq
-        .completion(TOOLS_MODEL)))
+    let agent = rig::agent(groq
+        .completion(TOOLS_MODEL))
         .preamble(
             "You are a calculator. For arithmetic requests, call the appropriate tool exactly once. \
              After you receive the tool result, do not call any more tools and reply with the final numeric answer only.",

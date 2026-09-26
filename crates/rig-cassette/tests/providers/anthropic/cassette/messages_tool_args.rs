@@ -216,14 +216,12 @@ async fn nested_arguments_roundtrip_nonstreaming() {
     with_anthropic_cassette(
         "messages_tool_args/nested_arguments_roundtrip_nonstreaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-            ))
-            .preamble(NESTED_ARGS_PREAMBLE)
-            .max_tokens(2048)
-            .tool(PlanTrip)
-            .default_max_turns(4)
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+                .preamble(NESTED_ARGS_PREAMBLE)
+                .max_tokens(2048)
+                .tool(PlanTrip)
+                .default_max_turns(4)
+                .build();
             let mut history = Vec::<Message>::new();
 
             let result = agent

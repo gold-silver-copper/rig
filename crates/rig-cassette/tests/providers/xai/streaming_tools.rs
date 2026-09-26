@@ -82,7 +82,7 @@ async fn responses_stream_preserves_tool_result_flow() {
     with_xai_cassette(
         "streaming_tools/responses_stream_preserves_tool_result_flow",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(xai::GROK_4)))
+            let agent = rig::agent(client.completion(xai::GROK_4))
                 .preamble(XAI_STATUS_TOOL_PREAMBLE)
                 .tool(StatusWordTool)
                 .build();

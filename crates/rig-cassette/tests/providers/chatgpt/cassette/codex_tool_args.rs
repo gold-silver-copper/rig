@@ -214,7 +214,7 @@ async fn nested_arguments_roundtrip_nonstreaming() {
     with_chatgpt_cassette(
         "codex_tool_args/nested_arguments_roundtrip_nonstreaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(chatgpt::GPT_5_4)))
+            let agent = rig::agent(client.completion(chatgpt::GPT_5_4))
                 .preamble(NESTED_ARGS_PREAMBLE)
                 .tool(PlanTrip)
                 .default_max_turns(4)

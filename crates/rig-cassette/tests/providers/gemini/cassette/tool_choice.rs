@@ -157,15 +157,13 @@ async fn none_streaming_does_not_emit_tool_calls() {
     super::super::support::with_gemini_cassette(
         "tool_choice/none_streaming_no_tools",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble("You are a deterministic calculator test. Answer directly in text.")
-            .temperature(0.0)
-            .tool(Adder)
-            .tool(Subtract)
-            .tool_choice(ToolChoice::None)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble("You are a deterministic calculator test. Answer directly in text.")
+                .temperature(0.0)
+                .tool(Adder)
+                .tool(Subtract)
+                .tool_choice(ToolChoice::None)
+                .build();
 
             let mut stream = agent
                 .prompt("Calculate 20 + 22 directly in text. Do not call tools.")
@@ -204,15 +202,13 @@ async fn none_nonstreaming_does_not_emit_tool_calls() {
     super::super::support::with_gemini_cassette(
         "tool_choice/none_nonstreaming_no_tools",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble("You are a deterministic calculator test. Answer directly in text.")
-            .temperature(0.0)
-            .tool(Adder)
-            .tool(Subtract)
-            .tool_choice(ToolChoice::None)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble("You are a deterministic calculator test. Answer directly in text.")
+                .temperature(0.0)
+                .tool(Adder)
+                .tool(Subtract)
+                .tool_choice(ToolChoice::None)
+                .build();
 
             let mut chat_history = Vec::<Message>::new();
             let response = agent

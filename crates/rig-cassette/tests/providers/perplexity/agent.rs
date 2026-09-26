@@ -9,7 +9,7 @@ use crate::support::assert_nonempty_response;
 #[ignore = "requires PERPLEXITY_API_KEY"]
 async fn completion_smoke() {
     let perplexity = OpenAI::from_env_with(&PERPLEXITY).expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(perplexity.completion(SONAR)))
+    let agent = rig::agent(perplexity.completion(SONAR))
         .preamble("Be precise and concise.")
         .temperature(0.5)
         .additional_params(serde_json::json!({

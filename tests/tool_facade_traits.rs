@@ -109,7 +109,7 @@ fn portable_contract_paths_resolve() {
     assert_portable_facade::<PortableAdder>();
 }
 
-/// A single `use rig::prelude::*` provides `model`, `Model` and
+/// A single `use rig::prelude::*` provides `model`, `agent`, `Model` and
 /// `AgentBuilder`: a provider's wire on the default transport, and an agent
 /// over it.
 #[test]
@@ -123,8 +123,9 @@ fn completion_client_single_import_surface() {
         &rig::providers::openai::wire::OPENAI,
         "test-key",
     );
-    let _model: Model<_> = model(openai.completion("gpt-4o"));
-    let _agent = AgentBuilder::new(model(openai.completion("gpt-4o"))).build();
+    let typed: Model<_> = model(openai.completion("gpt-4o"));
+    let _general = AgentBuilder::new(typed).build();
+    let _agent = agent(openai.completion("gpt-4o")).build();
 }
 
 /// The same surface is reachable through explicit imports, without the
@@ -144,8 +145,9 @@ fn completion_provider_explicit_facade_import_surface() {
         &rig::providers::openai::wire::OPENAI,
         "test-key",
     );
-    let _model: Model<_> = rig::model(openai.completion("gpt-4o"));
-    let _agent = AgentBuilder::new(rig::model(openai.completion("gpt-4o"))).build();
+    let typed: Model<_> = rig::model(openai.completion("gpt-4o"));
+    let _general = AgentBuilder::new(typed).build();
+    let _agent = rig::agent(openai.completion("gpt-4o")).build();
     let _extractor =
         ExtractorBuilder::<Extracted>::new(rig::model(openai.completion("gpt-4o"))).build();
 }

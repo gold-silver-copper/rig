@@ -36,7 +36,7 @@ async fn api_key_completion_smoke() {
         .await
         .expect("api key auth should succeed");
 
-    let response = rig::AgentBuilder::new(rig::model(client.completion(LIVE_MODEL)))
+    let response = rig::agent(client.completion(LIVE_MODEL))
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
@@ -57,7 +57,7 @@ async fn github_access_token_completion_smoke() {
     .await
     .expect("bootstrap-token auth should succeed");
 
-    let response = rig::AgentBuilder::new(rig::model(client.completion(LIVE_MODEL)))
+    let response = rig::agent(client.completion(LIVE_MODEL))
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
@@ -91,7 +91,7 @@ async fn oauth_device_flow_authorize_and_cached_completion_smoke() {
         "cached oauth auth should resolve the same credential"
     );
 
-    let response = rig::AgentBuilder::new(rig::model(provider.clone().completion(LIVE_MODEL)))
+    let response = rig::agent(provider.clone().completion(LIVE_MODEL))
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)
@@ -100,13 +100,11 @@ async fn oauth_device_flow_authorize_and_cached_completion_smoke() {
 
     assert_nonempty_response(&response.output);
 
-    let cached_response = rig::AgentBuilder::new(rig::model(
-        authorize_oauth(token_dir).await.completion(LIVE_MODEL),
-    ))
-    .build()
-    .prompt("Reply with the single word cached.")
-    .await
-    .expect("cached completion should succeed");
+    let cached_response = rig::agent(authorize_oauth(token_dir).await.completion(LIVE_MODEL))
+        .build()
+        .prompt("Reply with the single word cached.")
+        .await
+        .expect("cached completion should succeed");
 
     assert_nonempty_response(&cached_response.output);
 }
@@ -158,7 +156,7 @@ async fn access_token_bootstrap_refresh_and_completion_smoke() {
         );
     }
 
-    let response = rig::AgentBuilder::new(rig::model(client.completion(LIVE_MODEL)))
+    let response = rig::agent(client.completion(LIVE_MODEL))
         .preamble(BASIC_PREAMBLE)
         .build()
         .prompt(BASIC_PROMPT)

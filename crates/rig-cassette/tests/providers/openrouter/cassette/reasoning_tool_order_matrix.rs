@@ -180,7 +180,7 @@ async fn run_signed_agent(
     transport: Transport,
     invocations: Arc<AtomicUsize>,
 ) -> Result<()> {
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(MODEL)))
+    let agent = rig::agent(client.completion(MODEL))
         .preamble(
             "Reason before the requested first tool call. After its result, answer exactly DONE without calling another tool.",
         )

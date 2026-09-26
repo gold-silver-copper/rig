@@ -80,7 +80,7 @@ async fn unary_tool_run(
 ) -> rig::cassette::effect_log::EffectLog {
     let settled = RecordSettled::default();
     let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-    let mut builder = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+    let mut builder = rig::agent(client.completion(CLAUDE_SONNET_4_6))
         .name("golden")
         .preamble(TOOLS_PREAMBLE)
         .tool(Adder)
@@ -132,8 +132,7 @@ async fn streamed_run(
 ) -> rig::cassette::effect_log::EffectLog {
     let settled = RecordSettled::default();
     let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-    let mut base =
-        rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6))).name("golden");
+    let mut base = rig::agent(client.completion(CLAUDE_SONNET_4_6)).name("golden");
     base = base.temperature(0.0);
     let agent = match program {
         Streamed::Tools => base
@@ -235,7 +234,7 @@ async fn answer_outcome_cancelled_effect_log_is_the_golden_fixture() {
         |client| async move {
             let settled = RecordSettled::default();
             let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .name("golden")
                 .preamble(BASIC_PREAMBLE)
                 .temperature(0.0)

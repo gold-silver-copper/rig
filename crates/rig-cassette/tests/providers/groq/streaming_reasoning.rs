@@ -10,7 +10,7 @@ use super::STREAMING_REASONING_MODEL;
 #[ignore = "requires GROQ_API_KEY"]
 async fn parsed_reasoning_stream() {
     let groq = OpenAI::from_env_with(&GROQ).expect("GROQ_API_KEY should be set");
-    let agent = rig::AgentBuilder::new(rig::model(groq.completion(STREAMING_REASONING_MODEL)))
+    let agent = rig::agent(groq.completion(STREAMING_REASONING_MODEL))
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .additional_params(serde_json::json!({ "reasoning_format": "parsed" }))
         .build();

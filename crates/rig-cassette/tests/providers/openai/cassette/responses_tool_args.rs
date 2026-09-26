@@ -214,12 +214,11 @@ async fn nested_arguments_roundtrip_nonstreaming() {
     with_openai_cassette(
         "responses_tool_args/nested_arguments_roundtrip_nonstreaming",
         |client| async move {
-            let agent =
-                rig::AgentBuilder::new(rig::model(client.openai.completion(openai::GPT_4O)))
-                    .preamble(NESTED_ARGS_PREAMBLE)
-                    .tool(PlanTrip)
-                    .default_max_turns(4)
-                    .build();
+            let agent = rig::agent(client.openai.completion(openai::GPT_4O))
+                .preamble(NESTED_ARGS_PREAMBLE)
+                .tool(PlanTrip)
+                .default_max_turns(4)
+                .build();
             let mut history = Vec::<Message>::new();
 
             let result = agent

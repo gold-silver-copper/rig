@@ -312,7 +312,7 @@ async fn run_model(client: OpenAI, cell: Cell) -> Observation {
 
 async fn run_agent(client: OpenAI, cell: Cell) -> Observation {
     let invocations = InvocationLog::default();
-    let builder = rig::AgentBuilder::new(rig::model(client.completion(model_name(cell.model))))
+    let builder = rig::agent(client.completion(model_name(cell.model)))
         .preamble(PREAMBLE)
         .additional_params(
             json!({ "tool_choice": "any", "parallel_tool_calls": cell.shape == Shape::Parallel }),

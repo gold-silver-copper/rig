@@ -1,4 +1,3 @@
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 use rig::{
     Embed, embeddings::EmbeddingsBuilder, vector_store::in_memory_store::InMemoryVectorStore,
@@ -66,7 +65,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let vector_store = InMemoryVectorStore::from_documents(embeddings);
     // Create vector store index
     let index = vector_store.index(embedding_model);
-    let rag_agent = AgentBuilder::new(rig::model(openai_client.completion(openai::GPT_4O)))
+    let rag_agent = rig::agent(openai_client.completion(openai::GPT_4O))
         .preamble("
             You are a dictionary assistant here to assist the user in understanding the meaning of words.
             You will find additional non-standard word definitions that could be useful below.

@@ -293,7 +293,7 @@ async fn blocking_agent_prompt_answers_after_code_execution() {
     with_gemini_code_execution_cassette(
         "code_execution_matrix/blocking_agent_prompt_answers_after_code_execution",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(gemini::completion::GEMINI_2_5_FLASH)))
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
                 .temperature(0.0)
                 .max_tokens(2000)
                 .additional_params(code_execution_params())
@@ -323,7 +323,7 @@ async fn streaming_agent_prompt_answers_after_code_execution() {
     with_gemini_code_execution_cassette(
         "code_execution_matrix/streaming_agent_prompt_answers_after_code_execution",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(gemini::completion::GEMINI_2_5_FLASH)))
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
                 .temperature(0.0)
                 .max_tokens(2000)
                 .additional_params(code_execution_params())
@@ -913,13 +913,11 @@ async fn blocking_code_execution_replayed_in_chat_history() {
     with_gemini_code_execution_cassette(
         "code_execution_matrix/blocking_code_execution_replayed_in_chat_history",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .temperature(0.0)
-            .max_tokens(2000)
-            .additional_params(code_execution_params())
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .temperature(0.0)
+                .max_tokens(2000)
+                .additional_params(code_execution_params())
+                .build();
 
             // Turn one produces the code-execution turn; turn two replays the
             // normalized assistant message back to Gemini as history. The

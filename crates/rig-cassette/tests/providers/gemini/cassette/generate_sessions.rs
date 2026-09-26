@@ -94,15 +94,13 @@ async fn sequential_tool_calls_ordering_nonstreaming() {
     with_gemini_cassette(
         "generate_sessions/sequential_tool_calls_ordering_nonstreaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
-            .temperature(0.0)
-            .tool(Adder)
-            .tool(Subtract)
-            .default_max_turns(6)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
+                .temperature(0.0)
+                .tool(Adder)
+                .tool(Subtract)
+                .default_max_turns(6)
+                .build();
             let mut history = Vec::<Message>::new();
 
             let result = agent
@@ -147,14 +145,12 @@ async fn sequential_tool_calls_ordering_streaming() {
     with_gemini_cassette(
         "generate_sessions/sequential_tool_calls_ordering_streaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
-            .temperature(0.0)
-            .tool(Adder)
-            .tool(Subtract)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
+                .temperature(0.0)
+                .tool(Adder)
+                .tool(Subtract)
+                .build();
 
             let mut stream = agent
                 .prompt(SEQUENTIAL_TOOLS_PROMPT)

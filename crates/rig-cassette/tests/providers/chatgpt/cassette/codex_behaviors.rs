@@ -151,7 +151,7 @@ async fn explicit_preamble_and_mid_conversation_system_messages_are_instructions
             // ChatGPT rejects `system` items in `input`; the recorded request
             // body locks that the provider lifts both the preamble and later
             // system messages into the top-level `instructions` field.
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(chatgpt::GPT_5_4)))
+            let agent = rig::agent(client.completion(chatgpt::GPT_5_4))
                 .preamble("You are a concise assistant.")
                 .build();
             let mut history = vec![
@@ -182,7 +182,7 @@ async fn default_instructions_merge_with_explicit_preamble() {
         "codex_behaviors/default_instructions_merge_with_explicit_preamble",
         "Default instruction marker: always include DEFAULT-CODEX-MARKER when asked for the default marker.",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(chatgpt::GPT_5_4)))
+            let agent = rig::agent(client.completion(chatgpt::GPT_5_4))
                 .preamble("Explicit instruction marker: also include EXPLICIT-CODEX-MARKER.")
                 .build();
             let mut history = Vec::<Message>::new();

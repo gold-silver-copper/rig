@@ -192,12 +192,10 @@ async fn agent_prompt_empty_stop_sequence() {
     with_anthropic_empty_stop_cassette(
         "empty_stop_sequence_matrix/agent_prompt_empty_stop_sequence",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_HAIKU_4_5),
-            ))
-            .max_tokens(32)
-            .additional_params(json!({ "stop_sequences": ["alpha"] }))
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_HAIKU_4_5))
+                .max_tokens(32)
+                .additional_params(json!({ "stop_sequences": ["alpha"] }))
+                .build();
 
             let response = agent
                 .prompt(IMMEDIATE_PROMPT)
@@ -256,12 +254,10 @@ async fn agent_stream_empty_stop_sequence() {
     with_anthropic_empty_stop_cassette(
         "empty_stop_sequence_matrix/agent_stream_empty_stop_sequence",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_HAIKU_4_5),
-            ))
-            .max_tokens(32)
-            .additional_params(json!({ "stop_sequences": ["alpha"] }))
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_HAIKU_4_5))
+                .max_tokens(32)
+                .additional_params(json!({ "stop_sequences": ["alpha"] }))
+                .build();
 
             let mut stream = agent.prompt(IMMEDIATE_PROMPT).stream();
             let mut errors = Vec::new();

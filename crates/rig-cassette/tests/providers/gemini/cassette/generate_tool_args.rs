@@ -155,14 +155,12 @@ async fn nested_arguments_roundtrip_nonstreaming() {
     with_gemini_cassette(
         "generate_tool_args/nested_arguments_roundtrip_nonstreaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble(NESTED_ARGS_PREAMBLE)
-            .temperature(0.0)
-            .tool(PlanTrip)
-            .default_max_turns(4)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble(NESTED_ARGS_PREAMBLE)
+                .temperature(0.0)
+                .tool(PlanTrip)
+                .default_max_turns(4)
+                .build();
             let mut history = Vec::<Message>::new();
 
             let result = agent

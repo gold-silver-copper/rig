@@ -988,13 +988,11 @@ async fn agent_blocking_thinking() {
     with_anthropic_reasoning_usage_cassette(
         "reasoning_usage_matrix/agent_blocking_thinking",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-            ))
-            .preamble("You are a meticulous arithmetic assistant.")
-            .max_tokens(2048)
-            .additional_params(budget_thinking(1024))
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+                .preamble("You are a meticulous arithmetic assistant.")
+                .max_tokens(2048)
+                .additional_params(budget_thinking(1024))
+                .build();
             let response = agent
                 .prompt(THINKING_PROMPT)
                 .await

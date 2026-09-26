@@ -8,7 +8,7 @@ use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 #[ignore = "requires COHERE_API_KEY"]
 async fn completion_smoke() {
     let cohere = Cohere::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(cohere.completion(cohere::COMMAND_A_03_2025)))
+    let agent = rig::agent(cohere.completion(cohere::COMMAND_A_03_2025))
         .preamble(BASIC_PREAMBLE)
         .build();
 

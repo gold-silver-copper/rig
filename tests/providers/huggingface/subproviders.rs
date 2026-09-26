@@ -20,7 +20,7 @@ async fn tool_prompt_across_subproviders() {
         let provider = OpenAI::from_env_with(&HUGGINGFACE)
             .expect("config should build from env")
             .with_sub_route(sub_route);
-        let agent = rig::AgentBuilder::new(rig::model(provider.completion(model)))
+        let agent = rig::agent(provider.completion(model))
             .preamble(
                 "You are a calculator here to help the user perform arithmetic operations. \
                  Use the provided tools to answer the user's question.",

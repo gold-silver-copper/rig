@@ -21,15 +21,13 @@ const ADD_PROMPT: &str = "Use the add tool to add 17 and 25, then reply with jus
 async fn interactions_baseline_effect_log_is_the_golden_fixture() {
     with_gemini_corpus_delta_cassette("corpus_delta/interactions_baseline", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-        let agent = rig::agent::AgentBuilder::new(rig::model(
-            client.interactions(gemini::completion::GEMINI_2_5_FLASH),
-        ))
-        .name("golden")
-        .preamble(TOOLS_PREAMBLE)
-        .temperature(0.0)
-        .tool(Adder)
-        .record_to(recorder.clone())
-        .build();
+        let agent = rig::agent(client.interactions(gemini::completion::GEMINI_2_5_FLASH))
+            .name("golden")
+            .preamble(TOOLS_PREAMBLE)
+            .temperature(0.0)
+            .tool(Adder)
+            .record_to(recorder.clone())
+            .build();
         let mut stream = agent.prompt(ADD_PROMPT).max_turns(3).stream();
         let mut output = None;
         while let Some(item) = stream.next().await {

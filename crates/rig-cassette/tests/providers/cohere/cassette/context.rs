@@ -13,7 +13,7 @@ async fn context_documents_are_accepted() {
         let agent = CONTEXT_DOCS
             .iter()
             .copied()
-            .fold(rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL))), |builder, doc| {
+            .fold(rig::agent(client.completion(CASSETTE_MODEL)), |builder, doc| {
                 builder.context(doc)
             })
             .preamble("Use the provided context documents as the authoritative source. Answer concisely.")

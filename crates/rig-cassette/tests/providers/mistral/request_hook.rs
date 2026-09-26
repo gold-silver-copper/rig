@@ -73,11 +73,11 @@ impl AgentHook for SessionIdHook<'_> {
 #[tokio::test]
 #[ignore = "requires MISTRAL_API_KEY"]
 async fn request_hook_records_prompt_and_response() -> Result<()> {
-    let agent = rig::AgentBuilder::new(rig::model(
+    let agent = rig::agent(
         OpenAI::from_env_with(&MISTRAL)
             .expect("MISTRAL_API_KEY should be set")
             .completion(DEFAULT_MODEL),
-    ))
+    )
     .preamble("You are a comedian here to entertain the user using humour and jokes.")
     .build();
 

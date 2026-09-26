@@ -39,7 +39,7 @@ fn gpt_5_5_reasoning_params() -> serde_json::Value {
 #[ignore = "requires OPENAI_API_KEY"]
 async fn responses_prompt_smoke() {
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(BASIC_PREAMBLE)
         .build();
 
@@ -56,7 +56,7 @@ async fn responses_prompt_smoke() {
 #[ignore = "requires OPENAI_API_KEY"]
 async fn responses_streaming_prompt_smoke() {
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(STREAMING_PREAMBLE)
         .build();
 
@@ -72,7 +72,7 @@ async fn responses_streaming_prompt_smoke() {
 #[ignore = "requires OPENAI_API_KEY"]
 async fn responses_tools_smoke() {
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)
@@ -91,7 +91,7 @@ async fn responses_tools_smoke() {
 #[ignore = "requires OPENAI_API_KEY"]
 async fn responses_streaming_tools_smoke() {
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(STREAMING_TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)
@@ -109,7 +109,7 @@ async fn responses_streaming_tools_smoke() {
 #[ignore = "requires OPENAI_API_KEY"]
 async fn responses_structured_output_smoke() {
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5))).build();
+    let agent = rig::agent(client.completion(openai::GPT_5_5)).build();
 
     let response: Gpt55Event = agent
         .prompt_typed("Return a concise event object for a local Rust meetup in Seattle.")
@@ -121,7 +121,7 @@ async fn responses_structured_output_smoke() {
     assert_nonempty_response(&response.category);
     assert_nonempty_response(&response.summary);
 
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .output_schema::<SmokeStructuredOutput>()
         .build();
     let response = agent
@@ -172,7 +172,7 @@ async fn responses_extractor_smoke() {
 #[ignore = "requires OPENAI_API_KEY"]
 async fn responses_image_input_smoke() {
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble("You are an image describer.")
         .build();
     let image_bytes = std::fs::read(IMAGE_FIXTURE_PATH).expect("fixture image should be readable");
@@ -220,7 +220,7 @@ async fn responses_reasoning_streaming_smoke() {
 async fn responses_reasoning_tool_roundtrip_smoke() {
     let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
         .tool(WeatherTool::new(call_count.clone()))
@@ -241,7 +241,7 @@ async fn responses_reasoning_tool_roundtrip_smoke() {
 async fn responses_reasoning_streaming_tool_roundtrip_smoke() {
     let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let client = OpenAI::from_env().expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(reasoning::TOOL_SYSTEM_PROMPT)
         .max_tokens(4096)
         .tool(WeatherTool::new(call_count.clone()))
@@ -264,7 +264,7 @@ async fn chat_completions_prompt_smoke() {
     let client = OpenAI::from_env()
         .expect("config should build from env")
         .with_route(Route::Chat);
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(BASIC_PREAMBLE)
         .build();
 
@@ -283,7 +283,7 @@ async fn chat_completions_streaming_prompt_smoke() {
     let client = OpenAI::from_env()
         .expect("config should build from env")
         .with_route(Route::Chat);
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(STREAMING_PREAMBLE)
         .build();
 
@@ -301,7 +301,7 @@ async fn chat_completions_tools_smoke() {
     let client = OpenAI::from_env()
         .expect("config should build from env")
         .with_route(Route::Chat);
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)
@@ -322,7 +322,7 @@ async fn chat_completions_streaming_tools_smoke() {
     let client = OpenAI::from_env()
         .expect("config should build from env")
         .with_route(Route::Chat);
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble(STREAMING_TOOLS_PREAMBLE)
         .tool(Adder)
         .tool(Subtract)
@@ -342,7 +342,7 @@ async fn chat_completions_structured_output_smoke() {
     let client = OpenAI::from_env()
         .expect("config should build from env")
         .with_route(Route::Chat);
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .output_schema::<SmokeStructuredOutput>()
         .build();
 
@@ -399,7 +399,7 @@ async fn chat_completions_image_input_smoke() {
     let client = OpenAI::from_env()
         .expect("config should build from env")
         .with_route(Route::Chat);
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_5_5)))
+    let agent = rig::agent(client.completion(openai::GPT_5_5))
         .preamble("You are an image describer.")
         .build();
     let image_bytes = std::fs::read(IMAGE_FIXTURE_PATH).expect("fixture image should be readable");

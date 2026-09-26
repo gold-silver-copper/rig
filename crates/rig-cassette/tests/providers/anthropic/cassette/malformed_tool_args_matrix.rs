@@ -154,14 +154,12 @@ impl AgentHook for OnMalformed {
 }
 
 fn agent(client: Anthropic) -> rig::agent::Agent {
-    rig::AgentBuilder::new(rig::model(
-        client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-    ))
-    .preamble(STREAMING_TOOLS_PREAMBLE)
-    .tool(Adder)
-    .tool(Subtract)
-    .default_max_turns(2)
-    .build()
+    rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+        .preamble(STREAMING_TOOLS_PREAMBLE)
+        .tool(Adder)
+        .tool(Subtract)
+        .default_max_turns(2)
+        .build()
 }
 
 #[tokio::test]

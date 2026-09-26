@@ -11,7 +11,6 @@ use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
-use rig::prelude::*;
 use rig::providers::openai::OpenAI;
 use rig::{providers, tool::Tool};
 use serde::{Deserialize, Serialize};
@@ -148,7 +147,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let openai_client = OpenAI::from_env()?;
 
     // Create agent with a single context prompt and two tools
-    let calculator_agent = AgentBuilder::new(rig::model(openai_client.completion(providers::openai::GPT_4O)))
+    let calculator_agent = rig::agent(openai_client.completion(providers::openai::GPT_4O))
         .preamble("You are a calculator here to help the user perform arithmetic operations. Use the tools provided to answer the user's question.")
         .max_tokens(1024)
         .default_max_turns(2)

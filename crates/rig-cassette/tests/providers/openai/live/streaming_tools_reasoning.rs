@@ -8,7 +8,7 @@ use rig_agent::test_utils::MockExampleTool;
 async fn test_openai_streaming_tools_reasoning() {
     let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY env var should exist");
     let client = OpenAI::new(api_key);
-    let agent = rig::AgentBuilder::new(rig::model(client.completion("gpt-5.2")))
+    let agent = rig::agent(client.completion("gpt-5.2"))
         .max_tokens(8192)
         .tool(MockExampleTool)
         .additional_params(serde_json::json!({

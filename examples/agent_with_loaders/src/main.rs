@@ -3,7 +3,6 @@
 //! Run it to see the model identify the example that uses `FileLoader::with_glob`.
 
 use anyhow::Result;
-use rig::agent::AgentBuilder;
 use rig::loaders::FileLoader;
 use rig::providers::openai::{self, OpenAI};
 
@@ -20,14 +19,16 @@ fn load_example_contexts() -> Result<impl Iterator<Item = (std::path::PathBuf, S
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = OpenAI::from_env()?;
-    let model = rig::model(client.completion(openai::GPT_4O));
     let files = load_example_contexts()?;
 
     let agent = files
-        .fold(AgentBuilder::new(model), |builder, (path, content)| {
-            let context = format!("Rust example {path:?}:\n{content}");
-            builder.context(&context)
-        })
+        .fold(
+            rig::agent(client.completion(openai::GPT_4O)),
+            |builder, (path, content)| {
+                let context = format!("Rust example {path:?}:\n{content}");
+                builder.context(&context)
+            },
+        )
         .build();
 
     let response = agent.prompt(LOADERS_PROMPT).await?.output;

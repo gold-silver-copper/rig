@@ -408,7 +408,7 @@ async fn sequential_complex_tool_calls_streaming() -> Result<()> {
         |client| async move {
             let log = Arc::new(Mutex::new(Vec::new()));
             let (ping, manifest, labels, echo) = complex_tools(&log);
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(SESSION_MODEL)))
+            let agent = rig::agent(client.completion(SESSION_MODEL))
                 .preamble(COMPLEX_SESSION_PREAMBLE)
                 .tool(ping)
                 .tool(manifest)
@@ -470,7 +470,7 @@ async fn parallel_tool_calls_single_turn_nonstreaming() -> Result<()> {
     with_openrouter_cassette_result(
         "agent_tool_sessions/parallel_tool_calls_single_turn_nonstreaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(SESSION_MODEL)))
+            let agent = rig::agent(client.completion(SESSION_MODEL))
                 .preamble(TWO_TOOL_STREAM_PREAMBLE)
                 .tool(AlphaSignal)
                 .tool(BetaSignal)
@@ -516,7 +516,7 @@ async fn parallel_tool_calls_single_turn_streaming() -> Result<()> {
     with_openrouter_cassette_result(
         "agent_tool_sessions/parallel_tool_calls_single_turn_streaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(SESSION_MODEL)))
+            let agent = rig::agent(client.completion(SESSION_MODEL))
                 .preamble(TWO_TOOL_STREAM_PREAMBLE)
                 .tool(AlphaSignal)
                 .tool(BetaSignal)
@@ -675,7 +675,7 @@ async fn nested_structured_output_schema_roundtrip() -> Result<()> {
     with_openrouter_cassette_result(
         "agent_tool_sessions/nested_structured_output_schema_roundtrip",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(STRUCTURED_MODEL)))
+            let agent = rig::agent(client.completion(STRUCTURED_MODEL))
                 .preamble(
                     "Return only data that satisfies the requested schema. Use lane canary, risk low, \
                      and checks compile=true and replay=true.",

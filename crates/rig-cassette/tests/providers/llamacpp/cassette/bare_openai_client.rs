@@ -52,7 +52,7 @@ async fn caller_supplies_the_v1_prefix_the_provider_would_add() {
     with_llamacpp_bare_openai_cassette(
         "bare_openai_client/caller_supplies_the_v1_prefix",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+            let agent = rig::agent(client.completion(CASSETTE_MODEL))
                 .preamble("You are a concise assistant.")
                 .max_tokens(256)
                 .build();
@@ -199,7 +199,7 @@ async fn a_fragmented_tool_call_stream_reassembles_without_the_provider_consts()
     with_llamacpp_bare_openai_cassette(
         "bare_openai_client/tool_call_stream_without_the_single_chunk_const",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+            let agent = rig::agent(client.completion(CASSETTE_MODEL))
                 .preamble(STREAMING_TOOLS_PREAMBLE)
                 .tool(Adder)
                 .tool(Subtract)
@@ -256,7 +256,7 @@ async fn agent_prompt_through_completions_api() {
     with_llamacpp_bare_openai_cassette(
         "bare_openai_client/agent_prompt_through_completions_api",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CASSETTE_MODEL)))
+            let agent = rig::agent(client.completion(CASSETTE_MODEL))
                 .preamble("You are a helpful assistant.")
                 .build();
 

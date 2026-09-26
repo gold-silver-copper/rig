@@ -286,7 +286,7 @@ async fn tool_error_retry_reports_distinct_ids_blocking() {
         "response_identity_edge/tool_error_retry_reports_distinct_ids_blocking",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble("Use the add tool. If it fails transiently, call it again once.")
                 .max_tokens(1024)
                 .tool(FlakyAdder::default())
@@ -336,7 +336,7 @@ async fn tool_error_retry_reports_distinct_ids_streamed() {
         "response_identity_edge/tool_error_retry_reports_distinct_ids_streamed",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble("Use the add tool. If it fails transiently, call it again once.")
                 .max_tokens(1024)
                 .tool(FlakyAdder::default())
@@ -406,7 +406,7 @@ async fn streamed_hook_retry_uses_second_connections_id() {
         "response_identity_edge/streamed_hook_retry_uses_second_connections_id",
         |client| async move {
             let hook = RetryOnce::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble("You are a terse assistant.")
                 .max_tokens(64)
                 .add_hook(hook.clone())
@@ -469,7 +469,7 @@ async fn repaired_invalid_call_keeps_call_identity() {
         "response_identity_edge/repaired_invalid_call_keeps_call_identity",
         |client| async move {
             let hook = RepairToAdd::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble(
                     "Call the sum_values tool exactly once for the sum. As soon as any \
                      tool result arrives — whatever tool name it shows — state the final \
@@ -540,7 +540,7 @@ async fn max_turns_exhaustion_still_observed_completed_calls() {
         "response_identity_edge/max_turns_exhaustion_still_observed_completed_calls",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble(TOOLS_PREAMBLE)
                 .max_tokens(1024)
                 .tool(Adder)
@@ -577,7 +577,7 @@ async fn parallel_tool_calls_one_identity_per_turn() {
         "response_identity_edge/parallel_tool_calls_one_identity_per_turn",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble(
                     "Use the add tool for arithmetic. When asked for several sums, emit all \
                      the tool calls in one single response.",
@@ -618,7 +618,7 @@ async fn history_replay_does_not_leak_prior_run_identity() {
         "response_identity_edge/history_replay_does_not_leak_prior_run_identity",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble("You are a terse assistant.")
                 .max_tokens(64)
                 .add_hook(probe.clone())

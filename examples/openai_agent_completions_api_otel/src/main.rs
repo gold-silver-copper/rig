@@ -3,7 +3,6 @@
 
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
-use rig::prelude::*;
 
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::SdkTracerProvider;
@@ -42,11 +41,11 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     // Route the configuration to Chat Completions once; the agent follows.
-    let agent = AgentBuilder::new(rig::model(
+    let agent = rig::agent(
         OpenAI::from_env()?
             .with_route(Route::Chat)
             .completion(openai::GPT_4O),
-    ))
+    )
     .preamble("You are a helpful assistant")
     .build();
 

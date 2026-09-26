@@ -802,12 +802,10 @@ async fn agent_stream_single_sequence() {
     with_anthropic_stop_sequence_cassette(
         "stop_sequence_terminal_matrix/agent_stream_single_sequence",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_HAIKU_4_5),
-            ))
-            .max_tokens(64)
-            .additional_params(json!({ "stop_sequences": ["charlie"] }))
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_HAIKU_4_5))
+                .max_tokens(64)
+                .additional_params(json!({ "stop_sequences": ["charlie"] }))
+                .build();
 
             let mut stream = agent.prompt(LIST_PROMPT).stream();
             let (_response, provider_final): (_, rig::streaming::StreamFinal) =

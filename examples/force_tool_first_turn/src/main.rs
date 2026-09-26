@@ -24,7 +24,6 @@ use anyhow::Result;
 use rig::agent::{AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, RequestPatch};
 use rig::completion::PromptError;
 use rig::message::ToolChoice;
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 use rig::tool::Tool;
 use serde::Deserialize;
@@ -124,7 +123,7 @@ async fn main() -> Result<()> {
     let client = OpenAI::from_env()?;
     // A fresh agent per run (both share the same tool and preamble).
     let make_agent = || {
-        AgentBuilder::new(rig::model(client.completion(openai::GPT_4O)))
+        rig::agent(client.completion(openai::GPT_4O))
             .preamble(PREAMBLE)
             .tool(Add)
             .build()

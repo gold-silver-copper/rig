@@ -170,7 +170,7 @@ async fn chat_blocking_agent_prompt_surfaces_refusal() {
     with_openai_refusal_cassette(
         "refusal_matrix/chat_blocking_agent_prompt_surfaces_refusal",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion(REFUSING_MODEL)))
+            let agent = rig::agent(client.chat.completion(REFUSING_MODEL))
                 .additional_params(chat_response_format())
                 .build();
 
@@ -288,7 +288,7 @@ async fn chat_streaming_agent_surfaces_refusal() {
     with_openai_refusal_cassette(
         "refusal_matrix/chat_streaming_agent_surfaces_refusal",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion(REFUSING_MODEL)))
+            let agent = rig::agent(client.chat.completion(REFUSING_MODEL))
                 .additional_params(chat_response_format())
                 .build();
 
@@ -415,7 +415,7 @@ async fn chat_refusal_turn_survives_into_history() {
     with_openai_refusal_cassette(
         "refusal_matrix/chat_refusal_turn_survives_into_history",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion(REFUSING_MODEL)))
+            let agent = rig::agent(client.chat.completion(REFUSING_MODEL))
                 .additional_params(chat_response_format())
                 .build();
 
@@ -609,10 +609,9 @@ async fn responses_agent_blocking_refusal_surfaces() {
     with_openai_refusal_cassette(
         "refusal_matrix/responses_agent_blocking_refusal_surfaces",
         |client| async move {
-            let agent =
-                rig::AgentBuilder::new(rig::model(client.openai.completion(REFUSING_MODEL)))
-                    .additional_params(responses_text_format())
-                    .build();
+            let agent = rig::agent(client.openai.completion(REFUSING_MODEL))
+                .additional_params(responses_text_format())
+                .build();
 
             let response = agent
                 .prompt(REFUSED_PROMPT)
@@ -635,10 +634,9 @@ async fn responses_agent_streaming_refusal_surfaces() {
     with_openai_refusal_cassette(
         "refusal_matrix/responses_agent_streaming_refusal_surfaces",
         |client| async move {
-            let agent =
-                rig::AgentBuilder::new(rig::model(client.openai.completion(REFUSING_MODEL)))
-                    .additional_params(responses_text_format())
-                    .build();
+            let agent = rig::agent(client.openai.completion(REFUSING_MODEL))
+                .additional_params(responses_text_format())
+                .build();
 
             let mut stream = agent.prompt(REFUSED_PROMPT).stream();
             let observed = collect_stream_observation(&mut stream).await;

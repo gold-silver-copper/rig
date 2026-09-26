@@ -94,15 +94,13 @@ async fn sequential_tool_calls_nonstreaming() {
     with_anthropic_cassette(
         "messages_sessions/sequential_tool_calls_nonstreaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-            ))
-            .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
-            .max_tokens(2048)
-            .tool(Adder)
-            .tool(Subtract)
-            .default_max_turns(6)
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+                .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
+                .max_tokens(2048)
+                .tool(Adder)
+                .tool(Subtract)
+                .default_max_turns(6)
+                .build();
             let mut history = Vec::<Message>::new();
 
             let result = agent
@@ -148,14 +146,12 @@ async fn sequential_tool_calls_streaming() {
     with_anthropic_cassette(
         "messages_sessions/sequential_tool_calls_streaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-            ))
-            .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
-            .max_tokens(2048)
-            .tool(Adder)
-            .tool(Subtract)
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+                .preamble(SEQUENTIAL_TOOLS_PREAMBLE)
+                .max_tokens(2048)
+                .tool(Adder)
+                .tool(Subtract)
+                .build();
 
             let mut stream = agent
                 .prompt(SEQUENTIAL_TOOLS_PROMPT)
@@ -197,15 +193,13 @@ async fn parallel_tool_use_single_turn_nonstreaming() {
     with_anthropic_cassette(
         "messages_sessions/parallel_tool_use_single_turn_nonstreaming",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-            ))
-            .preamble(TWO_TOOL_STREAM_PREAMBLE)
-            .max_tokens(2048)
-            .tool(AlphaSignal)
-            .tool(BetaSignal)
-            .default_max_turns(5)
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+                .preamble(TWO_TOOL_STREAM_PREAMBLE)
+                .max_tokens(2048)
+                .tool(AlphaSignal)
+                .tool(BetaSignal)
+                .default_max_turns(5)
+                .build();
             let mut history = Vec::<Message>::new();
 
             let result = agent
@@ -382,13 +376,11 @@ async fn usage_accumulates_across_streaming_multi_turn() {
     with_anthropic_cassette(
         "messages_sessions/usage_accumulates_across_streaming_multi_turn",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(anthropic::completion::CLAUDE_SONNET_4_6),
-            ))
-            .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
-            .max_tokens(2048)
-            .tool(AlphaSignal)
-            .build();
+            let agent = rig::agent(client.completion(anthropic::completion::CLAUDE_SONNET_4_6))
+                .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
+                .max_tokens(2048)
+                .tool(AlphaSignal)
+                .build();
 
             let mut stream = agent
                 .prompt(ORDERED_TOOL_STREAM_PROMPT)

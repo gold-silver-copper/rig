@@ -58,7 +58,7 @@ async fn own_bus(
     ) -> AgentBuilder<rig::agent::WithToolServerHandle>,
 ) -> rig::cassette::effect_log::EffectLog {
     let server = add_tool_under(layers);
-    let builder = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+    let builder = rig::agent(client.completion(CLAUDE_SONNET_4_6))
         .name("golden")
         .preamble(TOOLS_PREAMBLE)
         .temperature(0.0)
@@ -216,7 +216,7 @@ async fn memory_load_replaced_effect_log_is_the_golden_fixture() {
             ))
             .layered(ReplaceLoadLayer);
             let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .name("golden")
                 .preamble(BASIC_PREAMBLE)
                 .temperature(0.0)

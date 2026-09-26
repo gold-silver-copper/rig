@@ -21,7 +21,7 @@ async fn completions_api_agent_prompt() {
     with_openai_completions_cassette(
         "completions_api/completions_api_agent_prompt",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_4O)))
+            let agent = rig::agent(client.completion(openai::GPT_4O))
                 .preamble("You are a helpful assistant.")
                 .build();
 
@@ -90,7 +90,7 @@ async fn completions_api_streams_two_tool_calls_before_final_answer() {
     with_openai_completions_cassette(
         "completions_api/completions_api_streams_two_tool_calls_before_final_answer",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_4O)))
+            let agent = rig::agent(client.completion(openai::GPT_4O))
                 .preamble(TWO_TOOL_STREAM_PREAMBLE)
                 .tool(AlphaSignal)
                 .tool(BetaSignal)
@@ -188,7 +188,7 @@ async fn completions_api_stream_emits_tool_call_before_later_text() {
     with_openai_completions_cassette(
         "completions_api/completions_api_stream_emits_tool_call_before_later_text",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(openai::GPT_4O)))
+            let agent = rig::agent(client.completion(openai::GPT_4O))
                 .preamble(ORDERED_TOOL_STREAM_PREAMBLE)
                 .tool(AlphaSignal)
                 .build();

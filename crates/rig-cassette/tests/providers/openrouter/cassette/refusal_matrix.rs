@@ -178,7 +178,7 @@ async fn blocking_agent_prompt_surfaces_refusal() {
     with_openrouter_refusal_cassette(
         "refusal_matrix/blocking_agent_prompt_surfaces_refusal",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(REFUSING_MODEL)))
+            let agent = rig::agent(client.completion(REFUSING_MODEL))
                 .max_tokens(CAP)
                 .additional_params(refusal_request_params("OpenAI"))
                 .build();
@@ -508,7 +508,7 @@ async fn streaming_agent_surfaces_refusal() {
     with_openrouter_refusal_cassette(
         "refusal_matrix/streaming_agent_surfaces_refusal",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(REFUSING_MODEL)))
+            let agent = rig::agent(client.completion(REFUSING_MODEL))
                 .max_tokens(CAP)
                 .additional_params(refusal_request_params("OpenAI"))
                 .build();

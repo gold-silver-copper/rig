@@ -14,7 +14,7 @@ async fn context_smoke() {
         .iter()
         .copied()
         .fold(
-            rig::AgentBuilder::new(rig::model(client.completion(moonshot::KIMI_K3))),
+            rig::agent(client.completion(moonshot::KIMI_K3)),
             |builder, doc| builder.context(doc),
         )
         .build();

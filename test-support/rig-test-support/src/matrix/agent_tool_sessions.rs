@@ -9,7 +9,7 @@
 #[macro_export]
 macro_rules! session_agent {
     ($client:expr) => {{
-        let agent = rig::AgentBuilder::new(rig::model($client.completion(SESSION_MODEL)));
+        let agent = rig::agent($client.completion(SESSION_MODEL));
         match SESSION_MAX_TOKENS {
             Some(max_tokens) => agent.max_tokens(max_tokens),
             None => agent,

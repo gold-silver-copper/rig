@@ -99,12 +99,10 @@ async fn structured_output_nested_arrays_and_optional_fields() {
     with_gemini_cassette(
         "generate_behaviors/structured_output_nested_arrays_and_optional_fields",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .output_schema::<EventRecord>()
-            .temperature(0.0)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .output_schema::<EventRecord>()
+                .temperature(0.0)
+                .build();
 
             let response = agent
                 .prompt(

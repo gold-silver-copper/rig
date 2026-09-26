@@ -193,7 +193,7 @@ async fn streamed_agent_run_failure_exposes_error_identity_accessors() {
     with_anthropic_cassette_bogus_key(
         "error_identity_edge/streamed_agent_run_failure_exposes_error_identity_accessors",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble("You are a terse assistant.")
                 .max_tokens(16)
                 .build();

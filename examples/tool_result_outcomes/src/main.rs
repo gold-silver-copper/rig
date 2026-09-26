@@ -38,7 +38,6 @@ use rig::agent::{
     RequestPatch,
 };
 use rig::message::ToolChoice;
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 use rig::tool::{Tool, ToolContext, ToolErrorKind, ToolExecutionError, ToolResult};
 
@@ -335,7 +334,7 @@ async fn main() -> Result<()> {
     };
     println!("Running simulated {operation} path");
 
-    let agent = AgentBuilder::new(rig::model(OpenAI::from_env()?.completion(openai::GPT_4O)))
+    let agent = rig::agent(OpenAI::from_env()?.completion(openai::GPT_4O))
         .preamble("Follow the user's requested system_probe operation exactly.")
         .tool(SystemProbe)
         .build();

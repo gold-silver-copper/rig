@@ -135,7 +135,7 @@ async fn agent_run_records_per_attempt_identity() {
         "response_identity/agent_run_records_per_attempt_identity",
         |client| async move {
             let hook = IdentityCapture::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble(TOOLS_PREAMBLE)
                 .max_tokens(1024)
                 .tool(Adder)
@@ -202,7 +202,7 @@ async fn streamed_agent_run_hook_observes_identity() {
         "response_identity/streamed_agent_run_hook_observes_identity",
         |client| async move {
             let hook = IdentityCapture::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble("You are a terse assistant.")
                 .max_tokens(64)
                 .add_hook(hook.clone())
@@ -255,7 +255,7 @@ async fn streamed_agent_tool_run_reports_per_attempt_identity() {
         "response_identity/streamed_agent_tool_run_reports_per_attempt_identity",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+            let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
                 .preamble(TOOLS_PREAMBLE)
                 .max_tokens(1024)
                 .tool(Adder)

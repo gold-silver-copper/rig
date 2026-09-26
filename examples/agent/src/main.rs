@@ -3,7 +3,6 @@
 //! Run it to see the provider/client/agent/prompt flow end to end.
 
 use anyhow::Result;
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 
 const PREAMBLE: &str = "You are a comedian here to entertain the user using humour and jokes.";
@@ -11,7 +10,7 @@ const PROMPT: &str = "Entertain me!";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let agent = AgentBuilder::new(rig::model(OpenAI::from_env()?.completion(openai::GPT_4O)))
+    let agent = rig::agent(OpenAI::from_env()?.completion(openai::GPT_4O))
         .preamble(PREAMBLE)
         .build();
 

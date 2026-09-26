@@ -1021,7 +1021,7 @@ async fn agent_blocking_truncated_call_is_not_invoked() {
         "truncation_matrix/agent_blocking_truncated_call_is_not_invoked",
         |client| async move {
             let invocations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(MODEL)))
+            let agent = rig::agent(client.completion(MODEL))
                 .preamble(TOOL_PREAMBLE)
                 .tool(FileReport {
                     invocations: invocations.clone(),
@@ -1070,7 +1070,7 @@ async fn agent_streaming_truncated_call_is_not_invoked() {
         "truncation_matrix/agent_streaming_truncated_call_is_not_invoked",
         |client| async move {
             let invocations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(MODEL)))
+            let agent = rig::agent(client.completion(MODEL))
                 .preamble(TOOL_PREAMBLE)
                 .tool(FileReport {
                     invocations: invocations.clone(),
@@ -1117,7 +1117,7 @@ async fn agent_blocking_empty_arguments_on_length_are_not_invoked() {
         "truncation_matrix/agent_blocking_empty_arguments_on_length_are_not_invoked",
         |client| async move {
             let invocations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(MODEL)))
+            let agent = rig::agent(client.completion(MODEL))
                 .preamble(TOOL_PREAMBLE)
                 .tool(ZeroArgumentFileReport {
                     invocations: invocations.clone(),
@@ -1157,7 +1157,7 @@ async fn agent_streaming_empty_arguments_on_length_are_not_invoked() {
         "truncation_matrix/agent_streaming_empty_arguments_on_length_are_not_invoked",
         |client| async move {
             let invocations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(MODEL)))
+            let agent = rig::agent(client.completion(MODEL))
                 .preamble(TOOL_PREAMBLE)
                 .tool(ZeroArgumentFileReport {
                     invocations: invocations.clone(),

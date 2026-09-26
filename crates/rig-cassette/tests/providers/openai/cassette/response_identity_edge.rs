@@ -131,11 +131,10 @@ async fn blocking_hook_retry_uses_second_attempts_id() {
         "response_identity_edge/blocking_hook_retry_uses_second_attempts_id",
         |client| async move {
             let hook = RetryOnce::default();
-            let agent =
-                rig::AgentBuilder::new(rig::model(client.openai.completion(openai::GPT_4O)))
-                    .preamble("You are a terse assistant.")
-                    .add_hook(hook.clone())
-                    .build();
+            let agent = rig::agent(client.openai.completion(openai::GPT_4O))
+                .preamble("You are a terse assistant.")
+                .add_hook(hook.clone())
+                .build();
 
             agent
                 .prompt("Reply with exactly: first probe")

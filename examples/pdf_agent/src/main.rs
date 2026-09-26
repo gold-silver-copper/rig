@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use rig::integrations::cli_chatbot::ChatBotBuilder;
-use rig::prelude::*;
 use rig::providers::ollama::wire::Ollama;
 use rig::{
     Embed, embeddings::EmbeddingsBuilder, loaders::PdfFileLoader,
@@ -88,7 +87,7 @@ async fn main() -> Result<()> {
     println!("Successfully created vector store and index");
 
     // Create RAG agent
-    let rag_agent = AgentBuilder::new(rig::model(client.completion("deepseek-r1")))
+    let rag_agent = rig::agent(client.completion("deepseek-r1"))
         .preamble("You are a helpful assistant that answers questions based on the provided document context. When answering questions, try to synthesize information from multiple chunks if they're related.")
         .dynamic_context(1, index)
         .build();

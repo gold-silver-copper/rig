@@ -12,13 +12,11 @@ use crate::support::{
 #[ignore = "requires TOGETHER_API_KEY"]
 async fn streaming_tools_smoke() {
     let provider = OpenAI::from_env_with(&TOGETHER).expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(
-        provider.completion(together::LLAMA_2_70B_CHAT_TOGETHER),
-    ))
-    .preamble(STREAMING_TOOLS_PREAMBLE)
-    .tool(Adder)
-    .tool(Subtract)
-    .build();
+    let agent = rig::agent(provider.completion(together::LLAMA_2_70B_CHAT_TOGETHER))
+        .preamble(STREAMING_TOOLS_PREAMBLE)
+        .tool(Adder)
+        .tool(Subtract)
+        .build();
 
     let mut stream = agent.prompt(STREAMING_TOOLS_PROMPT).stream();
     let response = collect_stream_final_response(&mut stream)

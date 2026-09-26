@@ -234,12 +234,11 @@ async fn agent_tool_turn_sends_strict_false() {
     with_openai_cassette(
         "strict_tool_matrix/agent_tool_turn_sends_strict_false",
         |client| async move {
-            let agent =
-                rig::AgentBuilder::new(rig::model(client.openai.completion(openai::GPT_4O_MINI)))
-                    .preamble("You are a calculator. Use the add tool for arithmetic, then answer.")
-                    .tool(Adder)
-                    .default_max_turns(4)
-                    .build();
+            let agent = rig::agent(client.openai.completion(openai::GPT_4O_MINI))
+                .preamble("You are a calculator. Use the add tool for arithmetic, then answer.")
+                .tool(Adder)
+                .default_max_turns(4)
+                .build();
 
             let answer = agent
                 .prompt("What is 17 + 25? Use the add tool.")

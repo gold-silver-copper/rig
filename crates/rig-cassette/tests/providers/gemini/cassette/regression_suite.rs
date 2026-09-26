@@ -41,14 +41,12 @@ async fn agent_max_tokens_reaches_generation_config_without_additional_params() 
     super::super::support::with_gemini_cassette(
         "regression/agent_max_tokens_without_additional_params",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-            ))
-            .preamble(STREAMING_PREAMBLE)
-            // Deliberately no `.additional_params(...)` — that is the path
-            // the bug lived on and the one no other cassette covers.
-            .max_tokens(512)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+                .preamble(STREAMING_PREAMBLE)
+                // Deliberately no `.additional_params(...)` — that is the path
+                // the bug lived on and the one no other cassette covers.
+                .max_tokens(512)
+                .build();
 
             let mut stream = agent.prompt(STREAMING_PROMPT).stream();
             let (_response, provider_final): (_, rig::streaming::StreamFinal) =
@@ -96,14 +94,12 @@ async fn structured_output_without_max_tokens_sends_no_sampling_fields() {
     super::super::support::with_gemini_cassette(
         "regression/structured_output_without_max_tokens",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-            ))
-            .output_schema::<SmokeStructuredOutput>()
-            .output_mode(OutputMode::Native)
-            // Deliberately no `.max_tokens(...)` and no `.temperature(...)`:
-            // the caller is relying on the model's own output limit.
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+                .output_schema::<SmokeStructuredOutput>()
+                .output_mode(OutputMode::Native)
+                // Deliberately no `.max_tokens(...)` and no `.temperature(...)`:
+                // the caller is relying on the model's own output limit.
+                .build();
 
             let response = agent
                 .prompt(STRUCTURED_OUTPUT_PROMPT)
@@ -135,13 +131,11 @@ async fn structured_output_with_max_tokens_sends_only_the_caller_value() {
     super::super::support::with_gemini_cassette(
         "regression/structured_output_with_max_tokens",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-            ))
-            .output_schema::<SmokeStructuredOutput>()
-            .output_mode(OutputMode::Native)
-            .max_tokens(16_384)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+                .output_schema::<SmokeStructuredOutput>()
+                .output_mode(OutputMode::Native)
+                .max_tokens(16_384)
+                .build();
 
             let response = agent
                 .prompt(STRUCTURED_OUTPUT_PROMPT)
@@ -176,12 +170,10 @@ async fn temperature_without_max_tokens_sends_no_max_output_tokens() {
     super::super::support::with_gemini_cassette(
         "regression/temperature_without_max_tokens",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-            ))
-            .preamble(STREAMING_PREAMBLE)
-            .temperature(0.0)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+                .preamble(STREAMING_PREAMBLE)
+                .temperature(0.0)
+                .build();
 
             agent
                 .prompt(STREAMING_PROMPT)
@@ -222,14 +214,12 @@ async fn thinking_config_without_max_tokens_sends_no_sampling_fields() {
             };
             let params = AdditionalParameters::default().with_config(config);
 
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-            ))
-            .preamble(STREAMING_PREAMBLE)
-            .additional_params(serde_json::to_value(params).expect("params should serialize"))
-            // Again no `.max_tokens(...)`: the thinking budget is the only
-            // generation setting this caller asked for.
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+                .preamble(STREAMING_PREAMBLE)
+                .additional_params(serde_json::to_value(params).expect("params should serialize"))
+                // Again no `.max_tokens(...)`: the thinking budget is the only
+                // generation setting this caller asked for.
+                .build();
 
             agent
                 .prompt(STREAMING_PROMPT)
@@ -267,12 +257,10 @@ async fn streaming_structured_output_without_max_tokens_sends_no_sampling_fields
     super::super::support::with_gemini_cassette(
         "regression/streaming_structured_output_without_max_tokens",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-            ))
-            .output_schema::<SmokeStructuredOutput>()
-            .output_mode(OutputMode::Native)
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+                .output_schema::<SmokeStructuredOutput>()
+                .output_mode(OutputMode::Native)
+                .build();
 
             let mut stream = agent.prompt(STRUCTURED_OUTPUT_PROMPT).stream();
             let (_response, provider_final): (_, rig::streaming::StreamFinal) =

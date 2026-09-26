@@ -14,7 +14,7 @@ async fn context_smoke() {
         .iter()
         .copied()
         .fold(
-            rig::AgentBuilder::new(rig::model(groq.completion(CONTEXT_MODEL))),
+            rig::agent(groq.completion(CONTEXT_MODEL)),
             |builder, doc| builder.context(doc),
         )
         .build();

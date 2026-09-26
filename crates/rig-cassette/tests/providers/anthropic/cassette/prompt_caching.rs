@@ -1681,7 +1681,7 @@ async fn conformance_agent_loop_keeps_hitting_across_tool_turns() {
         "prompt_caching/conformance_agent_loop",
         |client| async move {
             // Built from a model that has prompt caching *enabled*.
-            // `rig::AgentBuilder::new(rig::model(client.completion(name)))` constructs a default model, which places no
+            // `rig::agent(client.completion(name))` constructs a default model, which places no
             // `cache_control` markers at all — a first recording made exactly
             // that mistake and produced a convincing-looking "the agent loop
             // busts the cache" result (zero cached tokens on every turn) that

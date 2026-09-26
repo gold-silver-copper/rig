@@ -31,7 +31,7 @@ async fn default_instructions_fill_required_instructions() {
         .await
         .with_instructions("Always answer with the single word cedar.");
 
-    let agent = rig::AgentBuilder::new(rig::model(client.completion(LIVE_MODEL))).build();
+    let agent = rig::agent(client.completion(LIVE_MODEL)).build();
     let mut stream = agent
         .prompt("Reply with the exact word from the instructions.")
         .stream();

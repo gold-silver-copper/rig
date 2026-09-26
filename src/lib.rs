@@ -5,8 +5,8 @@
 //! feature, the runtime from `rig_agent` at `rig::agent`. `rig::tool` then
 //! carries the contextual tool API alongside the portable contracts, which are
 //! always available. `use rig::prelude::*;` brings in [`Model`], its
-//! [`Transport`](rig_core::driver::Transport), [`model()`](fn@model) and the
-//! common agent types.
+//! [`Transport`](rig_core::driver::Transport), [`model()`](fn@model),
+//! [`agent()`](fn@agent) and the common agent types.
 //!
 //! Companion provider and vector-store crates are feature-gated modules, named
 //! after their features wherever module naming allows:
@@ -60,6 +60,34 @@ pub mod http_client {
 #[cfg(feature = "agent")]
 #[cfg_attr(docsrs, doc(cfg(feature = "agent")))]
 pub use rig_agent::{Agent, AgentBuilder, AgentRun, AgentRunner, TypedPromptResponse};
+
+/// An agent builder over `wire` on the process-wide default transport:
+/// [`AgentBuilder::new`] over [`model()`](fn@model). Build the agent with
+/// [`AgentBuilder::new`] instead to run it over another transport, an erased
+/// model or a bus handle.
+///
+/// Construction never fails, as with [`model()`](fn@model).
+///
+/// ```no_run
+/// use rig::providers::openai::{self, OpenAI};
+///
+/// # fn main() -> Result<(), rig::client::EnvError> {
+/// let agent = rig::agent(OpenAI::from_env()?.chat(openai::GPT_5_2))
+///     .preamble("Answer in one short sentence.")
+///     .build();
+/// # let _ = agent;
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(all(feature = "agent", feature = "reqwest"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "agent", feature = "reqwest"))))]
+pub fn agent<W>(wire: W) -> AgentBuilder<rig_agent::agent::NoToolConfig>
+where
+    W: rig_core::wire::Wire<Op = rig_core::operation::Completion>,
+    rig_core::http_client::DynHttpClient: rig_core::driver::Transport<W>,
+{
+    AgentBuilder::new(model(wire))
+}
 
 /// Direct access to the portable provider and data contracts.
 pub mod core {
@@ -131,6 +159,8 @@ pub mod integrations {
 /// Common portable imports plus additive classic-runtime conveniences.
 pub mod prelude {
     // The contextual `Tool` and its mutable `ToolContext`.
+    #[cfg(all(feature = "agent", feature = "reqwest"))]
+    pub use crate::agent;
     #[cfg(feature = "reqwest")]
     pub use crate::model;
     #[cfg(feature = "agent")]

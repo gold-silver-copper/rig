@@ -9,7 +9,7 @@ use crate::support::{BASIC_PREAMBLE, BASIC_PROMPT, assert_nonempty_response};
 #[ignore = "requires HYPERBOLIC_API_KEY"]
 async fn completion_smoke() {
     let provider = OpenAI::from_env_with(&HYPERBOLIC).expect("config should build from env");
-    let agent = rig::AgentBuilder::new(rig::model(provider.completion(hyperbolic::DEEPSEEK_R1)))
+    let agent = rig::agent(provider.completion(hyperbolic::DEEPSEEK_R1))
         .preamble(BASIC_PREAMBLE)
         .build();
 

@@ -27,15 +27,13 @@ async fn streaming_smoke() {
     let additional_params = AdditionalParameters::default().with_config(thinking_config);
 
     super::super::support::with_gemini_cassette("streaming/streaming_smoke", |client| async move {
-        let agent = rig::AgentBuilder::new(rig::model(
-            client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-        ))
-        .preamble(STREAMING_PREAMBLE)
-        .additional_params(
-            serde_json::to_value(additional_params)
-                .expect("Gemini thinking config should serialize"),
-        )
-        .build();
+        let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+            .preamble(STREAMING_PREAMBLE)
+            .additional_params(
+                serde_json::to_value(additional_params)
+                    .expect("Gemini thinking config should serialize"),
+            )
+            .build();
 
         let mut stream = agent.prompt(STREAMING_PROMPT).stream();
         let (response, provider_final): (_, StreamFinal) =
@@ -63,13 +61,11 @@ async fn example_streaming_prompt() {
     super::super::support::with_gemini_cassette(
         "streaming/example_streaming_prompt",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW),
-            ))
-            .preamble("Be precise and concise.")
-            .temperature(0.5)
-            .additional_params(serde_json::to_value(params).expect("params should serialize"))
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_3_FLASH_PREVIEW))
+                .preamble("Be precise and concise.")
+                .temperature(0.5)
+                .additional_params(serde_json::to_value(params).expect("params should serialize"))
+                .build();
 
             let mut stream = agent
                 .prompt("When and where and what type is the next solar eclipse?")

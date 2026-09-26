@@ -1,5 +1,4 @@
 use anyhow::Result;
-use rig::prelude::*;
 use rig::providers::openai::{self, OpenAI};
 use rig::{
     embeddings::EmbeddingsBuilder,
@@ -154,7 +153,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let index = vector_store.index(embedding_model);
 
     // Create RAG agent with a single context prompt and a dynamic tool source
-    let calculator_rag = AgentBuilder::new(rig::model(openai_client.completion(openai::GPT_4)))
+    let calculator_rag = rig::agent(openai_client.completion(openai::GPT_4))
         .preamble("You are a calculator here to help the user perform arithmetic operations.")
         // Add a dynamic tool source with a sample rate of 1 (i.e.: only
         // 1 additional tool will be added to prompts)

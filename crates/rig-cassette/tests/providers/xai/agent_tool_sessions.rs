@@ -464,7 +464,7 @@ async fn sequential_complex_tool_calls_streaming() -> Result<()> {
         |client| async move {
             let log = Arc::new(Mutex::new(Vec::new()));
             let (ping, manifest, labels, echo) = complex_tools(&log);
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(SESSION_MODEL)))
+            let agent = rig::agent(client.completion(SESSION_MODEL))
                 .preamble(COMPLEX_SESSION_PREAMBLE)
                 .tool(ping)
                 .tool(manifest)
@@ -824,7 +824,7 @@ async fn multimodal_image_input_mixed_text_ordering() -> Result<()> {
     with_xai_cassette_result(
         "agent_tool_sessions/multimodal_image_input_mixed_text_ordering",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(VISION_MODEL)))
+            let agent = rig::agent(client.completion(VISION_MODEL))
                 .preamble("You answer image questions concisely and directly.")
                 .build();
 

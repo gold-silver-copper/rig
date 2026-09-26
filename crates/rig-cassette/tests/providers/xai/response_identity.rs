@@ -83,7 +83,7 @@ async fn streamed_agent_run_reports_identity() {
         "response_identity/streamed_agent_run_reports_identity",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(xai::GROK_3_MINI)))
+            let agent = rig::agent(client.completion(xai::GROK_3_MINI))
                 .preamble("You are a terse assistant.")
                 .add_hook(probe.clone())
                 .build();

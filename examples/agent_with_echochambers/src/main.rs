@@ -1,6 +1,5 @@
 use anyhow::Result;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
-use rig::prelude::*;
 use rig::{
     integrations::cli_chatbot::ChatBotBuilder,
     providers::openai::{self, OpenAI},
@@ -328,7 +327,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let openai_client = OpenAI::from_env()?;
 
     // Create agent with all tools
-    let echochambers_agent = AgentBuilder::new(rig::model(openai_client.completion(openai::GPT_4O)))
+    let echochambers_agent = rig::agent(openai_client.completion(openai::GPT_4O))
         .preamble(
             "You are an assistant designed to help users interact with EchoChambers rooms.
             You can send messages, retrieve message history, and analyze various metrics.

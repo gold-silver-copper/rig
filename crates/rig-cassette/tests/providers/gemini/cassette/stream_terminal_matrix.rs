@@ -272,13 +272,11 @@ async fn two_terminal_stream_agent_prompt_keeps_the_answer() {
     with_gemini_stream_terminal_cassette(
         "stream_terminal_matrix/two_terminal_stream_agent_prompt_keeps_the_answer",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .temperature(0.0)
-            .max_tokens(2000)
-            .additional_params(code_execution_params())
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .temperature(0.0)
+                .max_tokens(2000)
+                .additional_params(code_execution_params())
+                .build();
 
             let mut stream = agent.prompt(TWO_ROUND_PROMPT).stream();
             let mut answer = String::new();

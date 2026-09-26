@@ -206,7 +206,7 @@ async fn blocking_agent_reports_reasoning_tokens() {
     with_openrouter_usage_cassette(
         "reasoning_usage_matrix/blocking_agent_reports_reasoning_tokens",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(O4_MINI)))
+            let agent = rig::agent(client.completion(O4_MINI))
                 .max_tokens(CAP)
                 .additional_params(openai_reasoning("medium"))
                 .build();
@@ -245,7 +245,7 @@ async fn streaming_agent_reports_reasoning_tokens() {
     with_openrouter_usage_cassette(
         "reasoning_usage_matrix/streaming_agent_reports_reasoning_tokens",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.completion(O4_MINI)))
+            let agent = rig::agent(client.completion(O4_MINI))
                 .max_tokens(CAP)
                 .additional_params(openai_reasoning("medium"))
                 .build();

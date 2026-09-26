@@ -72,9 +72,7 @@ async fn streaming_terminal_carries_the_correlation_id() -> Result<()> {
     with_mistral_cassette_result(
         "response_identity_edge/streaming_terminal_carries_the_correlation_id",
         |client| async move {
-            let agent =
-                rig::AgentBuilder::new(rig::model(client.completion(mistral::MISTRAL_SMALL)))
-                    .build();
+            let agent = rig::agent(client.completion(mistral::MISTRAL_SMALL)).build();
             let mut stream = agent.prompt("Reply with exactly: identity probe").stream();
             let (_text, provider_final) =
                 collect_stream_final_response_and_provider_final(&mut stream).await?;

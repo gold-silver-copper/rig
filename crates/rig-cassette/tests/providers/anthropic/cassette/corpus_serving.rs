@@ -50,7 +50,7 @@ async fn two_tools(
     concurrency: usize,
     events: bool,
 ) -> rig::cassette::effect_log::EffectLog {
-    let builder = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+    let builder = rig::agent(client.completion(CLAUDE_SONNET_4_6))
         .name("golden")
         .configure_bus(bus)
         .preamble(TWO_TOOL_STREAM_PREAMBLE)
@@ -177,7 +177,7 @@ async fn capacity_one_effect_log_is_the_golden_fixture() {
 async fn serial_memory_tools_effect_log_is_the_golden_fixture() {
     with_anthropic_cassette("corpus_hooks/observe_everything", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+        let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
             .name("golden")
             .configure_bus(rig::serve::ServingPolicy {
                 serial_per_handler: true,
@@ -221,7 +221,7 @@ async fn serial_memory_tools_effect_log_is_the_golden_fixture() {
 async fn model_route_effect_log_is_the_golden_fixture() {
     with_anthropic_corpus_serving_cassette("corpus_serving/model_route", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+        let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
             .name("golden")
             .preamble(TOOLS_PREAMBLE)
             .temperature(0.0)
@@ -266,7 +266,7 @@ async fn model_route_effect_log_is_the_golden_fixture() {
 async fn model_route_unselected_effect_log_is_the_golden_fixture() {
     with_anthropic_cassette("effect_corpus/tool_call_turn", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-        let agent = rig::AgentBuilder::new(rig::model(client.completion(CLAUDE_SONNET_4_6)))
+        let agent = rig::agent(client.completion(CLAUDE_SONNET_4_6))
             .name("golden")
             .preamble(TOOLS_PREAMBLE)
             .temperature(0.0)

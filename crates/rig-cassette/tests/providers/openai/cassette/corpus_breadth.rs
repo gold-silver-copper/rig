@@ -110,7 +110,7 @@ async fn output_tool_streamed_effect_log_is_the_golden_fixture() {
         "corpus_breadth/output_tool_streamed",
         |client| async move {
             let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-            let agent = rig::AgentBuilder::new(rig::model(client.openai.completion(MODEL)))
+            let agent = rig::agent(client.openai.completion(MODEL))
                 .name("golden")
                 .preamble(BASIC_PREAMBLE)
                 .temperature(0.0)
@@ -137,7 +137,7 @@ async fn output_tool_streamed_effect_log_is_the_golden_fixture() {
 async fn text_delta_stop_effect_log_is_the_golden_fixture() {
     with_openai_corpus_breadth_cassette("corpus_breadth/text_delta_stop", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-        let agent = rig::AgentBuilder::new(rig::model(client.openai.completion(MODEL)))
+        let agent = rig::agent(client.openai.completion(MODEL))
             .name("golden")
             .preamble(BASIC_PREAMBLE)
             .temperature(0.0)
@@ -178,8 +178,8 @@ async fn tool_dispatch_cancelled_effect_log_is_the_golden_fixture() {
         "corpus_breadth/tool_dispatch_cancelled",
         |client| async move {
             let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-            let agent = rig::AgentBuilder::new(rig::model(client
-                .openai.completion(MODEL)))
+            let agent = rig::agent(client
+                .openai.completion(MODEL))
                 .name("golden")
                 .preamble(TOOLS_PREAMBLE)
                 .temperature(0.0)
@@ -248,7 +248,7 @@ async fn custom_at_outcome_effect_log_is_the_golden_fixture() {
 async fn prompted_streamed_effect_log_is_the_golden_fixture() {
     with_openai_corpus_breadth_cassette("corpus_breadth/prompted_streamed", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::keeping_stream_events();
-        let agent = rig::AgentBuilder::new(rig::model(client.openai.completion(MODEL)))
+        let agent = rig::agent(client.openai.completion(MODEL))
             .name("golden")
             .preamble(BASIC_PREAMBLE)
             .temperature(0.0)
@@ -273,7 +273,7 @@ async fn prompted_streamed_effect_log_is_the_golden_fixture() {
 async fn memory_two_runs_effect_log_is_the_golden_fixture() {
     with_openai_corpus_breadth_cassette("corpus_breadth/memory_two_runs", |client| async move {
         let recorder = rig_cassette::effect_log::EffectLogRecorder::new();
-        let agent = rig::AgentBuilder::new(rig::model(client.openai.completion(MODEL)))
+        let agent = rig::agent(client.openai.completion(MODEL))
             .name("golden")
             .preamble(BASIC_PREAMBLE)
             .temperature(0.0)

@@ -180,7 +180,7 @@ async fn reasoning_gpt5_nano_agent_blocking_cap() {
     with_openai_max_tokens_cassette(
         "max_completion_tokens_matrix/reasoning_gpt5_nano_agent_blocking_cap",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion("gpt-5-nano")))
+            let agent = rig::agent(client.chat.completion("gpt-5-nano"))
                 .preamble(PREAMBLE)
                 .max_tokens(CAP)
                 .build();
@@ -202,7 +202,7 @@ async fn reasoning_gpt5_nano_agent_streaming_cap() {
     with_openai_max_tokens_cassette(
         "max_completion_tokens_matrix/reasoning_gpt5_nano_agent_streaming_cap",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion("gpt-5-nano")))
+            let agent = rig::agent(client.chat.completion("gpt-5-nano"))
                 .preamble(PREAMBLE)
                 .max_tokens(CAP)
                 .build();
@@ -222,7 +222,7 @@ async fn reasoning_gpt5_nano_tool_turn_cap() {
     with_openai_max_tokens_cassette(
         "max_completion_tokens_matrix/reasoning_gpt5_nano_tool_turn_cap",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion("gpt-5-nano")))
+            let agent = rig::agent(client.chat.completion("gpt-5-nano"))
                 .preamble("Use the add tool to answer arithmetic questions.")
                 .max_tokens(TOOL_CAP)
                 .tool(Adder)
@@ -246,7 +246,7 @@ async fn reasoning_gpt5_nano_tool_turn_streaming_cap() {
     with_openai_max_tokens_cassette(
         "max_completion_tokens_matrix/reasoning_gpt5_nano_tool_turn_streaming_cap",
         |client| async move {
-            let agent = rig::AgentBuilder::new(rig::model(client.chat.completion("gpt-5-nano")))
+            let agent = rig::agent(client.chat.completion("gpt-5-nano"))
                 .preamble("Use the add tool to answer arithmetic questions.")
                 .max_tokens(TOOL_CAP)
                 .tool(Adder)

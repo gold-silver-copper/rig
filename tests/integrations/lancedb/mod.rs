@@ -379,7 +379,7 @@ async fn agent_with_dynamic_context_test() {
         .unwrap();
 
     // Build RAG agent with dynamic context.
-    let agent = AgentBuilder::new(rig::model(openai_client.completion(openai::GPT_4O)))
+    let agent = rig::agent(openai_client.completion(openai::GPT_4O))
         .dynamic_context(top_k, vector_store_index)
         .build();
 

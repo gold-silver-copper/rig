@@ -331,17 +331,15 @@ fn every_create_combination_serializes_as_expected() {
 /// as a local assertion instead of reaching the live API from a unit test.
 #[tokio::test]
 async fn an_agent_with_tools_cannot_read_from_a_cache() {
-    use rig::agent::AgentBuilder;
-
     use super::super::tools_support::CountingPing;
 
     let client = Gemini::new("not-a-real-key").with_base_url("http://127.0.0.1:1");
 
-    let agent = AgentBuilder::new(rig::model(
+    let agent = rig::agent(
         client
             .completion(CACHE_MODEL)
             .with_cached_content("cachedContents/agent-guard"),
-    ))
+    )
     .tool(CountingPing::default())
     .build();
 
@@ -376,7 +374,6 @@ async fn an_agent_with_tools_cannot_read_from_a_cache() {
 /// nothing.
 #[tokio::test]
 async fn a_cache_carrying_a_provider_hosted_tool_is_usable_from_an_agent() {
-    use rig::agent::AgentBuilder;
     use rig::providers::gemini::completion::gemini_api_types::{CodeExecution, Tool};
 
     with_gemini_prompt_caching_cassette(
@@ -398,11 +395,11 @@ async fn a_cache_carrying_a_provider_hosted_tool_is_usable_from_an_agent() {
 
             let handles = [cache.name.clone()];
             always_deleting_cached_contents(&client, &handles, async {
-                let agent = AgentBuilder::new(rig::model(
+                let agent = rig::agent(
                     client
                         .completion(CACHE_MODEL)
                         .with_cached_content(cache.name.clone()),
-                ))
+                )
                 .build();
 
                 let answer = agent
@@ -454,7 +451,7 @@ async fn a_cache_carrying_a_provider_hosted_tool_is_usable_from_an_agent() {
 /// the conflict message still cannot be "move them into the cache".
 #[tokio::test]
 async fn an_agent_that_suppresses_its_tools_may_read_from_a_cache() {
-    use rig::agent::{AgentBuilder, RequestPatch};
+    use rig::agent::RequestPatch;
 
     use super::super::hook_stress_support::ApplyPatch;
     use super::super::tools_support::CountingPing;
@@ -474,11 +471,11 @@ async fn an_agent_that_suppresses_its_tools_may_read_from_a_cache() {
 
             let handles = [cache.name.clone()];
             always_deleting_cached_contents(&client, &handles, async {
-                let agent = AgentBuilder::new(rig::model(
+                let agent = rig::agent(
                     client
                         .completion(CACHE_MODEL)
                         .with_cached_content(cache.name.clone()),
-                ))
+                )
                 .tool(CountingPing::default())
                 .build();
 

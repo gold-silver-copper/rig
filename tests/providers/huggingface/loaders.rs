@@ -17,9 +17,7 @@ async fn loaders_smoke() {
 
     let agent = examples
         .fold(
-            rig::AgentBuilder::new(rig::model(
-                provider.completion("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"),
-            )),
+            rig::agent(provider.completion("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B")),
             |builder, (path, content)| {
                 builder.context(format!("Rust Example {path:?}:\n{content}").as_str())
             },

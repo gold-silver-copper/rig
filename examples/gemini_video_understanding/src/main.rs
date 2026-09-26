@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use rig::message::{Message, UserContent, Video};
-use rig::prelude::*;
 use rig::providers::gemini::completion::gemini_api_types::AdditionalParameters;
 use rig::providers::gemini::{self, Gemini, completion::gemini_api_types::GenerationConfig};
 use serde_json::json;
@@ -44,7 +43,7 @@ fn build_additional_params() -> Result<serde_json::Value> {
 async fn main() -> Result<()> {
     let client = Gemini::from_env()?;
     let additional_params = build_additional_params()?;
-    let agent = AgentBuilder::new(rig::model(client.completion(MODEL)))
+    let agent = rig::agent(client.completion(MODEL))
         .preamble("Be creative and concise. Answer directly and clearly.")
         .temperature(0.5)
         .additional_params(additional_params)

@@ -72,12 +72,10 @@ async fn agent_run_reports_none_identity() {
         "response_identity/agent_run_reports_none_identity",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble("You are a terse assistant.")
-            .add_hook(probe.clone())
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble("You are a terse assistant.")
+                .add_hook(probe.clone())
+                .build();
 
             let response = agent
                 .prompt("Reply with exactly: identity probe")
@@ -105,12 +103,10 @@ async fn streamed_agent_run_reports_none_identity() {
         "response_identity/streamed_agent_run_reports_none_identity",
         |client| async move {
             let probe = IdentityProbe::default();
-            let agent = rig::AgentBuilder::new(rig::model(
-                client.completion(gemini::completion::GEMINI_2_5_FLASH),
-            ))
-            .preamble("You are a terse assistant.")
-            .add_hook(probe.clone())
-            .build();
+            let agent = rig::agent(client.completion(gemini::completion::GEMINI_2_5_FLASH))
+                .preamble("You are a terse assistant.")
+                .add_hook(probe.clone())
+                .build();
 
             let mut stream = agent
                 .prompt(rig::completion::Message::user(
