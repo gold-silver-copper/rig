@@ -11,7 +11,6 @@ use qdrant_client::{
     Qdrant,
     qdrant::{CreateCollectionBuilder, Distance, QueryPointsBuilder, VectorParamsBuilder},
 };
-use rig_core::Model;
 use rig_core::vector_store::request::VectorSearchRequest;
 use rig_core::{
     Embed,
@@ -50,11 +49,8 @@ async fn main() -> Result<(), anyhow::Error> {
     // Get your API key from https://platform.openai.com/api-keys
     let openai_client = OpenAI::from_env()?;
 
-    let model = Model::new(
-        openai_client.embedding(openai::TEXT_EMBEDDING_ADA_002, None),
-        rig_reqwest::shared(),
-    )
-    .erase();
+    let model =
+        rig_reqwest::model(openai_client.embedding(openai::TEXT_EMBEDDING_ADA_002, None)).erase();
 
     let documents = EmbeddingsBuilder::new(model.clone())
         .document(Word {

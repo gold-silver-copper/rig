@@ -21,34 +21,17 @@
 pub use rig_core::*;
 
 /// The bundled `reqwest` transport (`rig-reqwest`). A provider's wire and a
-/// transport make a [`Model`]; [`model()`](fn@model) pairs a wire with the process-wide
-/// default transport ([`rig_reqwest::shared`]). Without the feature, pair a
+/// transport make a [`Model`]; [`model()`](fn@model), re-exported from
+/// [`rig_reqwest::model`], pairs a wire with the process-wide default
+/// transport ([`rig_reqwest::shared`]). Without the feature, pair a
 /// wire with any `HttpClientExt` implementation through `Model::new`.
 #[cfg(feature = "reqwest")]
 #[cfg_attr(docsrs, doc(cfg(feature = "reqwest")))]
 pub use rig_reqwest;
 
-/// `wire` on the process-wide default transport: the bundled reqwest client,
-/// built once on first use and shared by every model made here.
-///
-/// Construction never fails. When the reqwest client cannot be built, every
-/// call on the model reports the build failure as
-/// [`ProviderError::Http`].
-///
-/// ```no_run
-/// use rig::providers::openai::{self, OpenAI};
-///
-/// # fn main() -> Result<(), rig::client::EnvError> {
-/// let model = rig::model(OpenAI::from_env()?.completion(openai::GPT_5_2));
-/// # let _ = model;
-/// # Ok(())
-/// # }
-/// ```
 #[cfg(feature = "reqwest")]
 #[cfg_attr(docsrs, doc(cfg(feature = "reqwest")))]
-pub fn model<W: rig_core::wire::Wire>(wire: W) -> Model<W> {
-    Model::new(wire, rig_reqwest::shared())
-}
+pub use rig_reqwest::model;
 
 /// The bundled `tokio-tungstenite` websocket backend and its default-backend
 /// conveniences (`rig-tungstenite`), on native targets. With the `websocket`

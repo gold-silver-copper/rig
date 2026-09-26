@@ -9,8 +9,9 @@
         clippy::unreachable
     )
 )]
-//! The bundled reqwest HTTP transport for Rig, and the process-wide default
-//! transport built from it.
+//! The bundled reqwest HTTP transport for Rig, the process-wide default
+//! transport built from it, and [`model`], which pairs a wire with that
+//! transport.
 //!
 //! Native requests and bodies enter the captured Tokio context on each poll,
 //! using a lazy fallback when no runtime is current. Callers retain ownership;
@@ -19,8 +20,13 @@
 //! finish. Missing drivers can panic; a stopped runtime causes I/O failure.
 //!
 //! ```no_run
-//! let transport = rig_reqwest::shared();
-//! # let _ = transport;
+//! use rig_core::providers::openai::{self, OpenAI};
+//!
+//! # fn main() -> Result<(), rig_core::client::EnvError> {
+//! let model = rig_reqwest::model(OpenAI::from_env()?.completion(openai::GPT_5_2));
+//! # let _ = model;
+//! # Ok(())
+//! # }
 //! ```
 
 pub use reqwest;
@@ -151,6 +157,7 @@ use rig_core::http_client::{
     StreamingResponse, multipart::PartContent,
 };
 use rig_core::wasm_compat::*;
+use rig_core::{Model, wire::Wire};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -160,14 +167,12 @@ use std::sync::Arc;
 /// send on the transport reports that build failure in-band as
 /// [`ProviderError::Http`](rig_core::error::ProviderError::Http).
 ///
-/// ```no_run
-/// use rig_core::{Model, providers::openai::OpenAI};
+/// [`model`] pairs a wire with this transport. Pass the transport itself
+/// where a client is asked for rather than a model:
 ///
-/// # fn main() -> Result<(), rig_core::client::EnvError> {
-/// let model = Model::new(OpenAI::from_env()?.completion("gpt-5.2"), rig_reqwest::shared());
-/// # let _ = model;
-/// # Ok(())
-/// # }
+/// ```no_run
+/// let transport = rig_reqwest::shared();
+/// # let _ = transport;
 /// ```
 pub fn shared() -> DynHttpClient {
     fn build() -> DynHttpClient {
@@ -188,6 +193,26 @@ pub fn shared() -> DynHttpClient {
         }
         SHARED.with(Clone::clone)
     }
+}
+
+/// `wire` on the process-wide default transport: the bundled reqwest client,
+/// built once on first use and shared by every model made here.
+///
+/// Construction never fails. When the reqwest client cannot be built, every
+/// call on the model reports the build failure as
+/// [`ProviderError::Http`](rig_core::error::ProviderError::Http).
+///
+/// ```no_run
+/// use rig_core::providers::openai::{self, OpenAI};
+///
+/// # fn main() -> Result<(), rig_core::client::EnvError> {
+/// let model = rig_reqwest::model(OpenAI::from_env()?.completion(openai::GPT_5_2));
+/// # let _ = model;
+/// # Ok(())
+/// # }
+/// ```
+pub fn model<W: Wire>(wire: W) -> Model<W> {
+    Model::new(wire, shared())
 }
 
 /// The bundled transport whose reqwest client could not be built: every send

@@ -3,7 +3,6 @@ use mongodb::{
     bson::{self, doc},
     options::ClientOptions,
 };
-use rig_core::Model;
 use rig_core::{providers::openai, vector_store::request::VectorSearchRequest};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -64,11 +63,8 @@ async fn main() -> Result<(), anyhow::Error> {
         .collection("context");
 
     // Select the embedding model and generate our embeddings
-    let model = Model::new(
-        openai_client.embedding(openai::TEXT_EMBEDDING_ADA_002, None),
-        rig_reqwest::shared(),
-    )
-    .erase();
+    let model =
+        rig_reqwest::model(openai_client.embedding(openai::TEXT_EMBEDDING_ADA_002, None)).erase();
 
     let words = vec![
         Word {

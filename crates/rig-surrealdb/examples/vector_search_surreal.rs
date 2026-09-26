@@ -1,4 +1,3 @@
-use rig_core::Model;
 use rig_core::providers::openai::{self, wire::OpenAI};
 use rig_core::vector_store::request::VectorSearchRequest;
 use rig_core::{
@@ -31,11 +30,8 @@ impl std::fmt::Display for WordDefinition {
 async fn main() -> Result<(), anyhow::Error> {
     // Bind the OpenAI embeddings endpoint
     let openai_client = OpenAI::from_env()?;
-    let model = Model::new(
-        openai_client.embedding(openai::TEXT_EMBEDDING_ADA_002, None),
-        rig_reqwest::shared(),
-    )
-    .erase();
+    let model =
+        rig_reqwest::model(openai_client.embedding(openai::TEXT_EMBEDDING_ADA_002, None)).erase();
 
     let surreal = Surreal::new::<Mem>(()).await?;
 

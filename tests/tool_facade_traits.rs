@@ -123,8 +123,7 @@ fn completion_client_single_import_surface() {
         &rig::providers::openai::wire::OPENAI,
         "test-key",
     );
-    let _model = model(openai.completion("gpt-4o"));
-    let _explicit = Model::new(openai.completion("gpt-4o"), rig::rig_reqwest::shared());
+    let _model: Model<_> = model(openai.completion("gpt-4o"));
     let _agent = AgentBuilder::new(model(openai.completion("gpt-4o"))).build();
 }
 
@@ -145,7 +144,7 @@ fn completion_provider_explicit_facade_import_surface() {
         &rig::providers::openai::wire::OPENAI,
         "test-key",
     );
-    let _model = Model::new(openai.completion("gpt-4o"), rig::rig_reqwest::shared());
+    let _model: Model<_> = rig::model(openai.completion("gpt-4o"));
     let _agent = AgentBuilder::new(rig::model(openai.completion("gpt-4o"))).build();
     let _extractor =
         ExtractorBuilder::<Extracted>::new(rig::model(openai.completion("gpt-4o"))).build();

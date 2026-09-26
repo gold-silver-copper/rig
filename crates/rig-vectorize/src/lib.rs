@@ -11,10 +11,8 @@
 //!
 //! # fn example() -> anyhow::Result<()> {
 //! let openai = openai::wire::OpenAI::from_env()?;
-//! let embedding_model = rig_core::Model::new(
-//!     openai.embedding(openai::TEXT_EMBEDDING_3_SMALL, None),
-//!     rig_reqwest::shared(),
-//! );
+//! let embedding_model =
+//!     rig_reqwest::model(openai.embedding(openai::TEXT_EMBEDDING_3_SMALL, None));
 //!
 //! let vector_store = VectorizeVectorStore::new(
 //!     embedding_model,

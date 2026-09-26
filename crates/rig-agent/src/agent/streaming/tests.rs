@@ -5404,9 +5404,8 @@ async fn test_span_context_isolation() -> anyhow::Result<()> {
 
     // Make streaming request WITHOUT an outer span so rig creates its own invoke_agent span
     // (rig reuses current span if one exists, so we need to ensure there's no current span)
-    let agent = AgentBuilder::new(rig_core::Model::new(
+    let agent = AgentBuilder::new(rig_reqwest::model(
         anthropic::wire::Anthropic::from_env()?.completion(anthropic::completion::CLAUDE_HAIKU_4_5),
-        rig_reqwest::shared(),
     ))
     .preamble("You are a helpful assistant.")
     .temperature(0.1)
@@ -5462,9 +5461,8 @@ async fn test_span_context_isolation() -> anyhow::Result<()> {
 async fn test_chat_history_in_final_response() -> anyhow::Result<()> {
     use rig_core::message::Message;
 
-    let agent = AgentBuilder::new(rig_core::Model::new(
+    let agent = AgentBuilder::new(rig_reqwest::model(
         anthropic::wire::Anthropic::from_env()?.completion(anthropic::completion::CLAUDE_HAIKU_4_5),
-        rig_reqwest::shared(),
     ))
     .preamble("You are a helpful assistant. Keep responses brief.")
     .temperature(0.1)
