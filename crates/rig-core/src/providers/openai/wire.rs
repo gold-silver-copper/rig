@@ -965,7 +965,9 @@ impl OpenAI {
             .unwrap_or(self.dialect.quirks.responses.system_instructions)
     }
 
-    /// Override dialect and model-specific routing for [`Self::completion`].
+    /// Set the route [`Self::completion`] picks, overriding the dialect's and
+    /// the model's defaults. [`Self::chat`] or [`Self::responses`] names a
+    /// wire directly.
     pub fn with_route(mut self, route: Route) -> Self {
         self.route = Some(route);
         self

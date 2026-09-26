@@ -57,8 +57,8 @@ pub(crate) const OPENAI_DIALECTS: &[&openai::wire::Dialect] = &[
 ];
 
 /// A provider's request grammar and configuration type.
-/// The OpenAI family includes Chat Completions and Responses; select the endpoint
-/// through [`openai::wire::OpenAI::with_route`].
+/// The OpenAI family includes Chat Completions and Responses; a configuration's
+/// [`openai::wire::OpenAI::with_route`] sets the one its completion wire picks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Format {
     /// OpenAI's grammar: Chat Completions and the Responses endpoint.

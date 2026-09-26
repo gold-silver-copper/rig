@@ -23,7 +23,7 @@ use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::completion::Usage;
-use rig::providers::openai::{self, Route, wire::OpenAI};
+use rig::providers::openai::{self, wire::OpenAI};
 use rig::streaming::{Delta, StreamEvent};
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -90,22 +90,17 @@ fn print_usage(label: &str, usage: Usage) {
 async fn main() -> Result<()> {
     let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| openai::GPT_4O_MINI.to_string());
 
-    // Chat Completions: the route every OpenAI-compatible server speaks,
-    // chosen once on the configuration.
-    let agent = rig::agent(
-        OpenAI::from_env()?
-            .with_route(Route::Chat)
-            .completion(model),
-    )
-    .preamble(
-        "You are a concise release assistant. The user will ask about an \
+    // Chat Completions: the wire every OpenAI-compatible server speaks.
+    let agent = rig::agent(OpenAI::from_env()?.chat(model))
+        .preamble(
+            "You are a concise release assistant. The user will ask about an \
              internal ticket. Call `lookup_project_status` exactly once before \
              answering. After the tool result is available, answer directly and \
              do not call another tool.",
-    )
-    .max_tokens(512)
-    .tool(ProjectStatusTool)
-    .build();
+        )
+        .max_tokens(512)
+        .tool(ProjectStatusTool)
+        .build();
 
     let mut stream = agent
         .prompt("Check ticket RIG-usage-42 and summarize the result in one sentence.")

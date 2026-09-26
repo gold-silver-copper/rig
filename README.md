@@ -136,8 +136,8 @@ use rig::providers::openai::{self, OpenAI};
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // A model is a provider's wire on a transport: `rig::agent` builds an agent
-    // over the wire on the default one. OpenAI's default completion route is the
-    // Responses API; `.with_route(Route::Chat)` on the configuration selects Chat Completions.
+    // over the wire on the default one. OpenAI's `completion` wire is the
+    // Responses API; `.chat(model)` names the Chat Completions wire instead.
     let comedian_agent = rig::agent(OpenAI::from_env()?.completion(openai::GPT_5_2))
         .preamble("You are a comedian here to entertain the user using humour and jokes.")
         .build();

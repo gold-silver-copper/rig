@@ -2,9 +2,9 @@
 //! Explicit configuration routes override model-specific hooks and dialect defaults.
 //!
 //! ```
-//! use rig_core::providers::openai::{OpenAI, Route};
+//! use rig_core::providers::openai::{OpenAI, Route, wire::OpenAiWire};
 //! let provider = OpenAI::new("key").with_route(Route::Chat);
-//! let wire = provider.chat("gpt-5.2");
+//! assert!(matches!(provider.completion("gpt-5.2"), OpenAiWire::Chat(_)));
 //! ```
 
 use serde::{Deserialize, Serialize};
