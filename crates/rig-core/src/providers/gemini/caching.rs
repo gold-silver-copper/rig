@@ -441,7 +441,7 @@ fn cache_request(
     }
     Ok(api::CachedContent {
         model: Some(format!("models/{model}")),
-        display_name: Some(format!("rig-cache-{}", &digest[..40])),
+        display_name: Some(format!("rig-caching-spike-rust-{}", &digest[..40])),
         system_instruction: parsed.prefix[0].as_deref().map(from_raw).transpose()?,
         tools: parsed.prefix[1].as_deref().map(from_raw).transpose()?.unwrap_or_default(),
         tool_config: parsed.prefix[2].as_deref().map(from_raw).transpose()?,

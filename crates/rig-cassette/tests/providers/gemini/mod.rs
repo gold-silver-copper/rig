@@ -2,6 +2,7 @@ mod support;
 
 mod cassette {
     mod adversarial_matrix;
+    mod caching_spike;
     mod corpus_breadth;
     mod corpus_delta;
     mod corpus_faults;
