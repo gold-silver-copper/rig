@@ -27,6 +27,7 @@
 pub mod api;
 pub mod batches;
 pub mod cached_content;
+pub mod caching;
 pub mod completion;
 pub mod count_tokens;
 pub mod edge;

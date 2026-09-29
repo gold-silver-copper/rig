@@ -71,6 +71,26 @@ impl Gemini {
         self.model(self.config.image_generation(model))
     }
 
+    /// SPIKE: the GenerateContent model for `model`, caching automatically
+    /// through `book` (see [`crate::providers::gemini::caching`]).
+    pub fn completion_cached(
+        &self,
+        model: impl Into<String>,
+        book: crate::providers::gemini::caching::CacheBook,
+    ) -> Model<
+        GenerateContent,
+        crate::providers::gemini::caching::Caching<crate::http_client::DynHttpClient>,
+    > {
+        Model::new(
+            self.config.completion(model),
+            crate::providers::gemini::caching::Caching::new(
+                self.http.clone(),
+                self.config.clone(),
+                book,
+            ),
+        )
+    }
+
     /// Gemini's explicit context cache (`cachedContents`).
     pub fn cached_contents(&self) -> Model<CachedContents> {
         self.model(self.config.cached_contents())
