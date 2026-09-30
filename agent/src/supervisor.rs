@@ -29,8 +29,8 @@ pub fn run(options: Options) -> ExitCode {
 }
 
 fn supervise(options: Options) -> anyhow::Result<ExitCode> {
-    let paths = Paths::new(options.state_dir());
-    fs::create_dir_all(paths.bin())?;
+    fs::create_dir_all(options.state_dir().join("bin"))?;
+    let paths = Paths::new(fs::canonicalize(options.state_dir())?);
     // Chosen once, so every child binds the same port.
     let port = match options.brp_port {
         Some(port) => port,
@@ -46,6 +46,7 @@ fn supervise(options: Options) -> anyhow::Result<ExitCode> {
     let mut model = options.model.clone();
 
     loop {
+        prune_binaries(&paths, &[&last_good, &next]);
         let _ = fs::remove_file(paths.ready());
         let _ = fs::remove_file(paths.reload());
         let log_start = fs::metadata(paths.log()).map(|m| m.len()).unwrap_or(0);
@@ -129,6 +130,19 @@ pub fn stash_binary(paths: &Paths, binary: &Path) -> anyhow::Result<PathBuf> {
     fs::create_dir_all(paths.bin())?;
     fs::copy(binary, &target)?;
     Ok(target)
+}
+
+/// Delete stashed binaries other than `keep`: each is a full executable.
+fn prune_binaries(paths: &Paths, keep: &[&PathBuf]) {
+    let Ok(entries) = fs::read_dir(paths.bin()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !keep.contains(&&path) {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 /// What a child wrote to stderr since `start`, trimmed to its last lines.

@@ -21,6 +21,11 @@ pub struct ReloadPlugin;
 #[derive(Message)]
 pub struct ReloadCommand;
 
+/// A `reload` call waiting for the rest of its batch, so that edits made in
+/// the same response are on disk before the build starts.
+#[derive(Resource)]
+struct Queued(Entity);
+
 /// A build in progress, for the `reload` call `call` or for the user.
 #[derive(Resource)]
 struct Building {
@@ -49,24 +54,44 @@ impl Plugin for ReloadPlugin {
                 json!({ "type": "object", "properties": {} }),
                 reload_tool,
             )
-            .add_systems(Update, (start_user_reload, finish_build, restart_when_ready).chain());
+            .add_systems(
+                Update,
+                (start_user_reload, start_queued, finish_build, restart_when_ready).chain(),
+            );
     }
 }
 
 fn reload_tool(
     In(invocation): In<ToolInvocation>,
     building: Option<Res<Building>>,
+    queued: Option<Res<Queued>>,
+    mut commands: Commands,
+) {
+    if building.is_some() || queued.is_some() {
+        commands
+            .entity(invocation.entity)
+            .insert(CallOutput("error: a reload is already in progress".into()));
+        return;
+    }
+    commands.insert_resource(Queued(invocation.entity));
+}
+
+fn start_queued(
+    queued: Option<Res<Queued>>,
+    calls: Query<(Entity, Option<&CallOutput>), With<PendingCall>>,
     config: Res<Config>,
     tasks: Res<ToolTasks>,
     mut commands: Commands,
 ) {
-    if building.is_some() {
-        commands
-            .entity(invocation.entity)
-            .insert(CallOutput("error: a reload is already building".into()));
+    let Some(queued) = queued else { return };
+    if calls
+        .iter()
+        .any(|(entity, output)| entity != queued.0 && output.is_none())
+    {
         return;
     }
-    commands.insert_resource(start_build(&config, &tasks, Some(invocation.entity)));
+    commands.remove_resource::<Queued>();
+    commands.insert_resource(start_build(&config, &tasks, Some(queued.0)));
 }
 
 fn start_user_reload(

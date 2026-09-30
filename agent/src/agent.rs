@@ -12,7 +12,7 @@ use rig_core::completion::{CompletionRequest, CompletionResponse, ToolDefinition
 use rig_core::error::ProviderError;
 use rig_core::message::{Message, ToolCall, ToolResultContent};
 use rig_core::operation::Completion;
-use rig_core::providers::registry::ProviderRef;
+use rig_core::providers::registry::{ProviderConfig, ProviderRef};
 use rig_core::providers::{anthropic, deepseek, gemini, openai};
 
 use crate::session::{CallState, Entry, EntryKind, Paths, Session};
@@ -22,22 +22,53 @@ use crate::{Options, ReloadStatus};
 pub const MODEL_ALIASES: &[(&str, &str, &str)] = &[
     ("sol", "openai", openai::GPT_6_1_SOL),
     ("opus", "anthropic", anthropic::completion::CLAUDE_OPUS_5_5),
-    ("gemini", "gemini", gemini::completion::GEMINI_3_8_FLASH),
+    ("gemini", gemini::PROVIDER_NAME, gemini::completion::GEMINI_3_8_FLASH),
     ("deepseek", "deepseek", deepseek::DEEPSEEK_V4_1_FLASH),
 ];
 
 pub const DEFAULT_MODEL: &str = "opus";
 
+/// Anthropic binds thinking blocks to the conversation they were made in,
+/// tools list included, and rejects them once it differs. Tools change here
+/// (reloads, BRP plugins), so ask it to drop such blocks instead.
+const THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
+
+/// A resolved model selection.
+pub struct Selection {
+    pub reference: ProviderRef,
+    pub model: DynModel<Completion>,
+    /// Provider-specific request fields to send with every request.
+    pub params: Option<serde_json::Value>,
+}
+
 /// Resolve an alias or provider reference into a model, credentials from the
 /// environment.
-pub fn resolve_model(name: &str) -> anyhow::Result<(ProviderRef, DynModel<Completion>)> {
+pub fn resolve_model(name: &str) -> anyhow::Result<Selection> {
     let spelled = MODEL_ALIASES
         .iter()
         .find(|(alias, ..)| *alias == name)
         .map_or_else(|| name.to_string(), |(_, vendor, model)| format!("{vendor}:{model}"));
-    let reference = ProviderRef::parse(&spelled)?;
+    let mut reference = ProviderRef::parse(&spelled)?;
+    let mut params = None;
+    if reference.id().is_some_and(|id| id.vendor() == anthropic::ANTHROPIC.name) {
+        // The credential is dropped by `configured` and read again from the
+        // environment by `completion_model`.
+        if let ProviderConfig::Anthropic(config) = reference.config("") {
+            reference = ProviderRef::configured(
+                ProviderConfig::Anthropic(config.with_beta(THINKING_BINDING_BETA)),
+                reference.model(),
+            )?;
+            params = Some(serde_json::json!({
+                "thinking": { "block_binding": { "prefix_mismatch_behavior": "drop_block" } }
+            }));
+        }
+    }
     let model = reference.completion_model()?;
-    Ok((reference, model))
+    Ok(Selection {
+        reference,
+        model,
+        params,
+    })
 }
 
 pub struct AgentPlugin {
@@ -85,41 +116,31 @@ impl Transcript {
 #[derive(Resource, Default)]
 pub struct PromptQueue(pub VecDeque<String>);
 
-/// The selected model. `model` is `None` when the selection has no
+/// The selected model. `selection` is `None` when the selection has no
 /// credential, so the agent can still start and be switched.
 #[derive(Resource)]
 pub struct ActiveModel {
     pub name: String,
-    pub reference: Option<ProviderRef>,
-    pub model: Option<DynModel<Completion>>,
+    pub selection: Option<Selection>,
 }
 
 impl ActiveModel {
     fn select(name: &str) -> (Self, Option<anyhow::Error>) {
-        match resolve_model(name) {
-            Ok((reference, model)) => (
-                Self {
-                    name: name.to_string(),
-                    reference: Some(reference),
-                    model: Some(model),
-                },
-                None,
-            ),
-            Err(error) => (
-                Self {
-                    name: name.to_string(),
-                    reference: None,
-                    model: None,
-                },
-                Some(error),
-            ),
-        }
+        let (selection, error) = match resolve_model(name) {
+            Ok(selection) => (Some(selection), None),
+            Err(error) => (None, Some(error)),
+        };
+        let active = Self {
+            name: name.to_string(),
+            selection,
+        };
+        (active, error)
     }
 
     pub fn label(&self) -> String {
-        self.reference
+        self.selection
             .as_ref()
-            .map_or_else(|| self.name.clone(), ToString::to_string)
+            .map_or_else(|| self.name.clone(), |s| s.reference.to_string())
     }
 }
 
@@ -169,6 +190,10 @@ pub struct PendingCall {
 /// A call's answer. The turn continues once every [`PendingCall`] has one.
 #[derive(Component)]
 pub struct CallOutput(pub String);
+
+/// An output restored after a reload, already shown before it.
+#[derive(Component)]
+struct Shown;
 
 /// Answers tool calls from async work: `spawn` runs a future on the Tokio
 /// runtime and inserts its output as the call's [`CallOutput`].
@@ -275,17 +300,20 @@ impl Plugin for AgentPlugin {
         if !session.batch.is_empty() {
             turn = Turn::Tools;
             for (order, CallState { call, output }) in session.batch.into_iter().enumerate() {
-                let output = output.or_else(|| {
-                    (session.reload_call.as_deref() == Some(call_key(&call).as_str()))
+                let Some(output) = output else {
+                    let output = (session.reload_call.as_deref() == Some(call_key(&call).as_str()))
                         .then(|| reload_note.clone())
                         .flatten()
-                });
-                let output = output.unwrap_or_else(|| {
-                    "error: this call was interrupted by a reload; run it again if needed"
-                        .to_string()
-                });
+                        .unwrap_or_else(|| {
+                            "error: this call was interrupted by a reload; run it again if needed"
+                                .to_string()
+                        });
+                    app.world_mut()
+                        .spawn((PendingCall { call, order }, CallOutput(output)));
+                    continue;
+                };
                 app.world_mut()
-                    .spawn((PendingCall { call, order }, CallOutput(output)));
+                    .spawn((PendingCall { call, order }, CallOutput(output), Shown));
             }
         }
         match &self.options.reload {
@@ -316,7 +344,7 @@ impl Plugin for AgentPlugin {
         .add_message::<SwitchModel>()
         .add_systems(
             Update,
-            (switch_model, collect_tool_outputs, drive_turn).chain(),
+            (switch_model, collect_tool_outputs, show_outputs, drive_turn).chain(),
         );
     }
 }
@@ -335,11 +363,10 @@ fn switch_model(
 ) {
     for SwitchModel(name) in requests.read() {
         match resolve_model(name) {
-            Ok((reference, model)) => {
+            Ok(selection) => {
                 *active = ActiveModel {
                     name: name.clone(),
-                    reference: Some(reference),
-                    model: Some(model),
+                    selection: Some(selection),
                 };
                 transcript.push(EntryKind::Info, format!("model: {}", active.label()));
                 commands.queue(save_session_command(config.paths.clone()));
@@ -354,6 +381,15 @@ fn collect_tool_outputs(outputs: Res<ToolOutputs>, mut commands: Commands) {
         if let Ok(mut entity) = commands.get_entity(entity) {
             entity.insert(CallOutput(output));
         }
+    }
+}
+
+fn show_outputs(
+    outputs: Query<&CallOutput, (Added<CallOutput>, Without<Shown>)>,
+    mut transcript: ResMut<Transcript>,
+) {
+    for CallOutput(output) in &outputs {
+        transcript.push(EntryKind::ToolResult, output.clone());
     }
 }
 
@@ -442,7 +478,6 @@ fn drive_turn(
             done.sort_by_key(|(_, pending, _)| pending.order);
             let mut results = Vec::new();
             for (entity, pending, CallOutput(output)) in done {
-                transcript.push(EntryKind::ToolResult, output.clone());
                 // Providers reject empty tool results.
                 let output = if output.is_empty() { "(no output)" } else { output };
                 results.push(pending.call.result(vec![ToolResultContent::text(output)]));
@@ -463,7 +498,7 @@ fn request(
     config: &Config,
     transcript: &mut Transcript,
 ) -> Turn {
-    let Some(model) = &active.model else {
+    let Some(selection) = &active.selection else {
         transcript.push(
             EntryKind::Error,
             format!("model `{}` is unavailable; pick another with /model", active.name),
@@ -474,12 +509,15 @@ fn request(
     let Some(prompt) = history.pop() else {
         return Turn::Idle;
     };
-    let request = CompletionRequest::new(prompt)
+    let mut request = CompletionRequest::new(prompt)
         .messages(history)
         .preamble(system_prompt(config))
         .tools(registry.0.values().map(|tool| tool.definition.clone()).collect());
+    if let Some(params) = &selection.params {
+        request = request.additional_params(params.clone());
+    }
     let (sender, receiver) = crossbeam_channel::bounded(1);
-    let call = model.call(request);
+    let call = selection.model.call(request);
     tokio.0.spawn(async move {
         let _ = sender.send(call.await);
     });
