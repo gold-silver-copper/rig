@@ -35,7 +35,7 @@ struct Reply(Sender<Result<Value, String>>);
 impl Plugin for CodeModePlugin {
     fn build(&self, app: &mut App) {
         let (sender, receiver) = async_channel::unbounded();
-        let definition = sandbox(&app.world().resource::<Tools>()).definition();
+        let definition = sandbox(app.world().resource::<Tools>()).definition();
         app.world_mut().resource_mut::<Tools>().0.insert(
             TOOL_NAME.into(),
             crate::glue::Tool {
