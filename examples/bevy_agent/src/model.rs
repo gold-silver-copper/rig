@@ -35,7 +35,7 @@ pub fn start(
                 for _ in 0..12 {
                     let Some(current) = history.pop() else { bail!("empty conversation"); };
                     let request = CompletionRequest::new(current.clone())
-                        .preamble(format!("You are a minimal coding agent. Working directory: {}. Use tools to inspect, edit and test code. Tools run with the user's privileges. Never expose environment credentials. Native plugin source is editable, and patch_native applies it in this running process. Be concise.", tools.root.display()))
+                        .preamble(format!("You are a minimal coding agent. Working directory: {}. Use tools to inspect, edit and test code. Tools run with the user's privileges. Never expose environment credentials. Native plugin source: {}. Edit behavior only; agent_plugin_version MUST keep returning 1 and all C ABI signatures MUST stay unchanged. patch_native applies it in this running process. Be concise.", tools.root.display(), tools.native_source.display()))
                         .messages(history.clone()).tools(tools.definitions()?).max_tokens(2048);
                     // Keep the conversation valid even when a provider call fails.
                     history.push(current);

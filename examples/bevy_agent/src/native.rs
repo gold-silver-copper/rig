@@ -101,8 +101,11 @@ impl Native {
         // Trusted native code only. Loading a library runs its constructors.
         let lib = unsafe { libloading::Library::new(&built.path)? };
         let version = unsafe { lib.get::<unsafe extern "C" fn() -> u32>(b"agent_plugin_version")? };
-        if unsafe { version() } != 1 {
-            bail!("unsupported native ABI; keeping previous patch");
+        let version = unsafe { version() };
+        if version != 1 {
+            bail!(
+                "unsupported native ABI {version}: agent_plugin_version must return 1, even when editing behavior. Restore that function to return 1; keeping previous patch"
+            );
         }
         let entry = unsafe { *lib.get::<Entry>(b"agent_plugin")? };
         let anchor = unsafe { *lib.get::<unsafe extern "C" fn()>(b"main")? };
@@ -125,13 +128,23 @@ impl Native {
     }
 
     pub fn rebuild(&mut self, reply: Option<oneshot::Sender<Result<String>>>) -> Result<()> {
+        let result = self.start_build();
+        if let Some(reply) = reply {
+            match &result {
+                Ok(()) => self.replies.push(reply),
+                Err(error) => {
+                    let _ = reply.send(Err(anyhow::anyhow!("{error:#}")));
+                }
+            }
+        }
+        result
+    }
+
+    fn start_build(&mut self) -> Result<()> {
         let bytes = std::fs::read(&self.source)?;
         if self.pending.is_some() {
             if bytes != self.observed {
                 bail!("source changed during native build; retry shortly");
-            }
-            if let Some(reply) = reply {
-                self.replies.push(reply);
             }
             return Ok(());
         }
@@ -143,9 +156,6 @@ impl Native {
             let _ = tx.send(compile(&dir, generation, &bytes));
         });
         self.pending = Some(std::sync::Mutex::new(rx));
-        if let Some(reply) = reply {
-            self.replies.push(reply);
-        }
         Ok(())
     }
 }

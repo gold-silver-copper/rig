@@ -1,3 +1,4 @@
 /target/
 /.patches/
 /verification-artifacts/
+/__pycache__/

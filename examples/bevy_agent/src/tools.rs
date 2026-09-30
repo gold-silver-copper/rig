@@ -26,6 +26,7 @@ pub enum HostCommand {
 #[derive(Clone)]
 pub struct Tools {
     pub root: PathBuf,
+    pub native_source: PathBuf,
     pub host: mpsc::Sender<HostCommand>,
     pub extensions: Extensions,
 }

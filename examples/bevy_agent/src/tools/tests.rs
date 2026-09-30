@@ -26,6 +26,7 @@ async fn tools_read_write_and_drain_large_shell_output() -> Result<()> {
     std::fs::create_dir_all(&dir)?;
     let (host, _) = mpsc::channel();
     let tools = Tools {
+        native_source: dir.join("native.rs"),
         root: dir,
         host,
         extensions: Arc::new(RwLock::new(BTreeMap::new())),

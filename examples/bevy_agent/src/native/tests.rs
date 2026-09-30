@@ -24,5 +24,9 @@ fn patches_preserve_host_and_reject_failed_builds_and_abi_changes() -> Result<()
     );
     anyhow::ensure!(invoke("status")? == "native-test-v2");
     anyhow::ensure!(native.generation == 2);
+    std::fs::remove_file(&native.source)?;
+    let (tx, rx) = oneshot::channel();
+    anyhow::ensure!(native.rebuild(Some(tx)).is_err());
+    anyhow::ensure!(rx.blocking_recv()?.is_err());
     Ok(())
 }

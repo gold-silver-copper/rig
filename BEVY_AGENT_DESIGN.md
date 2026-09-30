@@ -45,6 +45,10 @@ using bevy_remote directly with only http avoids that graph, although its
 current dev-tools dependency still brings many non-render crates.
 No dynamic Rust Plugin/World ABI: compiler/layout changes are too unsafe.
 No UI framework, async Bevy runtime adapter, or generalized tool framework.
+The first isolated-PATH trial omitted macOS linker/SDK tools; include only
+rustc, sh and compiler tools, still no dx. A live model initially mistook
+behavior v2 for ABI v2; explicit ABI=1 instructions and actionable rejection
+messages fixed this without weakening ABI checks.
 
 ## Rig changes
 
@@ -57,8 +61,29 @@ changes. Any subsequent Rig fixes would be separate commits.
 ## Verification and limitations
 
 Implementation compiles with the exact Bevy prerelease and Rig path crates.
-Final unit/lint/live acceptance results will be recorded after execution.
-See the agent README for usage, test commands, BRP contract and limitations.
+Four focused tests passed; the native regression passed again after improving
+request error delivery. Final clippy --all-targets -D warnings, rustfmt,
+Python syntax and git diff --check passed. Independent full-source model
+review found no concrete correctness bug; generic unsafe warnings from an
+earlier review were checked against the fixed ABI and main-thread boundary.
+A separate scoped macOS CI workflow covers the otherwise-excluded workspace;
+hosted CI is pending, not a local acceptance claim.
+
+Live PTY acceptance passed with gpt-4o-mini, PID **63981**, BRP port **53231**:
+- read_file(fixture.txt) returned LIVE_SENTINEL_K7 and the TUI showed the answer.
+- The model read/wrote native.rs, automatically installed native-live-v2,
+  then called patch_native and native(status). Generation 1 -> 3; same PID.
+- An external Python process registered external_word_count over BRP; the
+  model called it, received {words:3, plugin:external-process}, and answered.
+- dx was unavailable in the process's private PATH throughout. No global
+  tools were removed/installed; rustc compiled the actual cdylib.
+
+Raw evidence and actual rendered frames are in
+`examples/bevy_agent/verification-artifacts/1790793091319267000/` (ignored):
+`evidence.json`, `terminal.ansi`, and `01/02/03-*.txt`. The third frame shows
+both the completed native answer and the external extension answer. The
+verification script reproduces this with fresh ports and API keys
+read only from the environment. See the agent README for the full contract.
 Debug-only, fixed native ABI, one in-memory conversation, no streaming,
 approval/cancellation UI, persistence, or compaction. Native code, shell and
 BRP peers have full user privileges; loopback is not authentication. Retained

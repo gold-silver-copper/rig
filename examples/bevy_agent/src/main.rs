@@ -118,6 +118,7 @@ fn main() -> Result<()> {
     let (host_tx, host_rx) = mpsc::channel();
     let tools = tools::Tools {
         root: options.root,
+        native_source: native.source.clone(),
         host: host_tx,
         extensions: extensions.clone(),
     };

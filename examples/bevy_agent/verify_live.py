@@ -30,6 +30,10 @@ def main():
     sysroot = subprocess.check_output(["rustc", "+1.98.1", "--print", "sysroot"], text=True).strip()
     (private_bin / "rustc").symlink_to(Path(sysroot) / "bin/rustc")
     (private_bin / "sh").symlink_to("/bin/sh")
+    for tool in ["cc", "clang", "ld", "xcrun", "ar", "dsymutil", "codesign"]:
+        path = shutil.which(tool)
+        if path:
+            (private_bin / tool).symlink_to(path)
     env = os.environ.copy()
     env["PATH"] = str(private_bin)
     env["TERM"] = "xterm-256color"
@@ -123,7 +127,7 @@ def main():
         return result, lines
 
     def snapshot(name, expected):
-        text = wait(lambda: (t if all(s in t for s in expected) else None) if (t := snapshot_file.read_text()) else None)
+        text = wait(lambda: (t if "| ready |" in t and all(s in t for s in expected) else None) if (t := snapshot_file.read_text()) else None)
         (run / name).write_text(text)
 
     try:
@@ -135,7 +139,7 @@ def main():
         assert any(line.startswith("Tool: read_file") for line in lines), lines
         assert any(line.startswith("Assistant:") and "LIVE_SENTINEL_K7" in line for line in lines), lines
         snapshot("01-model-tool-answer.txt", ["Tool: read_file", "Result: LIVE_SENTINEL_K7", "Assistant:"])
-        patched, lines = prompt("Read native.rs with read_file, use write_file to replace every native-v1 string with native-live-v2, preserving all signatures and the ABI version. Then call patch_native and native with input status. Reply with the new status only after it is native-live-v2. Do not use shell.")
+        patched, lines = prompt("Read native.rs with read_file, use write_file to replace every native-v1 string with native-live-v2, preserving all signatures and leaving agent_plugin_version returning exactly 1 (it is the ABI, not the behavior version). Make no other edits. Then call patch_native and native with input status. Reply with the new status only after it is native-live-v2. Do not use shell.")
         assert any(line.startswith("Tool: write_file") for line in lines), lines
         assert any(line.startswith("Tool: patch_native") for line in lines), lines
         assert any(line.startswith("Tool: native") for line in lines), lines
