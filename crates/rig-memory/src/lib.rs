@@ -8,7 +8,8 @@
         clippy::unreachable
     )
 )]
-//! Conversation-history windows, demotion hooks, and rolling summaries.
+//! Conversation-history windows, demotion hooks, rolling summaries, and, with
+//! the `file` feature, a file-backed [`ConversationMemory`].
 //! Window policies remove leading orphaned tool results along with truncated
 //! history. Stateful adapters deliver evicted prefixes to hooks or compactors.
 //!
@@ -24,6 +25,11 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex as StdMutex},
 };
+
+#[cfg(all(feature = "file", not(target_family = "wasm")))]
+mod file;
+#[cfg(all(feature = "file", not(target_family = "wasm")))]
+pub use file::FileConversationMemory;
 
 /// Re-exports of the core memory abstractions so callers only need a single
 /// dependency on `rig-memory` for both the trait/backend and the policies.

@@ -20,6 +20,13 @@ intact. Whole removed messages are included in `apply_with_demoted`'s demoted
 prefix in original order, including accompanying text, so demotion hooks lose
 no content.
 
+With the `file` feature (native targets only), `FileConversationMemory`
+persists each conversation as a JSON Lines file, one message per line. Appends
+are synced before they return, a torn final line from a crash is skipped and
+cut before the next append, and `replace` swaps a whole history atomically,
+for example after compaction. `conversations()` lists stored conversations,
+most recently written first.
+
 ## Usage
 
 ```rust,no_run
