@@ -17,6 +17,7 @@ use serde_json::Value;
 use crate::glue::{AgentEvent, AgentSet, EventKind, Inbox, Model, Turn};
 use crate::plugins::cassette::Cassette;
 use crate::session::{EntryKind, Focused, Kind, Transcript, new_session_id, spawn_agent};
+use crate::tui::{SlashCommand, SlashCommands};
 use crate::parse_model;
 use crate::{Env, Options};
 
@@ -71,8 +72,20 @@ pub struct EvalsPlugin {
 
 impl Plugin for EvalsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (observe.after(AgentSet::Run), drive.in_set(AgentSet::Input)))
-            .add_systems(Last, write_recordings);
+        app.world_mut().get_resource_or_init::<SlashCommands>().0.insert(
+            "eval".into(),
+            "replay evals offline next to this session: /eval [NAME...]".into(),
+        );
+        app.add_systems(
+            Update,
+            (
+                observe.after(AgentSet::Run),
+                drive.in_set(AgentSet::Input),
+                start_evals.in_set(AgentSet::Input),
+                report_evals.after(AgentSet::Run),
+            ),
+        )
+        .add_systems(Last, write_recordings);
         if let Some(name) = self.record.clone() {
             app.add_systems(PostStartup, move |mut commands: Commands, agents: Query<(Entity, &Model), With<Focused>>| {
                 for (agent, model) in &agents {
@@ -275,6 +288,96 @@ fn check(step: &Step, observed: &Observed) -> Vec<String> {
     failures
 }
 
+/// Every eval's name, sorted.
+pub fn all_names(env: &Env) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(evals_dir(env))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension()? == "json").then(|| path.file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// An eval run started from the TUI, reporting to `to`.
+#[derive(Component)]
+struct ReportTo(Entity);
+
+/// `/eval [NAME...]`: spawn eval agents in this world, replaying offline.
+fn start_evals(
+    mut commands_in: MessageReader<SlashCommand>,
+    env: Res<Env>,
+    prompt: Res<crate::prompt::Prompt>,
+    tools: Res<crate::glue::Tools>,
+    mut transcripts: Query<&mut Transcript>,
+    mut commands: Commands,
+) {
+    for command in commands_in.read().filter(|c| c.name == "eval") {
+        let names: Vec<String> = if command.args.is_empty() {
+            all_names(&env)
+        } else {
+            command.args.split_whitespace().map(str::to_owned).collect()
+        };
+        for name in names {
+            match load(&evals_dir(&env), &name) {
+                Err(error) => {
+                    if let Ok(mut transcript) = transcripts.get_mut(command.agent) {
+                        transcript.log(EntryKind::Error, error);
+                    }
+                }
+                Ok(script) => {
+                    let cassette = script.cassette.clone().unwrap_or_else(|| name.clone());
+                    let model = crate::session::default_model();
+                    let agent = spawn_agent(
+                        &mut commands,
+                        prompt.build(&tools),
+                        Kind::Eval,
+                        &name,
+                        model,
+                        new_session_id(Kind::Eval),
+                    );
+                    commands.entity(agent).insert((
+                        Cassette {
+                            name: cassette,
+                            mode: CassetteMode::Replay,
+                        },
+                        Run::new(name, script),
+                        ReportTo(command.agent),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Report finished TUI-started evals and remove their agents.
+fn report_evals(
+    runs: Query<(Entity, &Run, &ReportTo)>,
+    mut transcripts: Query<&mut Transcript>,
+    mut commands: Commands,
+) {
+    for (entity, run, to) in &runs {
+        if !run.finished {
+            continue;
+        }
+        if let Ok(mut transcript) = transcripts.get_mut(to.0) {
+            if run.failures.is_empty() {
+                transcript.log(EntryKind::Info, format!("eval {} passed (offline)", run.name));
+            } else {
+                transcript.log(
+                    EntryKind::Error,
+                    format!("eval {} failed:\n{}", run.name, run.failures.join("\n")),
+                );
+            }
+        }
+        commands.entity(entity).despawn();
+    }
+}
+
 fn write_recordings(mut exits: MessageReader<AppExit>, recorders: Query<&Recorder>, env: Res<Env>) {
     if exits.read().next().is_none() {
         return;
@@ -298,17 +401,7 @@ fn write_recordings(mut exits: MessageReader<AppExit>, recorders: Query<&Recorde
 pub fn run(args: &[String]) -> i32 {
     let env = Env::from_process();
     let names: Vec<String> = if args.is_empty() {
-        let mut names: Vec<String> = std::fs::read_dir(evals_dir(&env))
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.path();
-                (path.extension()? == "json").then(|| path.file_stem()?.to_str().map(str::to_owned))?
-            })
-            .collect();
-        names.sort();
-        names
+        all_names(&env)
     } else {
         args.to_vec()
     };
