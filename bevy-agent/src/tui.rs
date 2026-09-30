@@ -15,7 +15,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::State;
+use crate::{BrpPort, State};
 use crate::glue::{self, Model, Turn};
 use crate::reload::Reload;
 use crate::session::{self, Entry, MODELS, Origin, Prompts, Transcript, Usage};
@@ -30,10 +30,6 @@ impl Plugin for TuiPlugin {
             .add_systems(PostUpdate, draw);
     }
 }
-
-/// The BRP port, when the BRP plugin serves one, for the footer.
-#[derive(Resource)]
-pub struct BrpPort(pub u16);
 
 #[derive(Resource)]
 struct Screen(DefaultTerminal);

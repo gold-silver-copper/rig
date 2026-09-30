@@ -6,16 +6,19 @@ use std::process::ExitCode;
 
 use bevy::prelude::*;
 use bevy_agent::supervisor::{self, CHILD_ENV, GENERATION_ENV, STATE_ENV};
-use bevy_agent::{DEFAULT_MODEL, State};
+use bevy_agent::{DEFAULT_MODEL, State, plugins};
 
 #[derive(Default)]
 struct Args {
     model: Option<String>,
     state_dir: Option<PathBuf>,
     disabled: Vec<String>,
+    brp_port: Option<u16>,
 }
 
-const USAGE: &str = "usage: bevy-agent [--model vendor:model] [--state-dir dir] [--disable plugin,...]";
+const USAGE: &str = "usage: bevy-agent [--model vendor:model] [--state-dir dir] [--brp-port port]
+                  [--disable plugin,...]
+plugins: brp, remote";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args::default();
@@ -25,6 +28,10 @@ fn parse_args() -> Result<Args, String> {
         match arg.as_str() {
             "--model" => args.model = Some(value()?),
             "--state-dir" => args.state_dir = Some(value()?.into()),
+            "--brp-port" => {
+                let port = value()?;
+                args.brp_port = Some(port.parse().map_err(|_| format!("bad port `{port}`"))?);
+            }
             "--disable" => args
                 .disabled
                 .extend(value()?.split(',').map(|name| name.trim().to_owned())),
@@ -62,6 +69,15 @@ fn main() -> ExitCode {
         tui: true,
     };
     let mut app = bevy_agent::app(state, false);
+    let enabled = |name: &str| !args.disabled.iter().any(|disabled| disabled == name);
+    if enabled("brp") {
+        app.add_plugins(plugins::brp::BrpPlugin {
+            port: args.brp_port,
+        });
+        if enabled("remote") {
+            app.add_plugins(plugins::remote::RemoteSessionsPlugin);
+        }
+    }
     let exit = app.run();
     ratatui::restore();
     match exit {

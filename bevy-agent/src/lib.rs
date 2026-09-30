@@ -72,6 +72,10 @@ impl ProcessState {
     }
 }
 
+/// The port the BRP plugin serves, when it runs.
+#[derive(Resource, Clone, Copy)]
+pub struct BrpPort(pub u16);
+
 /// Marks a process whose sessions outlive it; without it, a clean quit
 /// deletes what reloads saved.
 #[derive(Resource)]

@@ -13,10 +13,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bevy::prelude::*;
 use rig_core::message::ToolResultContent;
 
-use crate::State;
+use crate::{BrpPort, State};
 use crate::glue::Turn;
 use crate::session::{self, Entry, Origin, Prompts, Transcript};
-use crate::tui::BrpPort;
 
 /// Set in the environment of the agent process the supervisor starts.
 pub const CHILD_ENV: &str = "BEVY_AGENT_CHILD";
