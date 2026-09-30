@@ -438,22 +438,28 @@ fn receive_replies(
 }
 
 /// Spawns the next call of each agent in its tool phase, once the previous
-/// one is collected.
+/// one is collected. A restored turn whose calls are all answered goes back
+/// to the model.
 fn dispatch_calls(
     mut commands: Commands,
-    agents: Query<(Entity, &Turn, Option<&ToolCalls>, Option<&TurnSpan>), With<Agent>>,
+    mut agents: Query<
+        (Entity, &mut Turn, &mut Conversation, Option<&ToolCalls>, Option<&TurnSpan>),
+        With<Agent>,
+    >,
     top_level: Query<(), (With<ToolCall>, Without<Nested>)>,
     tools: Res<Tools>,
     mut events: MessageWriter<AgentEvent>,
 ) {
-    for (agent, turn, live, span) in &agents {
-        let Turn::Tools { calls, results } = turn else {
+    for (agent, mut turn, mut conversation, live, span) in &mut agents {
+        let Turn::Tools { calls, results } = &mut *turn else {
             continue;
         };
         if live.is_some_and(|live| live.iter().any(|call| top_level.contains(call))) {
             continue;
         }
         let Some(call) = calls.get(results.len()) else {
+            conversation.0.push(Message::tool_results(std::mem::take(results)));
+            *turn = Turn::Request;
             continue;
         };
         events.write(AgentEvent::CallStarted {
