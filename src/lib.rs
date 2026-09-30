@@ -172,6 +172,13 @@ pub mod tool {
     pub mod rmcp {
         pub use rig_rmcp::*;
     }
+    /// Code mode from `rig-codemode`: model-written JavaScript whose only
+    /// capability is calling tools. Native targets only.
+    #[cfg(all(feature = "codemode", not(target_family = "wasm")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "codemode")))]
+    pub mod codemode {
+        pub use rig_codemode::*;
+    }
     /// The live registry, layered over the contracts above.
     #[cfg(feature = "agent")]
     #[cfg_attr(docsrs, doc(cfg(feature = "agent")))]

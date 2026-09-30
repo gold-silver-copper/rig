@@ -1,0 +1,25 @@
+[package]
+name = "rig-codemode"
+version.workspace = true
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = "MIT"
+readme = "README.md"
+description = "Code mode for Rig: model-written JavaScript whose only capability is calling Rig tools."
+repository = "https://github.com/0xPlaygrounds/rig"
+
+[lints]
+workspace = true
+
+[dependencies]
+rig-core = { path = "../rig-core", version = "0.43.0", default-features = false }
+futures = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# QuickJS is compiled from C and runs scripts on a native thread.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+rquickjs = { workspace = true, features = ["allocator"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
