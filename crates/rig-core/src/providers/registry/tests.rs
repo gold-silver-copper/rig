@@ -222,6 +222,18 @@ fn ambiguous_shorthand_offers_resolvable_alternatives() {
     );
 }
 
+/// Gemini's vendor is `gcp.gemini`; its family name alone names it, and
+/// displays canonically.
+#[test]
+fn a_family_with_one_vendor_resolves_by_family_name() {
+    let reference = ProviderRef::parse("gemini:gemini-3.8-flash").unwrap();
+    assert_eq!(reference.to_string(), "gcp.gemini/gemini:gemini-3.8-flash");
+    assert_eq!(
+        ProviderId::resolve("gemini").unwrap(),
+        ProviderId::resolve("gcp.gemini").unwrap()
+    );
+}
+
 /// Malformed input is an error, never a silent fallback to some default.
 #[test]
 fn malformed_input_refuses() {
