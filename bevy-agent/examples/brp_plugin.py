@@ -25,8 +25,12 @@ def brp(method, params=None):
     return reply.get("result")
 
 
+SAFE = {name: __builtins__.__dict__[name] for name in
+        ["abs", "all", "any", "len", "max", "min", "range", "round", "sorted", "str", "sum"]}
+
+
 def py_eval(arguments):
-    return repr(eval(arguments["expression"], {"__builtins__": {}}, {}))
+    return repr(eval(arguments["expression"], {"__builtins__": SAFE}, {}))
 
 
 brp("rigpi/register_tool", {

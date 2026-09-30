@@ -147,9 +147,9 @@ caching. Mistral only returned rate-limit errors. Tool errors travel as
   signatures of existing systems; otherwise it crashes (subsecond's rule).
   New Bevy plugins and systems need a restart, but new tools do not.
   Statics and thread-locals defined in the crate start fresh in each patch.
-- **Patch linking.** A patch can only call symbols that are in the fat
-  binary. First use of a std function nothing linked before fails to link,
-  and the agent then keeps its old code.
+- **Dependencies.** Adding a dependency needs a restart. Patches can call
+  anything in the current dependencies and std, because the fat binary holds
+  every object of them (verified with a patch calling `std::os::unix::fs::chroot`).
 - **Startup cost.** Each start does a fat build: about 5–10 s, longer on
   the first run, which archives about 110 MB of dependency objects.
 - **Cancellation.** Esc abandons a running native tool but does not kill it;
