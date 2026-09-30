@@ -147,6 +147,8 @@ default-members = [
     "crates/rig-bedrock",
     "crates/rig-candle",
     "crates/rig-gemini-grpc",
+    "crates/rig-memory",
+    "crates/rig-codemode",
     "test-support/service-tests",
     "test-support/rig-test-support",
     # The design record's Frozen API programs: clippy and the full test
