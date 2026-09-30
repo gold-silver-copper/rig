@@ -35,7 +35,11 @@ impl Plugin for TelemetryPlugin {
         };
         let provider = SdkTracerProvider::builder()
             .with_batch_exporter(exporter)
-            .with_resource(OtelResource::builder().with_service_name("bevy-agent").build())
+            .with_resource(
+                OtelResource::builder()
+                    .with_service_name("bevy-agent")
+                    .build(),
+            )
             .build();
         let layer = tracing_opentelemetry::layer().with_tracer(provider.tracer("bevy-agent"));
         let filter = tracing_subscriber::EnvFilter::try_from_env("BEVY_AGENT_TRACE")

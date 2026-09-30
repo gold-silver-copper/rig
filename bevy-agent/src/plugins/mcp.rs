@@ -56,7 +56,14 @@ pub fn load_config(path: &Path) -> Vec<(String, Server)> {
         .unwrap_or_default()
 }
 
-type Connected = Result<(String, RunningService<rmcp::RoleClient, ()>, Vec<DynamicTool>), String>;
+type Connected = Result<
+    (
+        String,
+        RunningService<rmcp::RoleClient, ()>,
+        Vec<DynamicTool>,
+    ),
+    String,
+>;
 
 /// Servers connecting, and the ones that did, kept alive.
 #[derive(Resource)]
@@ -88,12 +95,8 @@ async fn connect(name: String, server: Server) -> Connected {
     let command = tokio::process::Command::new(&server.command).configure(|command| {
         command.args(&server.args);
     });
-    let transport =
-        TokioChildProcess::new(command).map_err(|error| format!("{name}: {error}"))?;
-    let service = ()
-        .serve(transport)
-        .await
-        .map_err(|error| format!("{name}: {error}"))?;
+    let transport = TokioChildProcess::new(command).map_err(|error| format!("{name}: {error}"))?;
+    let service = ().serve(transport).await.map_err(|error| format!("{name}: {error}"))?;
     let listed = service
         .list_all_tools()
         .await

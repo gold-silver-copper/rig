@@ -56,7 +56,11 @@ fn main() -> std::io::Result<()> {
                 continue;
             }
         };
-        writeln!(stdout, "{}", json!({"jsonrpc": "2.0", "id": id, "result": result}))?;
+        writeln!(
+            stdout,
+            "{}",
+            json!({"jsonrpc": "2.0", "id": id, "result": result})
+        )?;
         stdout.flush()?;
     }
     Ok(())

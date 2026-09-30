@@ -76,7 +76,11 @@ fn print_spans(export: &Value) {
         println!(
             "span {} trace={} parent={} {}",
             span["name"].as_str().unwrap_or("?"),
-            span["traceId"].as_str().unwrap_or("").get(..8).unwrap_or(""),
+            span["traceId"]
+                .as_str()
+                .unwrap_or("")
+                .get(..8)
+                .unwrap_or(""),
             span["parentSpanId"].as_str().unwrap_or("-"),
             attributes.join(" ")
         );

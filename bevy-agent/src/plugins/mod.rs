@@ -3,6 +3,7 @@
 
 pub mod brp;
 pub mod cassette;
+pub mod codemode;
 pub mod durable;
 pub mod eval;
 pub mod mcp;

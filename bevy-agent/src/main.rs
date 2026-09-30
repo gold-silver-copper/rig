@@ -30,7 +30,7 @@ const USAGE: &str = "usage: bevy-agent [--model vendor:model] [--state-dir dir] 
                   [--record name | --replay name] [--cassettes dir] [--headless]
                   [--otlp http://host:port] [--mcp name=command...] [--mcp-config mcp.json]
                   [--disable plugin,...]
-plugins: brp, remote, durable, mcp, telemetry (with --otlp or OTEL_EXPORTER_OTLP_ENDPOINT)";
+plugins: brp, remote, durable, codemode, mcp, telemetry (with --otlp or OTEL_EXPORTER_OTLP_ENDPOINT)";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args::default();
@@ -131,6 +131,9 @@ fn main() -> ExitCode {
     }
     if !servers.is_empty() && enabled("mcp") {
         app.add_plugins(plugins::mcp::McpPlugin { servers });
+    }
+    if enabled("codemode") {
+        app.add_plugins(plugins::codemode::CodeModePlugin);
     }
     if enabled("durable") {
         app.add_plugins(plugins::durable::DurablePlugin {
