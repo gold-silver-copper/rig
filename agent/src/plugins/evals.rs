@@ -14,7 +14,10 @@ use rig_cassette::http::CassetteMode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::glue::{AgentEvent, AgentSet, EventKind, Inbox, Model, Turn};
+use rig_core::completion::ToolDefinition;
+
+use crate::glue::{Agent, AgentEvent, AgentSet, EventKind, Inbox, Model, ToolOffer, Tools, Turn};
+use crate::prompt::PinnedPreamble;
 use crate::plugins::cassette::Cassette;
 use crate::session::{EntryKind, Focused, Kind, Transcript, new_session_id, spawn_agent};
 use crate::tui::{SlashCommand, SlashCommands};
@@ -26,7 +29,31 @@ pub struct Script {
     /// The cassette the script replays against; defaults to the file name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cassette: Option<String>,
+    /// The system prompt and tool definitions the session was recorded
+    /// with. A cassette pins the exact requests, so a replay offers these
+    /// rather than whatever this world's plugins register.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preamble: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolDefinition>>,
     pub steps: Vec<Step>,
+}
+
+impl Script {
+    /// Pin the recorded prompt and tools on the agent that replays this.
+    fn pin(&self, agent: &mut EntityCommands) {
+        if let Some(preamble) = &self.preamble {
+            agent.insert((
+                Agent {
+                    preamble: preamble.clone(),
+                },
+                PinnedPreamble,
+            ));
+        }
+        if let Some(tools) = &self.tools {
+            agent.insert(ToolOffer(tools.clone()));
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -92,8 +119,8 @@ impl Plugin for EvalsPlugin {
                     commands.entity(agent).insert(Recorder {
                         name: name.clone(),
                         script: Script {
-                            cassette: None,
                             steps: vec![Step::Model { model: model.0.to_string() }],
+                            ..Script::default()
                         },
                         model: model.0.to_string(),
                         turn: Observed::default(),
@@ -109,7 +136,9 @@ impl Plugin for EvalsPlugin {
                         match load(&evals_dir(&env), &name) {
                             Ok(script) => {
                                 transcript.log(EntryKind::Info, format!("replaying {name} offline"));
-                                commands.entity(agent).insert(Run::new(name.clone(), script));
+                                let mut agent = commands.entity(agent);
+                                script.pin(&mut agent);
+                                agent.insert(Run::new(name.clone(), script));
                             }
                             Err(error) => transcript.log(EntryKind::Error, error),
                         }
@@ -165,7 +194,8 @@ impl Run {
 fn observe(
     mut events: MessageReader<AgentEvent>,
     mut runs: Query<&mut Run>,
-    mut recorders: Query<(&mut Recorder, &Model)>,
+    mut recorders: Query<(&mut Recorder, &Model, &Agent, Option<&ToolOffer>)>,
+    tools: Res<Tools>,
 ) {
     for event in events.read() {
         let apply = |turn: &mut Observed| match &event.kind {
@@ -182,8 +212,13 @@ fn observe(
         {
             apply(turn);
         }
-        if let Ok((mut recorder, model)) = recorders.get_mut(event.agent) {
+        if let Ok((mut recorder, model, agent, offer)) = recorders.get_mut(event.agent) {
             let recorder = &mut *recorder;
+            if recorder.script.preamble.is_none() {
+                recorder.script.preamble = Some(agent.preamble.clone());
+                recorder.script.tools =
+                    Some(offer.map_or_else(|| tools.definitions(), |offer| offer.0.clone()));
+            }
             if let EventKind::Input(text) = &event.kind {
                 let current = model.0.to_string();
                 if current != recorder.model {
@@ -312,7 +347,7 @@ fn start_evals(
     mut commands_in: MessageReader<SlashCommand>,
     env: Res<Env>,
     prompt: Res<crate::prompt::Prompt>,
-    tools: Res<crate::glue::Tools>,
+    tools: Res<Tools>,
     mut transcripts: Query<&mut Transcript>,
     mut commands: Commands,
 ) {
@@ -340,7 +375,9 @@ fn start_evals(
                         model,
                         new_session_id(Kind::Eval),
                     );
-                    commands.entity(agent).insert((
+                    let mut agent = commands.entity(agent);
+                    script.pin(&mut agent);
+                    agent.insert((
                         Cassette {
                             name: cassette,
                             mode: CassetteMode::Replay,
@@ -454,7 +491,9 @@ pub fn run_scripts(names: &[String], state: &Path) -> Vec<(String, Vec<String>)>
                 let mut commands = world.commands();
                 let model = crate::session::default_model();
                 let agent = spawn_agent(&mut commands, preamble, Kind::Eval, name, model, new_session_id(Kind::Eval));
-                commands.entity(agent).insert((
+                let mut entity = commands.entity(agent);
+                script.pin(&mut entity);
+                entity.insert((
                     Cassette {
                         name: cassette,
                         mode: CassetteMode::Replay,

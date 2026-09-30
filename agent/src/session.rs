@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::glue::{
     Agent, AgentEvent, AgentSet, Call, CallOf, Calls, Conversation, Done, EventKind, Inbox,
-    Model, Reported, Session, SessionMemory, Turn, push_message,
+    Model, Reported, Session, SessionMemory, Turn, push_message, turn_span,
 };
 use crate::{Env, presets};
 
@@ -460,6 +460,9 @@ fn revive(
     if !resumes_reload {
         repair(&mut conversation, &session, memory);
     }
+    let name = Name::new(sidecar.name);
+    // A turn cut by the restart goes on in a new span.
+    let span = (!turn.is_idle()).then(|| turn_span(Some(&name), &sidecar.model));
     let entity = world
         .spawn((
             Agent {
@@ -469,7 +472,7 @@ fn revive(
             conversation,
             session,
             sidecar.kind,
-            Name::new(sidecar.name),
+            name,
             Transcript(sidecar.transcript),
             Inbox {
                 follow_ups: sidecar.follow_ups,
@@ -478,6 +481,9 @@ fn revive(
             turn,
         ))
         .id();
+    if let Some(span) = span {
+        world.entity_mut(entity).insert(span);
+    }
     for (index, saved) in pending {
         let is_reload = saved.call.function.name == crate::reload::TOOL;
         let mut call = world.spawn((Call { call: saved.call, index }, CallOf(entity)));

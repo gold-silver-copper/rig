@@ -68,6 +68,7 @@ These are optional:
 
 - `Session(ConversationId)`: persist the conversation.
 - `Endpoints`: send a vendor's requests elsewhere, with another key.
+- `ToolOffer`: offer exactly these tool definitions, instead of every registered tool.
 - `TurnSpan`
 
 The TUI session, remote sessions and eval runs are all such entities in one world. No
@@ -227,6 +228,11 @@ writes two things:
 `--replay NAME` and `rig-pi eval` point each vendor at a local replay server with a dummy
 key; a vendor with no recording is pointed at a closed port, never at the network.
 
+A cassette pins the exact requests, so the script also pins the system prompt and tool
+definitions the session was recorded with. A replay offers those through `ToolOffer` and a
+pinned preamble, while calls still run the live tools. That is why `/eval` passes inside a
+world whose plugins registered extra MCP or BRP tools.
+
 Requests are deterministic: no paths, times or random values in the prompt, tools in
 name order, and `store: false` on OpenAI Responses. The engine refuses recordings that
 leave stored responses behind.
@@ -238,8 +244,8 @@ The fixtures are:
   `greet`, `codemode` and `bash`.
 
 `tests/replay.rs` runs them all with the API keys removed. `.github/workflows/agent.yaml`
-runs it in CI. It also reproduces the one replay bug fixed so far: a preamble built
-before code mode was registered.
+runs it in CI. It also reproduces the replay bug fixed so far: a preamble built before
+code mode was registered.
 
 ## Rig changes (each its own commit, tested and documented)
 
@@ -283,7 +289,12 @@ before code mode was registered.
   the restart. A recording ends when its process does, so after a reload the session
   runs live.
 - Cassettes replay the provider but still run the tools. Replayed evals therefore use
-  deterministic tools and checked-in fixtures.
+  deterministic tools and checked-in fixtures. Because the recorded prompt and tool
+  definitions are pinned, replay catches changes in tool behaviour and in the loop, but
+  not changes to the prompt builder; re-record after changing it.
+- A turn that spans a reload shows up as two traces. Its spans are closed at the exit and
+  a new `invoke_agent` span starts after the restart. Quitting mid-turn drops the open
+  span.
 - Recording captures follow-ups, not mid-turn steering.
 - Code mode can call task tools, including MCP tools, but not world tools (`reload`, BRP
   tools).

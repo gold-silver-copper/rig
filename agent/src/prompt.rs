@@ -99,8 +99,13 @@ impl Plugin for PromptPlugin {
     }
 }
 
+/// An agent whose preamble is fixed, such as an eval replaying the prompt
+/// it was recorded with.
+#[derive(Component)]
+pub struct PinnedPreamble;
+
 /// Keep every agent's preamble in step with the registered tools.
-fn refresh(prompt: Res<Prompt>, tools: Res<Tools>, mut agents: Query<&mut Agent>) {
+fn refresh(prompt: Res<Prompt>, tools: Res<Tools>, mut agents: Query<&mut Agent, Without<PinnedPreamble>>) {
     let preamble = prompt.build(&tools);
     for mut agent in &mut agents {
         if agent.preamble != preamble {

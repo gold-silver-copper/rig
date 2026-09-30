@@ -27,12 +27,14 @@ def call(url, method, params=None):
     return answer["result"]
 
 
-def stream_entries(url, session, since):
+def stream_entries(url, session, since, stop):
     """Print the session's new transcript entries as the watch stream sends them."""
     watch = {"session": session, "stream": uuid.uuid4().hex, "since": since}
     body = {"jsonrpc": "2.0", "id": 1, "method": "rig_pi.session.watch+watch", "params": watch}
     with urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(body).encode())) as stream:
         for line in stream:
+            if stop.is_set():
+                return
             line = line.decode().strip()
             if line.startswith("data: "):
                 for entry in json.loads(line[6:])["result"]["entries"]:
@@ -41,13 +43,15 @@ def stream_entries(url, session, since):
 
 def run_prompt(url, session, prompt):
     since = call(url, "rig_pi.session.get", {"session": session})["next"]
-    threading.Thread(target=stream_entries, args=(url, session, since), daemon=True).start()
+    stop = threading.Event()
+    threading.Thread(target=stream_entries, args=(url, session, since, stop), daemon=True).start()
     call(url, "rig_pi.session.prompt", {"session": session, "text": prompt})
     idle_seen = 0
     while idle_seen < 3:
         time.sleep(0.5)
         state = call(url, "rig_pi.session.get", {"session": session, "since": 10**9})
         idle_seen = idle_seen + 1 if state["state"] == "idle" and state["queued"] == 0 else 0
+    stop.set()
 
 
 def main():

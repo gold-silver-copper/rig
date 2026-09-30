@@ -18,7 +18,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use rig_core::completion::ToolDefinition;
 use serde_json::json;
 
-use crate::glue::{AgentSet, Call, Done, Ready, Running, Tool, Tools};
+use crate::glue::{AgentSet, Call, Done, Ready, Running, Tool, Tools, TurnSpan};
 use crate::prompt::Prompt;
 use crate::session::{Focused, Transcript, EntryKind, save_all};
 use crate::{Env, RELOAD_EXIT};
@@ -173,6 +173,12 @@ fn restart(world: &mut World) {
     };
     let env = world.resource::<Env>().clone();
     save_all(world);
+    // Close open turn spans so telemetry exports them before the exit; the
+    // turns go on in new spans after the restart.
+    let spans: Vec<Entity> = world.query_filtered::<Entity, With<TurnSpan>>().iter(world).collect();
+    for entity in spans {
+        world.entity_mut(entity).remove::<TurnSpan>();
+    }
     if let Err(error) = std::fs::write(env.state.join("next-binary"), binary.as_os_str().as_encoded_bytes()) {
         error!("cannot restart: {error}");
         return;

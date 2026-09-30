@@ -137,6 +137,11 @@ pub struct Endpoint {
     pub api_key: String,
 }
 
+/// Offer the model exactly these tool definitions instead of every
+/// registered tool; calls still run whatever [`Tools`] holds under the name.
+#[derive(Component, Clone, Debug)]
+pub struct ToolOffer(pub Vec<ToolDefinition>);
+
 /// The span of the agent's current turn; model and tool spans nest in it.
 #[derive(Component, Clone, Debug)]
 pub struct TurnSpan(pub tracing::Span);
@@ -231,6 +236,18 @@ pub enum EventKind {
 #[derive(Message, Clone, Copy, Debug)]
 pub struct Interrupt(pub Entity);
 
+/// A new `invoke_agent` span for a turn of the agent `name` on `model`.
+pub fn turn_span(name: Option<&Name>, model: &ProviderRef) -> TurnSpan {
+    TurnSpan(tracing::info_span!(
+        target: "rig_pi::agent",
+        "invoke_agent",
+        gen_ai.operation.name = "invoke_agent",
+        gen_ai.agent.name = name.map(|n| n.as_str()).unwrap_or("agent"),
+        gen_ai.provider.name = model.id().map(|id| id.vendor()).unwrap_or_default(),
+        gen_ai.request.model = model.model(),
+    ))
+}
+
 /// Append `message` to the agent's conversation and its session memory.
 pub fn push_message(
     conversation: &mut Conversation,
@@ -256,6 +273,7 @@ pub fn request_for(
     session: Option<&Session>,
     memory: Option<&SessionMemory>,
     tools: &Tools,
+    offer: Option<&ToolOffer>,
 ) -> CompletionRequest {
     let history = match (session, memory) {
         (Some(session), Some(memory)) => futures::executor::block_on(memory.0.load(&session.0))
@@ -265,9 +283,13 @@ pub fn request_for(
             }),
         _ => conversation.0.clone(),
     };
+    let offered = match offer {
+        Some(offer) => offer.0.clone(),
+        None => tools.definitions(),
+    };
     let mut request = CompletionRequest::from(history)
         .preamble(agent.preamble.clone())
-        .tools(tools.definitions());
+        .tools(offered);
     // The whole conversation is sent every time, so the provider need not
     // keep responses; recordings also refuse stored state.
     if model.id().is_some_and(|id| id.vendor() == "openai") {
@@ -359,15 +381,7 @@ fn start_turns(
             agent,
             kind: EventKind::Input(text),
         });
-        let span = tracing::info_span!(
-            target: "rig_pi::agent",
-            "invoke_agent",
-            gen_ai.operation.name = "invoke_agent",
-            gen_ai.agent.name = name.map(|n| n.as_str()).unwrap_or("agent"),
-            gen_ai.provider.name = model.0.id().map(|id| id.vendor()).unwrap_or_default(),
-            gen_ai.request.model = model.0.model(),
-        );
-        commands.entity(agent).insert(TurnSpan(span));
+        commands.entity(agent).insert(turn_span(name, &model.0));
         *turn = Turn::Ready;
     }
 }
@@ -382,16 +396,18 @@ fn send_requests(
         Option<&Session>,
         Option<&Endpoints>,
         Option<&TurnSpan>,
+        Option<&ToolOffer>,
     )>,
     tools: Res<Tools>,
     memory: Option<Res<SessionMemory>>,
     mut events: MessageWriter<AgentEvent>,
 ) {
-    for (entity, agent, model, conversation, mut turn, session, endpoints, span) in &mut agents {
+    for (entity, agent, model, conversation, mut turn, session, endpoints, span, offer) in &mut agents {
         if !matches!(*turn, Turn::Ready) {
             continue;
         }
-        let request = request_for(agent, &model.0, conversation, session, memory.as_deref(), &tools);
+        let request =
+            request_for(agent, &model.0, conversation, session, memory.as_deref(), &tools, offer);
         match resolve_model(&model.0, endpoints) {
             Ok(model) => {
                 let span = span.map(|span| span.0.clone()).unwrap_or_else(tracing::Span::none);
