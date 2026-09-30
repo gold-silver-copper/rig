@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "model": "anthropic/anthropic:claude-opus-5-5"
+    },
+    {
+      "prompt": "Use the greet tool to greet Ada, then reply with exactly what it returned and nothing else.",
+      "calls": [
+        {
+          "name": "greet",
+          "arguments": {
+            "name": "Ada"
+          }
+        }
+      ],
+      "answer": "Hello, Ada!"
+    }
+  ]
+}

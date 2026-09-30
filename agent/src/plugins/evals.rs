@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::glue::{AgentEvent, AgentSet, EventKind, Inbox, Model, Turn};
 use crate::plugins::cassette::Cassette;
 use crate::session::{EntryKind, Focused, Kind, Transcript, new_session_id, spawn_agent};
-use crate::tui::parse_model;
+use crate::parse_model;
 use crate::{Env, Options};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

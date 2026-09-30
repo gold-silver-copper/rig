@@ -1,0 +1,64 @@
+{
+  "steps": [
+    {
+      "model": "deepseek/openai:deepseek-flash"
+    },
+    {
+      "prompt": "Read fixtures/notes.txt with the read tool and reply with the backup codename only.",
+      "calls": [
+        {
+          "name": "read",
+          "arguments": {
+            "path": "fixtures/notes.txt"
+          }
+        }
+      ],
+      "answer": "PERIWINKLE"
+    },
+    {
+      "model": "anthropic/anthropic:claude-opus-5-5"
+    },
+    {
+      "prompt": "Use the greet tool to greet that codename, then reply with its output only.",
+      "calls": [
+        {
+          "name": "greet",
+          "arguments": {
+            "name": "PERIWINKLE"
+          }
+        }
+      ],
+      "answer": "Hello, PERIWINKLE!"
+    },
+    {
+      "model": "gcp.gemini/gemini:gemini-3.8-flash"
+    },
+    {
+      "prompt": "Use the codemode tool to greet Ada and Bob in one script, returning both greetings joined by ' & '. Reply with the script output only.",
+      "calls": [
+        {
+          "name": "codemode",
+          "arguments": {
+            "code": "const g1 = await tools.greet({ name: 'Ada' });\nconst g2 = await tools.greet({ name: 'Bob' });\nreturn `${g1} & ${g2}`;\n"
+          }
+        }
+      ],
+      "answer": "Hello, Ada! & Hello, Bob!"
+    },
+    {
+      "model": "openai/openai:gpt-6.1-sol"
+    },
+    {
+      "prompt": "Use bash to run: echo launch-ok. Reply with its output only.",
+      "calls": [
+        {
+          "name": "bash",
+          "arguments": {
+            "command": "echo launch-ok"
+          }
+        }
+      ],
+      "answer": "launch-ok"
+    }
+  ]
+}

@@ -28,7 +28,7 @@ use crate::reload::{ReloadRequest, Reloading};
 use crate::prompt::Prompt;
 use crate::glue::Tools;
 use crate::session::{EntryKind, Focused, Kind, Transcript, new_session_id, spawn_agent};
-use crate::{Env, presets};
+use crate::{Env, parse_model, presets};
 
 /// Slash commands plugins handle, by name, with a description.
 #[derive(Resource, Default)]
@@ -254,15 +254,6 @@ fn input(
             _ => {}
         }
     }
-}
-
-pub fn parse_model(reference: &str) -> Result<ProviderRef, String> {
-    let presets = presets();
-    let reference = match reference.parse::<usize>() {
-        Ok(n) if (1..=presets.len()).contains(&n) => presets[n - 1].as_str(),
-        _ => reference,
-    };
-    ProviderRef::parse(reference).map_err(|error| error.to_string())
 }
 
 fn state(turn: &Turn) -> &'static str {

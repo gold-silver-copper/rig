@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "model": "openai/openai:gpt-6.1-sol"
+    },
+    {
+      "prompt": "Use the greet tool to greet Ada, then reply with exactly what it returned and nothing else.",
+      "calls": [
+        {
+          "name": "greet",
+          "arguments": {
+            "name": "Ada"
+          }
+        }
+      ],
+      "answer": "Hello, Ada!"
+    }
+  ]
+}

@@ -25,7 +25,7 @@ use crate::brp::{add_method, add_watching_method, invalid, params, turn_state};
 use crate::glue::{Agent, Inbox, Interrupt, Model, Session, Tools, Turn};
 use crate::prompt::Prompt;
 use crate::session::{Kind, Store, Transcript, default_model, forget, new_session_id, spawn_agent};
-use crate::tui::parse_model;
+use crate::parse_model;
 
 pub struct RemoteSessionsPlugin;
 

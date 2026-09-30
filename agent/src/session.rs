@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::glue::{
     Agent, AgentEvent, AgentSet, Call, CallOf, Calls, Conversation, Done, EventKind, Inbox,
-    Model, Session, SessionMemory, Turn, push_message,
+    Model, Reported, Session, SessionMemory, Turn, push_message,
 };
 use crate::{Env, presets};
 
@@ -393,7 +393,7 @@ fn restore(world: &mut World) {
     world.entity_mut(tui).insert(Focused);
     let mut agent = world.entity_mut(tui);
     if let Some(model) = cli_model {
-        match ProviderRef::parse(&model) {
+        match crate::parse_model(&model) {
             Ok(model) => {
                 agent.insert(Model(model.clone()));
                 if let Some(mut transcript) = agent.get_mut::<Transcript>() {
@@ -402,7 +402,7 @@ fn restore(world: &mut World) {
             }
             Err(error) => {
                 if let Some(mut transcript) = agent.get_mut::<Transcript>() {
-                    transcript.log(EntryKind::Error, error.to_string());
+                    transcript.log(EntryKind::Error, error);
                 }
             }
         }
@@ -479,9 +479,14 @@ fn revive(
         ))
         .id();
     for (index, saved) in pending {
+        let is_reload = saved.call.function.name == crate::reload::TOOL;
         let mut call = world.spawn((Call { call: saved.call, index }, CallOf(entity)));
         if let Some(done) = saved.done {
             call.insert(Done(done.map(ToolOutput::text)));
+            // Reported before the restart; the reload call's note is new.
+            if !is_reload {
+                call.insert(Reported);
+            }
         }
     }
     entity

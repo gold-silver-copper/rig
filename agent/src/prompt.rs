@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 
-use crate::glue::{Agent, Tools};
+use crate::glue::{Agent, AgentSet, Tools};
 use crate::tools::CONTRIBUTIONS;
 
 /// What plugins add to the prompt.
@@ -88,9 +88,13 @@ impl Plugin for PromptPlugin {
         for tool in CONTRIBUTIONS {
             prompt.tool(tool.name, tool.snippet, tool.guidelines);
         }
+        // After PreUpdate, where plugins change the registry, and before
+        // any request of this frame is built.
         app.add_systems(
-            PreUpdate,
-            refresh.run_if(|tools: Res<Tools>, prompt: Res<Prompt>| tools.is_changed() || prompt.is_changed()),
+            Update,
+            refresh
+                .run_if(|tools: Res<Tools>, prompt: Res<Prompt>| tools.is_changed() || prompt.is_changed())
+                .in_set(AgentSet::Route),
         );
     }
 }

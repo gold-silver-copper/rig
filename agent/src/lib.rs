@@ -38,6 +38,16 @@ pub fn presets() -> [String; 4] {
     ]
 }
 
+/// A model by preset number (`/model 2`) or `vendor[/format]:model`.
+pub fn parse_model(reference: &str) -> Result<rig_core::providers::registry::ProviderRef, String> {
+    let presets = presets();
+    let reference = match reference.parse::<usize>() {
+        Ok(n) if (1..=presets.len()).contains(&n) => presets[n - 1].as_str(),
+        _ => reference,
+    };
+    rig_core::providers::registry::ProviderRef::parse(reference).map_err(|error| error.to_string())
+}
+
 /// Where this agent lives, fixed for the life of one process.
 #[derive(Resource, Clone, Debug)]
 pub struct Env {

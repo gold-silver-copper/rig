@@ -55,6 +55,7 @@ impl Plugin for RigPlugin {
                     schedule_calls,
                     run_task_calls,
                     poll_task_calls,
+                    report_calls,
                     finish_calls,
                 )
                     .chain()
@@ -167,6 +168,10 @@ pub struct Running(Task<Result<ToolOutput, String>>);
 /// The call's outcome: the tool's output, or error text for the model.
 #[derive(Component, Clone, Debug)]
 pub struct Done(pub Result<ToolOutput, String>);
+
+/// The call's outcome was reported as an [`AgentEvent`].
+#[derive(Component, Debug)]
+pub struct Reported;
 
 /// Every tool the model is offered, by name.
 #[derive(Resource, Default, Clone)]
@@ -549,6 +554,29 @@ fn poll_task_calls(mut calls: Query<(Entity, &mut Running)>, mut commands: Comma
     }
 }
 
+/// Report each call's outcome as it lands.
+fn report_calls(
+    calls: Query<(Entity, &Call, &CallOf, &Done), Without<Reported>>,
+    mut events: MessageWriter<AgentEvent>,
+    mut commands: Commands,
+) {
+    for (entity, call, owner, done) in &calls {
+        let (output, error) = match &done.0 {
+            Ok(output) => (output.render(), false),
+            Err(text) => (text.clone(), true),
+        };
+        events.write(AgentEvent {
+            agent: owner.0,
+            kind: EventKind::CallFinished {
+                name: call.call.function.name.to_string(),
+                output,
+                error,
+            },
+        });
+        commands.entity(entity).insert(Reported);
+    }
+}
+
 /// When every call of a reply is done, answer the model with the results
 /// (and any steering input) and request again.
 #[allow(clippy::type_complexity)]
@@ -587,18 +615,6 @@ fn finish_calls(
         let mut content: Vec<UserContent> = Vec::new();
         for (call, done) in &finished {
             let (id, name) = (call.call.id.clone(), call.call.function.name.clone());
-            let (text, error) = match &done.0 {
-                Ok(output) => (output.render(), false),
-                Err(text) => (text.clone(), true),
-            };
-            events.write(AgentEvent {
-                agent,
-                kind: EventKind::CallFinished {
-                    name: name.to_string(),
-                    output: text.clone(),
-                    error,
-                },
-            });
             content.push(match &done.0 {
                 Ok(output) => tool_result_output(id, name, output.clone()),
                 Err(text) => tool_result_message(id, name, text.clone()),
