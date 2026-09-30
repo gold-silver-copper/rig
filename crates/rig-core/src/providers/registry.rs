@@ -206,7 +206,9 @@ impl ProviderId {
     ///
     /// A bare vendor is accepted only when this build registers exactly one
     /// family for it; otherwise the error names the qualified alternatives,
-    /// each of which this resolver accepts.
+    /// each of which this resolver accepts. A dotted vendor name may also be
+    /// spelled by its last segment when no other vendor shares it, so
+    /// `gemini` reads as `gcp.gemini`.
     pub fn resolve(selection: &str) -> Result<Self, SelectionError> {
         let malformed = || SelectionError::Malformed {
             selection: selection.to_owned(),
@@ -219,6 +221,7 @@ impl ProviderId {
         if vendor.is_empty() {
             return Err(malformed());
         }
+        let vendor = canonical_vendor(vendor);
         let Some(format) = format else {
             let mut registered = Self::vendor_selections(vendor);
             let first = registered.next().ok_or_else(|| SelectionError::Unknown {
@@ -304,6 +307,25 @@ impl ProviderId {
             }
             Registered::Anthropic(_) | Registered::Gemini => true,
         }
+    }
+}
+
+/// `vendor` itself when it is registered, else the one registered vendor
+/// whose dotted name ends in `.{vendor}`.
+fn canonical_vendor(vendor: &str) -> &str {
+    if ProviderId::vendor_selections(vendor).next().is_some() {
+        return vendor;
+    }
+    let matches: std::collections::BTreeSet<&'static str> = ProviderId::all()
+        .map(|id| id.vendor())
+        .filter(|name| {
+            name.rsplit_once('.')
+                .is_some_and(|(_, short)| short == vendor)
+        })
+        .collect();
+    match matches.first() {
+        Some(name) if matches.len() == 1 => name,
+        _ => vendor,
     }
 }
 

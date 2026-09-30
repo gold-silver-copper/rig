@@ -681,3 +681,19 @@ fn the_family_name_is_the_configuration_tag() {
         );
     }
 }
+
+/// Gemini's vendor is the dotted `gcp.gemini`; its last segment reads as the
+/// same selection and writes back qualified.
+#[test]
+fn a_dotted_vendor_resolves_from_its_last_segment() {
+    let gemini = ProviderId::resolve("gcp.gemini").unwrap();
+    assert_eq!(ProviderId::resolve("gemini"), Ok(gemini));
+    assert_eq!(ProviderId::resolve("gemini/gemini"), Ok(gemini));
+    let reference = ProviderRef::parse("gemini:gemini-3.8-flash").unwrap();
+    assert_eq!(reference.id(), Some(gemini));
+    assert_eq!(reference.to_string(), "gcp.gemini/gemini:gemini-3.8-flash");
+    assert!(matches!(
+        ProviderId::resolve("gcp"),
+        Err(SelectionError::Unknown { .. })
+    ));
+}
