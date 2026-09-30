@@ -222,6 +222,35 @@ fn ambiguous_shorthand_offers_resolvable_alternatives() {
     );
 }
 
+/// Every family's base URL can be replaced without touching its other
+/// settings, which is how a host routes a preset through a proxy.
+#[test]
+fn a_preset_can_be_pointed_at_another_base_url() {
+    for selection in ["openai", "anthropic", "gemini", "deepseek"] {
+        let preset = ProviderId::resolve(selection).unwrap().config("key");
+        assert!(preset.base_url().starts_with("https://"), "{selection}");
+        let proxied = preset.clone().with_base_url("http://127.0.0.1:9");
+        assert_eq!(proxied.base_url(), "http://127.0.0.1:9", "{selection}");
+        assert_eq!(
+            proxied.clone().with_base_url(preset.base_url()),
+            preset,
+            "{selection}"
+        );
+    }
+}
+
+/// Gemini's vendor is `gcp.gemini`; its family name alone names it, and
+/// displays canonically.
+#[test]
+fn a_family_with_one_vendor_resolves_by_family_name() {
+    let reference = ProviderRef::parse("gemini:gemini-3.8-flash").unwrap();
+    assert_eq!(reference.to_string(), "gcp.gemini/gemini:gemini-3.8-flash");
+    assert_eq!(
+        ProviderId::resolve("gemini").unwrap(),
+        ProviderId::resolve("gcp.gemini").unwrap()
+    );
+}
+
 /// Malformed input is an error, never a silent fallback to some default.
 #[test]
 fn malformed_input_refuses() {

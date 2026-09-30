@@ -1216,5 +1216,10 @@ fn join_parts<'a>(parts: impl Iterator<Item = Cow<'a, str>>) -> String {
     text
 }
 
+#[cfg(all(feature = "file", not(target_family = "wasm")))]
+mod file;
+#[cfg(all(feature = "file", not(target_family = "wasm")))]
+pub use file::FileConversationMemory;
+
 #[cfg(test)]
 mod tests;

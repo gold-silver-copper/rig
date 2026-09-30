@@ -1,0 +1,26 @@
+name: rig-pi
+
+# The rig-pi agent (agent/) is its own Cargo workspace with its own
+# toolchain; this replays its recorded cassettes offline. No secrets.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    name: rig-pi / replay evals
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # bevy_remote pulls in bevy_audio, whose Linux backend links ALSA.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: agent
+      - name: cargo test (replays every eval offline)
+        working-directory: agent
+        run: cargo test --locked

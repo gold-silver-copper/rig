@@ -12,6 +12,14 @@ policies for shaping loaded history before it is sent to the model:
 - [`TokenWindowMemory`] — keep the most recent messages that fit within a token
   budget supplied by a [`TokenCounter`].
 
+With the native-only `file` feature it also provides a persistent backend:
+
+- [`FileConversationMemory`] — one append-only JSON Lines file per
+  conversation, synced on every append, so history survives restarts. A line
+  torn by a crash is skipped on load. Wrap it in `PolicyMemory` or
+  `CompactingMemory` to shape what loads return while the file keeps
+  everything.
+
 Both window policies remove the leading prefix through any tool-result
 messages whose assistant calls were truncated. Results are detected anywhere
 in a user message, including after text and across intervening system messages.

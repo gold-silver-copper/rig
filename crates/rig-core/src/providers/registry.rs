@@ -206,7 +206,9 @@ impl ProviderId {
     ///
     /// A bare vendor is accepted only when this build registers exactly one
     /// family for it; otherwise the error names the qualified alternatives,
-    /// each of which this resolver accepts.
+    /// each of which this resolver accepts. A bare family name that is no
+    /// vendor's name resolves to the family's only selection, so `gemini`
+    /// names `gcp.gemini/gemini`.
     pub fn resolve(selection: &str) -> Result<Self, SelectionError> {
         let malformed = || SelectionError::Malformed {
             selection: selection.to_owned(),
@@ -221,9 +223,13 @@ impl ProviderId {
         }
         let Some(format) = format else {
             let mut registered = Self::vendor_selections(vendor);
-            let first = registered.next().ok_or_else(|| SelectionError::Unknown {
-                vendor: vendor.to_owned(),
-            })?;
+            let Some(first) = registered.next() else {
+                return Self::sole_selection_of_family(vendor).ok_or_else(|| {
+                    SelectionError::Unknown {
+                        vendor: vendor.to_owned(),
+                    }
+                });
+            };
             return match registered.next() {
                 None => Ok(first),
                 Some(_) => Err(SelectionError::Ambiguous {
@@ -250,6 +256,15 @@ impl ProviderId {
                 },
             }
         })
+    }
+
+    /// The one selection of the family `name` spells, when that family has
+    /// exactly one registered vendor.
+    fn sole_selection_of_family(name: &str) -> Option<Self> {
+        let format = Format::named(name)?;
+        let mut selections = Self::all().filter(|id| id.format() == format);
+        let first = selections.next()?;
+        selections.next().is_none().then_some(first)
     }
 
     /// Build this selection's preset with `api_key`. Copilot requires an exchanged
@@ -430,6 +445,26 @@ impl ProviderConfig {
             Self::OpenAi(provider) => provider.api_key.is_empty(),
             Self::Anthropic(provider) => provider.api_key.is_empty(),
             Self::Gemini(provider) => provider.api_key.is_empty(),
+        }
+    }
+
+    /// The API root requests go to.
+    pub fn base_url(&self) -> &str {
+        match self {
+            Self::OpenAi(provider) => &provider.base_url,
+            Self::Anthropic(provider) => &provider.base_url,
+            Self::Gemini(provider) => &provider.base_url,
+        }
+    }
+
+    /// The same configuration sending to `base_url`, such as a proxy or a
+    /// local recording server, with every other setting kept.
+    pub fn with_base_url(self, base_url: impl Into<String>) -> Self {
+        let base_url = base_url.into();
+        match self {
+            Self::OpenAi(provider) => Self::OpenAi(provider.with_base_url(base_url)),
+            Self::Anthropic(provider) => Self::Anthropic(provider.with_base_url(base_url)),
+            Self::Gemini(provider) => Self::Gemini(provider.with_base_url(base_url)),
         }
     }
 

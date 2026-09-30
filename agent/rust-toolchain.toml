@@ -1,0 +1,4 @@
+# Bevy 0.20 needs a newer rustc than the rig workspace pins (1.95).
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
