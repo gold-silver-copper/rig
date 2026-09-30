@@ -467,6 +467,17 @@ impl ProviderConfig {
         self
     }
 
+    /// The same configuration sending to `base_url` instead of its host, such
+    /// as a gateway or a recording proxy. The dialect, route and options stay.
+    pub fn with_base_url(self, base_url: impl Into<String>) -> Self {
+        let base_url = base_url.into();
+        match self {
+            Self::OpenAi(provider) => Self::OpenAi(provider.with_base_url(base_url)),
+            Self::Anthropic(provider) => Self::Anthropic(provider.with_base_url(base_url)),
+            Self::Gemini(provider) => Self::Gemini(provider.with_base_url(base_url)),
+        }
+    }
+
     /// The completion wire for `model`, bound to `http`, erased behind a
     /// [`ModelAdapter`] labelled `label`.
     ///
@@ -483,7 +494,7 @@ impl ProviderConfig {
     }
 
     /// The provider's completion model for `model` on `http`, erased.
-    fn completion_model(&self, model: &str, http: DynHttpClient) -> DynModel<Completion> {
+    pub fn completion_model(&self, model: &str, http: DynHttpClient) -> DynModel<Completion> {
         match self {
             Self::OpenAi(provider) => provider.clone().connect(http).completion(model).erase(),
             Self::Anthropic(provider) => provider.clone().connect(http).completion(model).erase(),

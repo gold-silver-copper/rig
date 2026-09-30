@@ -697,3 +697,23 @@ fn a_dotted_vendor_resolves_from_its_last_segment() {
         Err(SelectionError::Unknown { .. })
     ));
 }
+
+/// A base URL override moves every family to the new host and keeps the
+/// rest of the configuration.
+#[test]
+fn a_base_url_override_reaches_every_family() {
+    for spec in ["openai:m", "anthropic:m", "gemini:m", "deepseek:m"] {
+        let reference = ProviderRef::parse(spec).unwrap();
+        let config = reference.config("k").with_base_url("http://127.0.0.1:9");
+        assert_eq!(config.id(), reference.id(), "{spec} keeps its selection");
+        let json = serde_json::to_value(&config).unwrap();
+        let family = json
+            .as_object()
+            .and_then(|tagged| tagged.values().next())
+            .unwrap();
+        assert_eq!(
+            family["base_url"], "http://127.0.0.1:9",
+            "{spec}: {json}"
+        );
+    }
+}
