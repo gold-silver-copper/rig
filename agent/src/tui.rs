@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -34,7 +36,10 @@ struct Input {
 
 impl Plugin for TuiPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_non_send(Term(ratatui::init()))
+        let terminal = ratatui::init();
+        // Pasted newlines arrive as text rather than as Enter.
+        let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableBracketedPaste);
+        app.insert_non_send(Term(terminal))
             .init_resource::<Input>()
             .add_systems(PreUpdate, read_input)
             .add_systems(PostUpdate, draw);
@@ -42,6 +47,7 @@ impl Plugin for TuiPlugin {
 }
 
 pub fn restore_terminal() {
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
 }
 
