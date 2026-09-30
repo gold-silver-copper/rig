@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use crossbeam_channel::Receiver;
 use futures::StreamExt;
 use rig_core::DynModel;
-use rig_core::completion::{CompletionRequest, CompletionResponse, ToolDefinition};
+use rig_core::completion::{CompletionRequest, CompletionResponse, ToolDefinition, Usage};
 use rig_core::message::{Message, ToolCall as ModelToolCall, ToolResultContent};
 use rig_core::operation::Completion;
 use rig_core::streaming::{Item, StreamEvent};
@@ -95,6 +95,11 @@ pub enum ModelEvent {
 pub struct Agent {
     model: DynModel<Completion>,
     pub model_name: String,
+    /// Ask for Anthropic's automatic prompt caching; every round resends
+    /// the whole conversation.
+    cache_prompts: bool,
+    /// Tokens used this session.
+    pub usage: Usage,
     runtime: tokio::runtime::Runtime,
     history: Vec<Message>,
     pub turn: Turn,
@@ -102,10 +107,17 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(model: DynModel<Completion>, model_name: String, runtime: tokio::runtime::Runtime) -> Self {
+    pub fn new(
+        model: DynModel<Completion>,
+        model_name: String,
+        cache_prompts: bool,
+        runtime: tokio::runtime::Runtime,
+    ) -> Self {
         Self {
             model,
             model_name,
+            cache_prompts,
+            usage: Usage::default(),
             runtime,
             history: Vec::new(),
             turn: Turn::Idle,
@@ -118,8 +130,11 @@ impl Agent {
     }
 
     fn start(&mut self, specs: &Query<&ToolSpec>, round: usize) {
+        // Sorted, so the prompt prefix stays byte-identical for caching.
+        let mut specs: Vec<&ToolSpec> = specs.iter().collect();
+        specs.sort_by(|a, b| a.name.cmp(&b.name));
         let tools = specs
-            .iter()
+            .into_iter()
             .map(|spec| ToolDefinition {
                 name: spec.name.clone(),
                 description: spec.description.clone(),
@@ -127,10 +142,13 @@ impl Agent {
                     .unwrap_or_else(|_| serde_json::json!({ "type": "object" })),
             })
             .collect();
-        let request = CompletionRequest::from(self.history.clone())
+        let mut request = CompletionRequest::from(self.history.clone())
             .preamble(preamble())
             .tools(tools)
             .max_tokens(8192);
+        if self.cache_prompts {
+            request = request.additional_params(serde_json::json!({ "cache_control": { "type": "ephemeral" } }));
+        }
         let (tx, events) = crossbeam_channel::unbounded();
         let task = self.runtime.spawn(stream_reply(self.model.clone(), request, tx));
         self.turn = Turn::Thinking {
@@ -303,6 +321,7 @@ fn poll_model(
             return;
         }
     };
+    agent.usage += response.usage;
     if !streamed && !response.text().is_empty() {
         transcript.push(Entry::Assistant { text: response.text() });
     }

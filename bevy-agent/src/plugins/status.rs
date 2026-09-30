@@ -35,9 +35,23 @@ fn update_status(
         PatchStatus::Applied { count, .. } => format!("patched x{count}"),
         PatchStatus::Failed(_) => "patch failed".to_owned(),
     };
+    let usage = agent.usage;
+    let tokens = format!(
+        "{} in ({} cached) · {} out",
+        kilo(usage.input_tokens),
+        kilo(usage.cached_input_tokens),
+        kilo(usage.output_tokens)
+    );
     let dim = Style::new().fg(Color::DarkGray);
     status.0 = Line::from(vec![
         Span::styled(" rigpi ", Style::new().fg(Color::Black).bg(Color::Cyan)),
-        Span::styled(format!(" {} · {state} · {patch} · brp :{} ", agent.model_name, port.0), dim),
+        Span::styled(
+            format!(" {} · {state} · {tokens} · {patch} · brp :{} ", agent.model_name, port.0),
+            dim,
+        ),
     ]);
+}
+
+fn kilo(tokens: Option<u64>) -> String {
+    format!("{:.1}k", tokens.unwrap_or(0) as f64 / 1000.0)
 }

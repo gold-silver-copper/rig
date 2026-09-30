@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
-use rig_core::providers::registry::ProviderRef;
+use rig_core::providers::registry::{Format, ProviderRef};
 
 const USAGE: &str = "usage: rigpi [--model provider:model] [--brp-port PORT]
 
@@ -35,8 +35,12 @@ fn main() -> AppExit {
     };
     let model = ProviderRef::parse(&options.model)
         .map_err(|error| error.to_string())
-        .and_then(|reference| reference.completion_model().map_err(|error| error.to_string()));
-    let model = match model {
+        .and_then(|reference| {
+            let anthropic = reference.id().is_some_and(|id| id.format() == Format::Anthropic);
+            let model = reference.completion_model().map_err(|error| error.to_string())?;
+            Ok((model, anthropic))
+        });
+    let (model, anthropic) = match model {
         Ok(model) => model,
         Err(error) => {
             eprintln!("rigpi: cannot use model `{}`: {error}", options.model);
@@ -54,7 +58,7 @@ fn main() -> AppExit {
 
     App::new()
         .add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 30.0))))
-        .insert_resource(agent::Agent::new(model, options.model, runtime))
+        .insert_resource(agent::Agent::new(model, options.model, anthropic, runtime))
         .add_plugins((
             hot::HotReloadPlugin(fat),
             tools::ToolsPlugin,

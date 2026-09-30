@@ -192,7 +192,7 @@ fn transcript(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
     })
 }
 
-/// `{ "model", "turn", "tools" }`.
+/// `{ "model", "turn", "tools", "usage" }`.
 fn state(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
     let tools: Vec<String> = world
         .query::<&ToolSpec>()
@@ -205,5 +205,5 @@ fn state(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
         Turn::Thinking { .. } => "thinking",
         Turn::Tools { .. } => "tools",
     };
-    Ok(json!({ "model": agent.model_name, "turn": turn, "tools": tools }))
+    Ok(json!({ "model": agent.model_name, "turn": turn, "tools": tools, "usage": agent.usage }))
 }
