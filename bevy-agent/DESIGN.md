@@ -92,6 +92,11 @@ reports a stale result.
   `HotPatchChanges`) without connecting to a `dx` devserver.
 - **Default model.** `anthropic:claude-haiku-4-5` when `ANTHROPIC_API_KEY`
   is set, else `openai:gpt-5-mini`. Any `ProviderRef` works.
+- **Bevy source read first.** Checked out at `v0.20.0-rc.2` in
+  `.work/bevy` (gitignored), with dioxus `v0.7.10` beside it. Examples read:
+  `ecs/hotpatching_systems`, `remote/{server,client,app_under_test}`,
+  `app/{headless,plugin,custom_loop,without_winit}`,
+  `ecs/{one_shot_systems,observers}`, and `async_tasks/*`.
 
 ## Tried and abandoned
 
