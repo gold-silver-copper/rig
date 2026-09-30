@@ -34,6 +34,7 @@ impl Plugin for TuiPlugin {
             input: String::new(),
             scroll: 0,
             frames: 0,
+            dirty: true,
         })
         .add_systems(
             Update,
@@ -53,6 +54,8 @@ struct Tui {
     /// Lines scrolled up from the bottom.
     scroll: usize,
     frames: u64,
+    /// Input or the terminal changed since the last draw.
+    dirty: bool,
 }
 
 fn input(
@@ -65,6 +68,7 @@ fn input(
 ) {
     while event::poll(Duration::ZERO).unwrap_or(false) {
         let Ok(event) = event::read() else { return };
+        tui.dirty = true;
         let key = match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => key,
             Event::Paste(text) => {
@@ -161,6 +165,11 @@ fn draw(
 ) {
     let tui = &mut *tui;
     tui.frames += 1;
+    let spinning = session.busy() || reload.building();
+    if !(tui.dirty || session.is_changed() || spinning && tui.frames % 6 == 0) {
+        return;
+    }
+    tui.dirty = false;
     let spinner =
         ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][(tui.frames / 4 % 10) as usize];
     let state = match &session.phase {
