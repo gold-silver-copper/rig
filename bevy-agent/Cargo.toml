@@ -1,0 +1,30 @@
+[package]
+name = "rigpi"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "A minimal coding agent on Rig + Bevy that hot-patches its own native plugins."
+
+# Standalone workspace: keeps Bevy out of Rig's lockfile and CI.
+[workspace]
+members = ["hotpatch"]
+
+[dependencies]
+bevy = { version = "=0.20.0-rc.2", default-features = false, features = ["std", "multi_threaded"] }
+bevy_ecs = { version = "=0.20.0-rc.2", features = ["hotpatching"] }
+bevy_remote = { version = "=0.20.0-rc.2", default-features = false, features = ["http"] }
+subsecond = "0.7"
+rigpi-hotpatch = { path = "hotpatch" }
+rig-core = { path = "../crates/rig-core", features = ["reqwest"] }
+ratatui = "0.30"
+tokio = { version = "1", features = ["rt-multi-thread", "process", "time", "io-util"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+object = { version = "0.37", features = ["write"] }
+crossbeam-channel = "0.5"
+
+[profile.dev.package."*"]
+# Dependencies need symbols (for patching) but not DWARF.
+debug = false

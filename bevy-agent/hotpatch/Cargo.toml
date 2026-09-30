@@ -1,0 +1,15 @@
+[package]
+name = "rigpi-hotpatch"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Subsecond hot-patching without the Dioxus CLI: fat/thin builds, symbol stubs, jump tables."
+
+[dependencies]
+subsecond = "0.7"
+object = { version = "0.37", features = ["write"] }
+ar = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
