@@ -101,7 +101,10 @@ fn input(
                         exit.write(AppExit::Success);
                     }
                     ("/reload", _) => reload.start(&mut session, &env),
-                    ("/clear", _) if !session.busy() => {
+                    ("/clear", _) if session.busy() => {
+                        session.log(Kind::Error, "/clear: a turn is running (Esc cancels it)");
+                    }
+                    ("/clear", _) => {
                         session.messages.clear();
                         session.transcript.clear();
                     }
@@ -124,6 +127,12 @@ fn input(
                         if let Err(error) = session.switch_model(reference.trim()) {
                             session.log(Kind::Error, error);
                         }
+                    }
+                    (command, _) if command.starts_with('/') && !command[1..].contains('/') => {
+                        session.log(
+                            Kind::Error,
+                            format!("unknown command {command}: try /model /reload /clear /quit"),
+                        );
                     }
                     _ => session.queue.push_back(line.to_owned()),
                 }
