@@ -1,0 +1,27 @@
+[package]
+name = "bevy-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "A minimal, self-modifying coding agent built on Bevy and Rig."
+
+# Its own workspace: the agent rebuilds itself with `cargo build` here, and
+# keeps Bevy out of Rig's lockfile.
+[workspace]
+
+[dependencies]
+bevy = { version = "=0.20.0-rc.2", default-features = false, features = ["std", "multi_threaded", "async_executor"] }
+# Only the HTTP transport: the default features pull in rendering and assets.
+bevy_remote = { version = "=0.20.0-rc.2", default-features = false, features = ["http"] }
+rig-core = { path = "../crates/rig-core", features = ["reqwest"] }
+ratatui = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Rig reports dropped or unmodeled content through `tracing`: keep it in a log file.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1

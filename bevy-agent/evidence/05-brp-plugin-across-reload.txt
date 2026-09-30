@@ -1,0 +1,40 @@
+· plugin `py-reverse` registered: reverse
+
+· model: deepseek/openai:deepseek-flash
+
+› Call the reverse tool with text 'hello brp'. Then call reload. After the reload, call reverse with text 'after reload'. Report both tool results e
+  xactly.
+
+⚙ reverse {"text":"hello brp"}
+
+  ↳ reverse: prb olleh (served by plugin pid 80586)
+
+⚙ reload {}
+
+· build succeeded; restarting into the new binary
+
+· restarted into the new binary (pid 81375)
+
+  ↳ reload: Reload succeeded: rebuilt and restarted into the new binary. Your changes are live and the conversation is intact.
+
+⚙ reverse {"text":"after reload"}
+
+  ↳ reverse: daoler retfa (served by plugin pid 80586)
+
+Both calls worked, and notably the reverse tool survived the reload with the same plugin pid:
+
+- Before reload, `reverse("hello brp")` → `prb olleh (served by plugin pid 80586)`
+- After reload, `reverse("after reload")` → `daoler retfa (served by plugin pid 80586)`
+
+ deepseek/openai:deepseek-flash │ idle │ BRP 127.0.0.1:63370 │ /help
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│›                                                                                                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+---- external plugin log (examples/brp_plugin.py 63370) ----
+[12:50:37] registered {'registered': ['reverse']}
+[12:50:47] answered 80357-1: prb olleh (served by plugin pid 80586)
+[12:50:48] stream ended; reconnecting
+[12:50:48] not connected ([Errno 54] Connection reset by peer); retrying
+[12:50:49] registered {'registered': ['reverse']}
+[12:50:49] answered 81375-1: daoler retfa (served by plugin pid 80586)

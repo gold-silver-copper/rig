@@ -1,0 +1,68 @@
+› Test crash fallback: add  panic!("deliberate startup crash");  as the first statement of GreeterPlugin::build in your greeter plugin, then call re
+  load and report exactly what the reload tool told you. Then remove the panic, call reload again, and call greet with name Cy.
+
+⚙ read {"limit":30,"offset":1,"path":"/Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/bevy-agent/src/plugins/greeter.rs"}
+
+  ↳ read:     1//! An example native plugin: an ordinary Bevy plugin that adds one tool.
+        2//! Edit it, then `reload`, and the change is live.
+        3
+        4use bevy::prelude::*;
+        5use serde_json::{Value, json};
+        6
+    … (17 more lines)
+
+⚙ edit {"new_text":"    fn build(&self, app: &mut App) {\n        panic!(\"deliberate startup crash\");\n        app.add_tool(","old_text":"    fn b
+  uild(&self, app: &mut App) {\n        app.add_tool(","path"…
+
+  ↳ edit: edited /Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/bevy-agent/src/plugins/greeter.rs
+
+⚙ reload {}
+
+· build succeeded; restarting into the new binary
+
+! the new binary failed to start (exit code 101; stderr:
+
+  thread 'main' (67434455) panicked at src/plugins/greeter.rs:13:9:
+  deliberate startup crash
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace); fell back to the last good binary
+
+  ↳ reload: Reload failed: the new binary failed to start (exit code 101; stderr:
+
+    thread 'main' (67434455) panicked at src/plugins/greeter.rs:13:9:
+    deliberate startup crash
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace); fell back to the last good binary
+
+⚙ edit {"new_text":"    fn build(&self, app: &mut App) {\n        app.add_tool(","old_text":"    fn build(&self, app: &mut App) {\n        panic!(\"
+  deliberate startup crash\");\n        app.add_tool(","path"…
+
+  ↳ edit: edited /Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/bevy-agent/src/plugins/greeter.rs
+
+⚙ reload {}
+
+· build succeeded; restarting into the new binary
+
+· restarted into the new binary (pid 75402)
+
+  ↳ reload: Reload succeeded: rebuilt and restarted into the new binary. Your changes are live and the conversation is intact.
+
+⚙ greet {"name":"Cy"}
+
+  ↳ greet: Ahoy, Cy!
+
+When the deliberate panic was added to `GreeterPlugin::build`, the `reload` tool responded with:
+
+```text
+Reload failed: the new binary failed to start (exit code 101; stderr:
+
+thread 'main' (67434455) panicked at src/plugins/greeter.rs:13:9:
+deliberate startup crash
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace); fell back to the last good binary
+```
+
+After removing the panic statement and calling `reload` again, the rebuild succeeded and calling `greet` with `Cy` returned:
+`Ahoy, Cy!`
+
+ gcp.gemini/gemini:gemini-3.8-flash │ idle │ BRP 127.0.0.1:63370 │ /help
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│›                                                                                                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

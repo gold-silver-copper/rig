@@ -1,0 +1,36 @@
+Started with: bevy-agent --model anthropic:claude-opus-5-5 (fresh session)
+Second prompt typed while the first turn was running. Screen right after the restart:
+
+· restarted into the new binary (pid 82855)
+  ↳ reload: Reload succeeded: rebuilt and restarted into the new binary. Your changes are live and the conversation is intact.
+ anthropic/anthropic:claude-opus-5-5 │ thinking │ 1 queued │ BRP 127.0.0.1:50068 │ /help
+
+Screen when both turns were done:
+
+› Call reload, then call greet with name Queue and report the result.
+
+⚙ reload {}
+
+· build succeeded; restarting into the new binary
+
+· restarted into the new binary (pid 82855)
+
+  ↳ reload: Reload succeeded: rebuilt and restarted into the new binary. Your changes are live and the conversation is intact.
+
+⚙ greet {"name":"Queue"}
+
+  ↳ greet: Hello, Queue!
+
+I reloaded first: the rebuild worked and I restarted into the new binary. Then I called `greet` with the name "Queue", and it returned: **"Hello, Queu
+e!"**
+
+› Second prompt: say 'second prompt ran' and repeat what greet returned in the previous turn.
+
+second prompt ran
+
+In the previous turn, `greet` returned: **"Hello, Queue!"**
+
+ anthropic/anthropic:claude-opus-5-5 │ idle │ BRP 127.0.0.1:50068 │ /help
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│›                                                                                                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

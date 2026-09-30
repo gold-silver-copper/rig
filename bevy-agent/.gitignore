@@ -1,0 +1,2 @@
+# Default state directory when run from here.
+.bevy-agent/
