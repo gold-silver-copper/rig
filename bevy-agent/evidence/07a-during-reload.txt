@@ -1,0 +1,55 @@
+
+⚙ codemode {"code":"const [a, b] = await Promise.all([tools.read({path: \"a.txt\"}), tools.read({path: \"b.txt\"})]);\nreturn `${a} ${b}`;"}
+
+hello
+ world
+
+The joined contents are "hello world".
+
+› Call the shout tool with the text 'before reload' and show its exact output.
+
+⚙ shout {"text":"before reload"}
+
+BEFORE RELOAD! (shout #1 from plugin pid 38698)
+
+Exact output: `BEFORE RELOAD! (shout #1 from plugin pid 38698)`
+
+Model: anthropic:claude-opus-5-5
+
+› Change your native read tool plugin (src/tools/read.rs) so that every successful output starts with a first line '[read v2]'. Then call reload, and after the reload
+read a.txt in this same turn and show me the raw tool output.
+
+⚙ bash {"command":"wc -l src/tools/read.rs; grep -n \"Ok(\\|fn \\|format!\" src/tools/read.rs | head -50"}
+
+      83 src/tools/read.rs
+12:    fn build(&self, app: &mut App) {
+15:            format!(
+42:fn read(args: Args) -> Result<ToolOutput, ToolExecutionError> {
+44:        .map_err(|error| ToolExecutionError::not_found(format!("{}: {error}", args.path)))?;
+48:        return Err(ToolExecutionError::invalid_args(format!(
+69:        output.push_str(&format!(
+76:        output.push_str(&format!(
+… 1 more lines (Ctrl+O)
+
+⚙ read {"path":"src/tools/read.rs","offset":42}
+
+fn read(args: Args) -> Result<ToolOutput, ToolExecutionError> {
+    let text = std::fs::read_to_string(&args.path)
+        .map_err(|error| ToolExecutionError::not_found(format!("{}: {error}", args.path)))?;
+    let lines: Vec<&str> = text.split('\n').collect();
+    let start = args.offset.unwrap_or(1).max(1) - 1;
+    if start >= lines.len() {
+        return Err(ToolExecutionError::invalid_args(format!(
+            "Offset {} is beyond end of file ({} lines total)",
+… 34 more lines (Ctrl+O)
+
+⚙ edit {"path":"src/tools/read.rs","edits":[{"oldText":"    Ok(ToolOutput::text(output))","newText":"    Ok(ToolOutput::text(format!(\"[read v2]\\n{output}\")))"}]}
+
+Successfully replaced 1 block(s) in src/tools/read.rs.
+
+⚙ reload {}
+
+› (queued) Call the shout tool with the text 'queued prompt survived the reload'.
+
+ ~/Desktop/code/many_rigs/rig-bevy-agent-o55-f343c3/.work/final2/bevy-agent · anthropic:claude-opus-5-5 · building · ↑52853 ↓826 · 1 queued · brp :59256 · gen 0 · /help
+>

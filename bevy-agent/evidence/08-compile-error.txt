@@ -1,0 +1,55 @@
+[read v2]
+hello
+```
+
+› Call the shout tool with the text 'queued prompt survived the reload'.
+
+⚙ shout {"text":"queued prompt survived the reload"}
+
+QUEUED PROMPT SURVIVED THE RELOAD! (shout #2 from plugin pid 38698)
+
+Output: `QUEUED PROMPT SURVIVED THE RELOAD! (shout #2 from plugin pid 38698)`
+
+The plugin shows the same pid (38698) as before the reload, and its count went from #1 to #2. So the shout plugin process kept running through the reload and wasn't
+restarted.
+
+› Test your reload error path: insert the statement  let broken: u32 = "oops";  as the first line of the body of fn read in src/tools/read.rs, call reload, and show me
+exactly what reload returned. Then remove that line again, but do NOT reload.
+
+⚙ edit {"path":"src/tools/read.rs","edits":[{"oldText":"fn read(args: Args) -> Result<ToolOutput, ToolExecutionError> {\n","newText":"fn read(args: Args) ->
+Result<ToolOutput, ToolExecutionError> {\n    let broken: u32 = \"oops\";\n"}]}
+
+Successfully replaced 1 block(s) in src/tools/read.rs.
+
+⚙ reload {}
+
+Reload failed; still running the previous binary.
+error[E0308]: mismatched types
+  --> src/tools/read.rs:43:23
+   |
+43 |     let broken: u32 = "oops";
+   |                 ---   ^^^^^^ expected `u32`, found `&str`
+   |                 |
+   |                 expected due to this
+
+⚙ edit {"path":"src/tools/read.rs","edits":[{"oldText":"    let broken: u32 = \"oops\";\n","newText":""}]}
+
+Successfully replaced 1 block(s) in src/tools/read.rs.
+
+The reload failed as expected. This is exactly what it returned:
+
+```
+Reload failed; still running the previous binary.
+error[E0308]: mismatched types
+  --> src/tools/read.rs:43:23
+   |
+43 |     let broken: u32 = "oops";
+   |                 ---   ^^^^^^ expected `u32`, found `&str`
+   |                 |
+   |                 expected due to this
+```
+
+I've removed the broken line from `src/tools/read.rs` and didn't reload. The file now matches the working `[read v2]` build that's still running.
+
+ ~/Desktop/code/many_rigs/rig-bevy-agent-o55-f343c3/.work/final2/bevy-agent · anthropic:claude-opus-5-5 · idle · ↑44002 ↓832 · brp :59256 · gen 1 · /help
+>

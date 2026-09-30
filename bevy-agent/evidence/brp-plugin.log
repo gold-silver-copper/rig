@@ -1,0 +1,36 @@
+registered
+shout {'text': 'before reload'} -> ok
+stream closed
+registered
+shout {'text': 'queued prompt survived the reload'} -> ok
+stream closed
+registered
+stream closed
+registered
+shout {'text': 'still here after fallback and reload'} -> ok
+stream closed
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+not connected: <urlopen error [Errno 61] Connection refused>
+registered
+stream closed
+registered
