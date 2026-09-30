@@ -1,0 +1,29 @@
+{
+  "workspace": "workspace",
+  "cases": [
+    {
+      "name": "openai reads a file",
+      "model": "openai:gpt-6.1-sol",
+      "prompts": ["Use the read tool to read notes.txt, then reply with only the code word it contains."],
+      "expect": {"tools": ["read"], "answer_contains": ["pineapple"]}
+    },
+    {
+      "name": "anthropic reads a file",
+      "model": "anthropic:claude-opus-5-5",
+      "prompts": ["Use the read tool to read notes.txt, then reply with only the code word it contains."],
+      "expect": {"tools": ["read"], "answer_contains": ["pineapple"]}
+    },
+    {
+      "name": "gemini runs a command",
+      "model": "gemini:gemini-3.8-flash",
+      "prompts": ["Use the bash tool to run `cat notes.txt`, then reply with only the code word it contains."],
+      "expect": {"tools": ["bash"], "answer_contains": ["pineapple"]}
+    },
+    {
+      "name": "deepseek reads a file",
+      "model": "deepseek:deepseek-flash",
+      "prompts": ["Use the read tool to read notes.txt, then reply with only the code word it contains."],
+      "expect": {"tools": ["read"], "answer_contains": ["pineapple"]}
+    }
+  ]
+}

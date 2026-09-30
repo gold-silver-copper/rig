@@ -192,8 +192,14 @@ fn replay_inputs(world: &mut World) {
         .map(|transcript| transcript.0.clone())
         .unwrap_or_default();
     let (verdict, matched) = match compare(&recorded, &replayed) {
-        None => ("Replay matched the recording: the same tool calls and final answer.".to_owned(), true),
-        Some(difference) => (format!("Replay differs from the recording: {difference}"), false),
+        None => (
+            "Replay matched the recording: the same tool calls and final answer.".to_owned(),
+            true,
+        ),
+        Some(difference) => (
+            format!("Replay differs from the recording: {difference}"),
+            false,
+        ),
     };
     session::log(world, agent, Entry::Notice(verdict.clone()));
     if !world.resource::<State>().tui {
@@ -244,7 +250,10 @@ pub fn compare(recorded: &[Entry], replayed: &[Entry]) -> Option<String> {
 }
 
 fn save_session(world: &mut World) {
-    let Some(SessionFile(path)) = world.get_resource::<SessionFile>().map(|file| SessionFile(file.0.clone())) else {
+    let Some(SessionFile(path)) = world
+        .get_resource::<SessionFile>()
+        .map(|file| SessionFile(file.0.clone()))
+    else {
         return;
     };
     let Some(agent) = tui_agent(world) else {

@@ -64,6 +64,9 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("eval") {
+        return eval();
+    }
     let args = match parse_args() {
         Ok(args) => args,
         Err(message) => {
@@ -137,4 +140,99 @@ fn cwd_label() -> String {
         }
         _ => cwd.display().to_string(),
     }
+}
+
+/// `bevy-agent eval <suite.json> [--record] [--cassettes dir]`: runs a suite
+/// headless in a fresh copy of its workspace, replaying its cassettes unless
+/// told to record them.
+fn eval() -> ExitCode {
+    let mut suite_path = None;
+    let mut mode = CassetteMode::Replay;
+    let mut root = bevy_agent::cassette_root();
+    let mut iter = std::env::args().skip(2);
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--record" => mode = CassetteMode::Record,
+            "--cassettes" => root = iter.next().map(PathBuf::from).unwrap_or(root),
+            _ => suite_path = Some(PathBuf::from(arg)),
+        }
+    }
+    let Some(suite_path) = suite_path.and_then(|path| std::path::absolute(path).ok()) else {
+        eprintln!("usage: bevy-agent eval <suite.json> [--record] [--cassettes dir]");
+        return ExitCode::FAILURE;
+    };
+    let root = std::path::absolute(&root).unwrap_or(root);
+    let suite = match plugins::eval::Suite::load(&suite_path) {
+        Ok(suite) => suite,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let name = suite_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "suite".into());
+    // A fixed place relative to the source, so the relative paths in the
+    // system prompt, and so the recorded requests, are the same everywhere.
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/eval")
+        .join(&name);
+    let _ = std::fs::remove_dir_all(&workspace);
+    if let Err(error) = std::fs::create_dir_all(&workspace) {
+        eprintln!("{}: {error}", workspace.display());
+        return ExitCode::FAILURE;
+    }
+    if let Some(files) = &suite.workspace {
+        let from = suite_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(files);
+        if let Err(error) = copy_tree(&from, &workspace) {
+            eprintln!("{}: {error}", from.display());
+            return ExitCode::FAILURE;
+        }
+    }
+    if let Err(error) = std::env::set_current_dir(&workspace) {
+        eprintln!("{}: {error}", workspace.display());
+        return ExitCode::FAILURE;
+    }
+    let state = State {
+        dir: workspace.join(".bevy-agent"),
+        generation: 0,
+        cwd_label: name.clone(),
+        model: DEFAULT_MODEL.into(),
+        tui: false,
+        primary: false,
+    };
+    let mut app = bevy_agent::app(state, true);
+    app.add_plugins((
+        plugins::cassette::CassettePlugin {
+            mode,
+            dir: root.join(format!("eval-{name}")),
+            session: false,
+        },
+        plugins::eval::EvalPlugin {
+            suite,
+            timeout: std::time::Duration::from_secs(300),
+        },
+    ));
+    match app.run() {
+        AppExit::Success => ExitCode::SUCCESS,
+        AppExit::Error(code) => ExitCode::from(code.get()),
+    }
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
