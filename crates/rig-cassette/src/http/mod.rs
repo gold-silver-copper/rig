@@ -392,8 +392,8 @@ pub struct ProviderCassette {
     base_path: String,
     mode: CassetteMode,
     policy: CassettePolicy,
-    provider: &'static str,
-    scenario: &'static str,
+    provider: String,
+    scenario: String,
     expected_failures: Arc<AtomicU8>,
     attempt_root: PathBuf,
     clock: CassetteClock,
@@ -526,6 +526,31 @@ impl ProviderCassette {
         .await
     }
 
+    /// Start a session whose provider and scenario names are chosen at run
+    /// time, as an application recording its own traffic does. Replay
+    /// matches in wire order and no account failure is expected; otherwise
+    /// this is [`Self::start_at`].
+    pub async fn start_named(
+        transport: RecordVia,
+        provider: &str,
+        scenario: &str,
+        real_base_url: &str,
+        mode: CassetteMode,
+        cassette_path: PathBuf,
+    ) -> Self {
+        Self::open(
+            transport,
+            provider,
+            scenario,
+            (ReplayMatching::Ordered, 0),
+            real_base_url,
+            mode,
+            cassette_path,
+            attempt_root(),
+        )
+        .await
+    }
+
     /// [`Self::start_at`] with failed recordings and the ledger under
     /// `attempt_root` instead of the ambient [`attempt_root`].
     pub(crate) async fn start_with_attempts(
@@ -537,9 +562,31 @@ impl ProviderCassette {
         cassette_path: PathBuf,
         attempt_root: PathBuf,
     ) -> Self {
-        let scenario = spec.scenario;
+        Self::open(
+            transport,
+            provider,
+            spec.scenario,
+            (spec.replay_matching, spec.expected_failures),
+            real_base_url,
+            mode,
+            cassette_path,
+            attempt_root,
+        )
+        .await
+    }
+
+    async fn open(
+        transport: RecordVia,
+        provider: &str,
+        scenario: &str,
+        (replay_matching, expected_failures): (ReplayMatching, u8),
+        real_base_url: &str,
+        mode: CassetteMode,
+        cassette_path: PathBuf,
+        attempt_root: PathBuf,
+    ) -> Self {
         let ledger_path = attempt_root.join(ledger::LEDGER_FILE);
-        let policy = CassettePolicy::for_scenario(provider, scenario, spec.replay_matching);
+        let policy = CassettePolicy::for_scenario(provider, scenario, replay_matching);
         let upstream = UpstreamBase::parse(real_base_url);
         let server = if !mode.records() {
             if !cassette_path.exists() {
@@ -610,9 +657,9 @@ impl ProviderCassette {
             base_path: upstream.path,
             mode,
             policy,
-            provider,
-            scenario,
-            expected_failures: Arc::new(AtomicU8::new(spec.expected_failures)),
+            provider: provider.to_owned(),
+            scenario: scenario.to_owned(),
+            expected_failures: Arc::new(AtomicU8::new(expected_failures)),
             attempt_root,
             clock,
         }
@@ -768,9 +815,9 @@ impl ProviderCassette {
             }),
         };
 
-        let refusals = recording_refusals(provider, &yaml, expected);
+        let refusals = recording_refusals(&provider, &yaml, expected);
         if !refusals.is_empty() {
-            let kept = write_attempt(&attempt_root, provider, scenario, policy, &yaml).await;
+            let kept = write_attempt(&attempt_root, &provider, &scenario, policy, &yaml).await;
             panic!(
                 "provider cassette {} was not written: {}\nthe recording was kept at {}",
                 cassette_path.display(),
@@ -844,7 +891,7 @@ impl ProviderCassette {
         } = self;
         if let Some(yaml) = server.recorded_yaml().await
             && let Some(path) =
-                write_attempt(&attempt_root, provider, scenario, policy, &yaml).await
+                write_attempt(&attempt_root, &provider, &scenario, policy, &yaml).await
         {
             eprintln!("failed recording kept at {}", path.display());
         }
@@ -3290,6 +3337,8 @@ pub fn owned_headers(headers: &http_client::HeaderMap) -> Vec<(String, String)> 
 
 #[cfg(test)]
 mod explicit_destination_tests;
+#[cfg(test)]
+mod named_session_tests;
 #[cfg(test)]
 mod paths;
 #[cfg(test)]
