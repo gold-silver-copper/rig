@@ -29,9 +29,9 @@ fn update_status(
         Turn::Tools { .. } => "running tools",
     };
     let patch = match &hot.status {
+        _ if hot.building => "patching...".to_owned(),
         PatchStatus::Unavailable => "hot-patch off".to_owned(),
         PatchStatus::Idle => "hot-patch ready".to_owned(),
-        PatchStatus::Building => "patching...".to_owned(),
         PatchStatus::Applied { count, .. } => format!("patched x{count}"),
         PatchStatus::Failed(_) => "patch failed".to_owned(),
     };

@@ -14,7 +14,7 @@ impl Plugin for ReloadPlugin {
     }
 }
 
-/// The patch generation a reload call is waiting to see pass.
+/// The patch generation whose outcome answers a reload call.
 #[derive(Component)]
 struct AwaitingPatch(u64);
 
@@ -39,12 +39,10 @@ fn start_reload(
             continue;
         }
         let mut entity = commands.entity(entity);
-        let before = hot.generation;
-        if hot.request() {
-            entity.insert((Claimed, AwaitingPatch(before)));
-        } else {
-            entity.insert(ToolOutput::error("hot-patching is unavailable in this build"));
-        }
+        match hot.request() {
+            Some(generation) => entity.insert((Claimed, AwaitingPatch(generation))),
+            None => entity.insert(ToolOutput::error("hot-patching is unavailable in this build")),
+        };
     }
 }
 
@@ -53,8 +51,8 @@ fn finish_reload(
     hot: Res<HotReload>,
     waiting: Query<(Entity, &AwaitingPatch)>,
 ) {
-    for (entity, AwaitingPatch(before)) in &waiting {
-        if hot.generation == *before || matches!(hot.status, PatchStatus::Building) {
+    for (entity, AwaitingPatch(generation)) in &waiting {
+        if hot.generation < *generation {
             continue;
         }
         let output = match &hot.status {

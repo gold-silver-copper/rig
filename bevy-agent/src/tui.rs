@@ -114,7 +114,7 @@ fn read_input(
                         clear.write_default();
                     }
                     "/reload" => {
-                        if !hot.request() {
+                        if hot.request().is_none() {
                             transcript.push(Entry::Error { text: "hot-patching is unavailable".into() });
                         }
                     }

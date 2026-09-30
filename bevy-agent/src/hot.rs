@@ -55,10 +55,8 @@ pub enum PatchStatus {
     /// Hot-patching is off (release build, or the fat build failed).
     #[default]
     Unavailable,
-    /// Waiting for changes.
+    /// No patch built yet.
     Idle,
-    /// A patch is compiling.
-    Building,
     /// The last patch applied.
     Applied { count: usize, elapsed: Duration },
     /// The last patch failed; the running code is unchanged.
@@ -72,24 +70,31 @@ pub struct HotReload {
     results: Receiver<Result<rigpi_hotpatch::Patch, String>>,
     /// The latest outcome.
     pub status: PatchStatus,
+    /// A patch is compiling.
+    pub building: bool,
     applied: usize,
     /// Bumped whenever a build finishes, applied or not.
     pub generation: u64,
+    /// Another build was requested while one was running.
+    queued: bool,
     watched: HashMap<PathBuf, SystemTime>,
     last_scan: Option<Instant>,
+    changed_at: Option<Instant>,
 }
 
 impl HotReload {
-    /// Ask for a rebuild. Returns false when hot-patching is unavailable.
-    pub fn request(&mut self) -> bool {
-        let Some(requests) = &self.requests else {
-            return false;
-        };
-        if !matches!(self.status, PatchStatus::Building) {
-            self.status = PatchStatus::Building;
-            let _ = requests.send(());
+    /// Ask for a build of the source as it is now. Returns the generation
+    /// whose outcome covers it, or `None` when hot-patching is unavailable.
+    pub fn request(&mut self) -> Option<u64> {
+        let requests = self.requests.as_ref()?;
+        if self.building {
+            // The running build may predate the change; build again after it.
+            self.queued = true;
+            return Some(self.generation + 2);
         }
-        true
+        self.building = true;
+        let _ = requests.send(());
+        Some(self.generation + 1)
     }
 }
 
@@ -105,8 +110,6 @@ impl Plugin for HotReloadPlugin {
             std::thread::spawn(move || {
                 let mut patcher = Patcher::new(fat);
                 while rx.recv().is_ok() {
-                    // Coalesce requests that piled up during a build.
-                    while rx.try_recv().is_ok() {}
                     let result = patcher.build().map_err(|error| format!("{error:#}"));
                     if result_tx.send(result).is_err() {
                         break;
@@ -130,10 +133,13 @@ impl Plugin for HotReloadPlugin {
             requests,
             results,
             status,
+            building: false,
             applied: 0,
             generation: 0,
+            queued: false,
             watched: HashMap::new(),
             last_scan: None,
+            changed_at: None,
         })
         .init_resource::<HotPatchChanges>()
         .add_message::<HotPatched>()
@@ -150,17 +156,21 @@ impl Plugin for HotReloadPlugin {
     }
 }
 
-/// Request a patch when a source file changes.
+/// Request a patch once source files stop changing for a moment, so a burst
+/// of edits builds once.
 fn watch_sources(mut hot: ResMut<HotReload>) {
-    if hot.requests.is_none() || hot.last_scan.is_some_and(|at| at.elapsed() < Duration::from_millis(500)) {
+    if hot.requests.is_none() || hot.last_scan.is_some_and(|at| at.elapsed() < Duration::from_millis(250)) {
         return;
     }
     hot.last_scan = Some(Instant::now());
     let mut current = HashMap::new();
     scan(&Path::new(CRATE_DIR).join("src"), &mut current);
-    let changed = !hot.watched.is_empty() && current != hot.watched;
+    if !hot.watched.is_empty() && current != hot.watched {
+        hot.changed_at = Some(Instant::now());
+    }
     hot.watched = current;
-    if changed {
+    if hot.changed_at.is_some_and(|at| at.elapsed() > Duration::from_millis(600)) {
+        hot.changed_at = None;
         hot.request();
     }
 }
@@ -188,6 +198,12 @@ fn apply_patches(world: &mut World) {
         return;
     };
     hot.generation += 1;
+    hot.building = std::mem::take(&mut hot.queued);
+    if hot.building
+        && let Some(requests) = &hot.requests
+    {
+        let _ = requests.send(());
+    }
     hot.status = match result {
         // SAFETY: the table was built from this process's own fat
         // executable and ASLR slide, and patches only change function

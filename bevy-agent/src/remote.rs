@@ -14,7 +14,7 @@ use bevy_remote::{BrpError, BrpResult, RemotePlugin, error_codes};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::agent::{Agent, Submit, Transcript, Turn};
+use crate::agent::{Agent, Cancel, Submit, Transcript, Turn};
 use crate::tools::{Claimed, RemoteTool, ToolCall, ToolOutput, ToolSpec};
 
 /// The port BRP listens on (127.0.0.1 only).
@@ -39,6 +39,7 @@ impl Plugin for BrpPlugin {
             .add_plugins(
                 RemotePlugin::default()
                     .with_method_main("rigpi/prompt", prompt)
+                    .with_method_main("rigpi/cancel", cancel)
                     .with_method_main("rigpi/register_tool", register_tool)
                     .with_method_main("rigpi/unregister_tool", unregister_tool)
                     .with_method_main("rigpi/take_calls", take_calls)
@@ -70,6 +71,12 @@ fn prompt(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     }
     let Params { text } = parse(params)?;
     world.write_message(Submit(text));
+    Ok(Value::Null)
+}
+
+/// Stop the current turn, as Esc does.
+fn cancel(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
+    world.write_message(Cancel);
     Ok(Value::Null)
 }
 
