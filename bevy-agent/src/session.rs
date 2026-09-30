@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use rig_core::completion::{Message, ToolDefinition};
 use rig_core::message::{ToolCall, UserContent};
-use rig_core::providers::registry::ProviderRef;
+use rig_core::providers::registry::{ProviderId, ProviderRef};
 use serde::{Deserialize, Serialize};
 
 /// Where the agent keeps its state, binaries and logs, and where its source is.
@@ -144,5 +144,34 @@ pub fn parse_model(text: &str) -> Result<ProviderRef, String> {
         .and_then(|n| n.checked_sub(1))
         .and_then(|n| PRESETS.get(n))
         .or_else(|| PRESETS.iter().find(|p| p.ends_with(&format!(":{text}"))));
-    ProviderRef::parse(preset.copied().unwrap_or(text)).map_err(|e| e.to_string())
+    let text = preset.copied().unwrap_or(text);
+    ProviderRef::parse(text).or_else(|error| {
+        // Accept `gemini:…` for `gcp.gemini:…`: a unique dotted vendor suffix.
+        let (vendor, model) = text.split_once(':').ok_or_else(|| error.to_string())?;
+        let suffix = format!(".{vendor}");
+        let mut vendors: Vec<&str> = ProviderId::all().map(|id| id.vendor()).filter(|v| v.ends_with(&suffix)).collect();
+        vendors.dedup();
+        match vendors[..] {
+            [vendor] => ProviderRef::parse(&format!("{vendor}:{model}")).map_err(|e| e.to_string()),
+            _ => Err(error.to_string()),
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_model;
+
+    #[test]
+    fn presets_names_and_references_parse() {
+        for (text, expected) in [
+            ("1", "openai/openai:gpt-6.1-sol"),
+            ("claude-opus-5-5", "anthropic/anthropic:claude-opus-5-5"),
+            ("gemini:gemini-3.8-flash", "gcp.gemini/gemini:gemini-3.8-flash"),
+            ("deepseek:deepseek-flash", "deepseek/openai:deepseek-flash"),
+        ] {
+            assert_eq!(parse_model(text).map(|r| r.to_string()), Ok(expected.to_owned()));
+        }
+        assert!(parse_model("nosuch:model").is_err());
+    }
 }

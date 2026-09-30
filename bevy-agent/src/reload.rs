@@ -98,9 +98,11 @@ fn errors_only(stderr: &str) -> String {
             keep = false;
             continue;
         }
-        let top_level = !line.starts_with(' ') && !line.is_empty();
-        if top_level {
-            keep = line.starts_with("error");
+        // A diagnostic runs until the next one; keep errors, drop warnings.
+        if line.starts_with("error") {
+            keep = true;
+        } else if line.starts_with("warning") || line.starts_with("For more information") {
+            keep = false;
         }
         if keep {
             out.push_str(line);
@@ -129,4 +131,16 @@ pub fn promote(paths: &Paths) {
     }
     let _ = std::fs::rename(paths.bin("good"), paths.bin("prev"));
     let _ = std::fs::rename(candidate, paths.bin("good"));
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn errors_keep_their_source_lines_and_drop_warnings() {
+        let stderr = "   Compiling bevy-agent v0.1.0\nwarning: unused variable: `x`\n --> src/a.rs:1:5\n  |\n1 | let x = 1;\n\nerror[E0308]: mismatched types\n --> src/b.rs:2:9\n  |\n2 | let y: u32 = \"s\";\n  |        ---   ^^^ expected `u32`, found `&str`\n\nerror: could not compile `bevy-agent`\n";
+        let errors = super::errors_only(stderr);
+        assert!(errors.contains("expected `u32`, found `&str`"), "{errors}");
+        assert!(errors.contains("could not compile"));
+        assert!(!errors.contains("unused variable") && !errors.contains("Compiling"));
+    }
 }

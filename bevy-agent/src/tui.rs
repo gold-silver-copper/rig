@@ -129,7 +129,7 @@ fn style(entry: &Entry) -> (&'static str, Style, &str) {
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     for line in text.split('\n') {
-        let chars: Vec<char> = line.chars().collect();
+        let chars: Vec<char> = line.replace('\t', "    ").chars().collect();
         if chars.is_empty() {
             out.push(String::new());
         }

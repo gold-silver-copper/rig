@@ -9,7 +9,6 @@
 
     stderr:
 
-
 The output was `hello-from-bash` followed by `Darwin`.
 
 · model: anthropic/anthropic:claude-opus-5-5
@@ -24,7 +23,6 @@ The output was `hello-from-bash` followed by `Darwin`.
 
     stderr:
 
-
 This command printed `claude-was-here`, and the previous one printed `hello-from-bash` and `Darwin`.
 
 ! unknown model `3`: no registered provider is named `gemini`
@@ -38,7 +36,6 @@ This command printed `claude-was-here`, and the previous one printed `hello-from
     gemini-was-here
 
     stderr:
-
 
 This command printed `gemini-was-here`, and the earlier ones printed `hello-from-bash` and `Darwin` (first command) and `claude-was-here` (second comm
 and).
@@ -63,7 +60,6 @@ and).
 
     stderr:
 
-
 This command printed `gemini-was-here`, and the previous commands printed `hello-from-bash` and `Darwin` (first), `claude-was-here` (second), and `gem
 ini-was-here` (third).
 
@@ -80,7 +76,6 @@ ini-was-here` (third).
 
     stderr:
 
-
 This command printed `deepseek-was-here`, and it was the fifth bash command run in this conversation.
 
 · model: openai/openai:gpt-6.1-sol
@@ -94,7 +89,6 @@ This command printed `deepseek-was-here`, and it was the fifth bash command run 
     back-to-gpt
 
     stderr:
-
 
 It printed `back-to-gpt`.
 
@@ -110,29 +104,7 @@ It printed `back-to-gpt`.
 
     stderr:
 
-
 It printed `back-to-claude`.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
  anthropic/anthropic:claude-opus-5-5 │ idle │ BRP 127.0.0.1:63370 │ /help
 ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐

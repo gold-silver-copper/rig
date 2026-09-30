@@ -107,6 +107,12 @@ fn free_port() -> std::io::Result<u16> {
 
 fn run(paths: Paths, session: Session) -> ExitCode {
     let port = session.port;
+    if let Ok(log) = std::fs::OpenOptions::new().create(true).append(true).open(paths.home.join("agent.log")) {
+        tracing_subscriber::fmt()
+            .with_writer(std::sync::Mutex::new(log))
+            .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+            .init();
+    }
     let exit = App::new()
         .add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(20))))
         .insert_resource(paths)

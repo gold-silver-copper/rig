@@ -396,6 +396,7 @@ dependencies = [
  "rig-core",
  "serde",
  "serde_json",
+ "tracing-subscriber",
 ]
 
 [[package]]

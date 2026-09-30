@@ -32,8 +32,7 @@ pub struct Runtime {
     model: Option<Task<Result<CompletionResponse, ProviderError>>>,
     /// Running tool calls: index into the turn's calls, and the output slot.
     running: Vec<(usize, Slot<String>)>,
-    /// A build: for the `reload` call at this index, or for `/reload` (`None`).
-    build: Option<(Option<usize>, Slot<Result<PathBuf, String>>, Instant)>,
+    build: Option<Build>,
     pub user_reload: bool,
     exiting: bool,
     frames: u32,
@@ -59,6 +58,10 @@ impl Runtime {
         }
     }
 }
+
+/// A build: for the `reload` call at this index, or for `/reload` (`None`);
+/// its outcome, and when it started.
+type Build = (Option<usize>, Slot<Result<PathBuf, String>>, Instant);
 
 fn preamble(paths: &Paths) -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -87,8 +90,11 @@ fn resume(mut session: ResMut<Session>, mut tools: ResMut<Tools>, paths: Res<Pat
     let note = std::fs::read_to_string(paths.fallback_note()).ok();
     let _ = std::fs::remove_file(paths.fallback_note());
     let restarted = std::env::var("BEVY_AGENT_GENERATION").is_ok_and(|g| g != "0");
+    let reload_open = session.turn.iter().flatten().any(|p| p.result.is_none() && p.call.function.name.as_str() == "reload");
     match &note {
-        Some(note) => session.error(note.clone()),
+        // An open `reload` call reports the note as its result instead.
+        Some(note) if !reload_open => session.error(note.clone()),
+        Some(_) => {}
         None if restarted => session.info(format!("restarted into the new binary (pid {})", std::process::id())),
         None => {}
     }
@@ -104,11 +110,15 @@ fn resume(mut session: ResMut<Session>, mut tools: ResMut<Tools>, paths: Res<Pat
                 note.as_ref().map(|n| format!(" {n}")).unwrap_or_default()
             ),
         };
-        answered.push(Entry::ToolResult(preview(&result)));
+        answered.push(result_entry(pending.call.function.name.as_str(), &result));
         pending.result = Some(result);
     }
     session.transcript.extend(answered);
     session.save(&paths.session());
+}
+
+fn result_entry(tool: &str, output: &str) -> Entry {
+    Entry::ToolResult(format!("{tool}: {}", preview(output)))
 }
 
 fn preview(text: &str) -> String {
@@ -217,10 +227,12 @@ fn drive(
         None => true,
     });
     for (index, output) in finished {
-        session.transcript.push(Entry::ToolResult(preview(&output)));
-        if let Some(pending) = session.turn.as_mut().and_then(|calls| calls.get_mut(index)) {
-            pending.result = Some(output);
-        }
+        let Some(pending) = session.turn.as_mut().and_then(|calls| calls.get_mut(index)) else {
+            continue;
+        };
+        let entry = result_entry(pending.call.function.name.as_str(), &output);
+        pending.result = Some(output);
+        session.transcript.push(entry);
     }
 
     // A build finished.
@@ -248,7 +260,7 @@ fn drive(
                 return;
             }
         }
-        session.transcript.push(Entry::ToolResult(preview(&result)));
+        session.transcript.push(result_entry("reload", &result));
     }
 
     if !rt.idle() {
