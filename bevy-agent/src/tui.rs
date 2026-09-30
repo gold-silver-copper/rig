@@ -258,7 +258,10 @@ fn transcript_lines(transcript: &Transcript) -> Vec<Line<'static>> {
                     Some(output) => {
                         let count = output.lines().count();
                         for line in output.lines().take(6) {
-                            lines.push(Line::styled(format!("  {line}"), style));
+                            lines.push(Line::styled(
+                                format!("  {}", line.replace('\t', "  ")),
+                                style,
+                            ));
                         }
                         if count > 6 {
                             lines.push(Line::styled(format!("  … {} more lines", count - 6), dim));

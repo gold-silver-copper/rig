@@ -6,8 +6,9 @@ use crate::tools::Native;
 pub fn tool() -> Native {
     Native {
         name: "read",
-        description: "Read a text file. Returns numbered lines; use offset/limit for long files."
-            .into(),
+        description:
+            "Read a text file. Returns lines as `number<TAB>text`; use offset/limit for long files."
+                .into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -35,7 +36,7 @@ fn run(args: Value) -> Result<String, String> {
         .enumerate()
         .skip(offset - 1)
         .take(limit)
-        .map(|(i, line)| format!("{:>5}  {line}", i + 1))
+        .map(|(i, line)| format!("{:>6}\t{line}", i + 1))
         .collect();
     Ok(clip(numbered.join("\n"), 60_000))
 }
