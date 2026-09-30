@@ -16,7 +16,7 @@ bevy_remote = { version = "=0.20.0-rc.2", default-features = false, features = [
 subsecond = "0.7"
 rigpi-hotpatch = { path = "hotpatch" }
 rig-core = { path = "../crates/rig-core", features = ["reqwest"] }
-ratatui = "0.30"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 tokio = { version = "1", features = ["rt-multi-thread", "process", "time", "io-util"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }

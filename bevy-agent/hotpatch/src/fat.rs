@@ -49,11 +49,14 @@ pub struct FatBuild {
 }
 
 impl FatBuild {
-    /// The fat build this process was relaunched into, if any.
+    /// The fat build this process was relaunched into, if any. Children
+    /// inherit the environment, so the executable must match too.
     pub fn current() -> Option<Self> {
         let path = std::env::var_os(FAT_ENV)?;
         let bytes = std::fs::read(path).ok()?;
-        serde_json::from_slice(&bytes).ok()
+        let fat: Self = serde_json::from_slice(&bytes).ok()?;
+        let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+        (fat.exe.canonicalize().ok()? == exe).then_some(fat)
     }
 }
 
