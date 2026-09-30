@@ -45,6 +45,7 @@ impl Plugin for AgentPlugin {
             session.log(Entry::Error(message));
         }
         app.insert_resource(Llm { runtime, model })
+            .insert_resource(Secrets::from_env())
             .init_resource::<Tools>()
             .init_resource::<InFlight>()
             .init_resource::<Running>()
@@ -93,6 +94,38 @@ pub fn report(error: &dyn Error) -> String {
         source = cause.source();
     }
     text
+}
+
+/// Values of credential-like environment variables. Tool output passes
+/// through [`Secrets::redact`] so a command such as `env` cannot hand API
+/// keys to the model, its provider, or the saved session.
+#[derive(Resource)]
+pub struct Secrets(Vec<(String, String)>);
+
+impl Secrets {
+    fn from_env() -> Self {
+        let mut secrets: Vec<(String, String)> = std::env::vars()
+            .filter(|(name, value)| {
+                let name = name.to_uppercase();
+                value.len() >= 8
+                    && ["KEY", "TOKEN", "SECRET", "PASSWORD"]
+                        .iter()
+                        .any(|word| name.contains(word))
+            })
+            .collect();
+        // Longest first, so a secret containing another is replaced whole.
+        secrets.sort_by_key(|(_, value)| std::cmp::Reverse(value.len()));
+        Self(secrets)
+    }
+
+    pub fn redact(&self, mut text: String) -> String {
+        for (name, value) in &self.0 {
+            if text.contains(value.as_str()) {
+                text = text.replace(value.as_str(), &format!("[redacted {name}]"));
+            }
+        }
+        text
+    }
 }
 
 /// What a tool system returns: its output now, or a channel it arrives on.
@@ -414,6 +447,7 @@ fn drive_tools(world: &mut World) {
             }
         }
     };
+    let output = world.resource::<Secrets>().redact(output);
     let mut session = world.resource_mut::<Session>();
     session.log(Entry::Output(output.clone()));
     if let Turn::Tools { results, .. } = &mut session.turn {
