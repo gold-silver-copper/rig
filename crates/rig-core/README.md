@@ -215,6 +215,18 @@ Caching is skipped when the prefix through a marker is below the model's minimum
 | `claude-sonnet-4-5`, `claude-opus-4-1`, `claude-opus-4`, `claude-sonnet-4` | 1024 |
 | `claude-haiku-4-5` | 4096 |
 
+## Anthropic thinking-block binding
+
+Claude Opus 5.5, Fable 5.1 and Fable 5 bind each thinking block to the
+conversation it was produced in, tools and system prompt included, and reject a
+replayed block once that prefix differs. When a request to one of these models
+replays thinking blocks, the Messages wire sets
+`thinking.block_binding.prefix_mismatch_behavior` to `drop_block` and sends the
+`thinking-binding-controls-2026-08-01` beta flag, so adding or removing a tool
+mid-conversation drops the stale blocks instead of failing the request. A
+`block_binding` set through `additional_params` is kept. Messages-format
+gateways are left unchanged.
+
 ## Gemini explicit caching
 
 Explicit caching uploads reusable content and returns a `cachedContents` handle.

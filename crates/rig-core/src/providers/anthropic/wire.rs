@@ -27,8 +27,9 @@ use crate::wire::{
 use serde::{Deserialize, Serialize};
 
 use super::completion::{
-    AnthropicCompletionRequest, AnthropicRequestParams, CacheTtl, ToolDefinition,
-    default_max_tokens_for_model, rejects_forced_tool_choice, sanitize_strict_tool_schema,
+    AnthropicCompletionRequest, AnthropicRequestParams, CacheTtl, THINKING_BINDING_BETA,
+    ToolDefinition, binds_thinking_blocks, default_max_tokens_for_model,
+    rejects_forced_tool_choice, sanitize_strict_tool_schema,
 };
 use super::streaming::MessagesDecoder;
 
@@ -63,6 +64,10 @@ pub struct Quirks {
     /// Whether the provider implements Anthropic's constrained tool schemas.
     /// A gateway that does not leaves Rig-generated tools unchanged.
     pub strict_tool_schemas: bool,
+    /// Whether the provider takes `thinking.block_binding`. Requests for a
+    /// model that binds thinking blocks to their conversation then ask it to
+    /// drop replayed blocks whose prefix changed, rather than reject them.
+    pub thinking_block_binding: bool,
 }
 
 impl Quirks {
@@ -71,6 +76,7 @@ impl Quirks {
         Self {
             max_tokens: MaxTokens::ByModel,
             strict_tool_schemas: true,
+            thinking_block_binding: true,
         }
     }
 
@@ -79,6 +85,7 @@ impl Quirks {
         Self {
             max_tokens: MaxTokens::Fixed(4096),
             strict_tool_schemas: false,
+            thinking_block_binding: false,
         }
     }
 }
@@ -476,6 +483,9 @@ impl Messages {
                 .then_some(strict_tool_transform as fn(&mut ToolDefinition)),
         )?;
         let mut body = serde_json::to_value(&typed)?;
+        if self.provider.dialect.quirks.thinking_block_binding && binds_thinking_blocks(&model) {
+            drop_stale_thinking_blocks(&mut body);
+        }
         if mode == Mode::Unary {
             return Ok(body);
         }
@@ -490,6 +500,41 @@ impl Messages {
             }
         }
         Ok(body)
+    }
+}
+
+/// Ask the model to drop, rather than reject with a 400, replayed thinking
+/// blocks whose conversation prefix has changed since they were produced: a
+/// tool added or removed, or another system prompt. Only a request that
+/// replays thinking needs it, and a caller's own `block_binding` wins.
+fn drop_stale_thinking_blocks(body: &mut serde_json::Value) {
+    let replays_thinking = body
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| message.get("content").and_then(serde_json::Value::as_array))
+        .flatten()
+        .any(|block| {
+            matches!(
+                block.get("type").and_then(serde_json::Value::as_str),
+                Some("thinking" | "redacted_thinking")
+            )
+        });
+    if !replays_thinking {
+        return;
+    }
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+    if let Some(thinking) = body
+        .entry("thinking")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    {
+        thinking
+            .entry("block_binding")
+            .or_insert_with(|| serde_json::json!({ "prefix_mismatch_behavior": "drop_block" }));
     }
 }
 
@@ -517,8 +562,22 @@ impl Wire for Messages {
             "Anthropic completion request",
             &body,
         );
-        let request = self
-            .provider
+        // `thinking.block_binding` is a beta field, whoever set it.
+        let binding = self.provider.dialect.quirks.thinking_block_binding
+            && body
+                .get("thinking")
+                .is_some_and(|thinking| thinking.get("block_binding").is_some())
+            && !self
+                .provider
+                .betas
+                .iter()
+                .any(|beta| beta == THINKING_BINDING_BETA);
+        let provider = if binding {
+            std::borrow::Cow::Owned(self.provider.clone().with_beta(THINKING_BINDING_BETA))
+        } else {
+            std::borrow::Cow::Borrowed(&self.provider)
+        };
+        let request = provider
             .headers(http::Request::post(format!(
                 "{}/v1/messages",
                 self.provider.base_url
