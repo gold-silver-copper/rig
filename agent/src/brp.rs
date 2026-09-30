@@ -103,7 +103,10 @@ fn probe_server(config: Res<Config>, tasks: Res<ToolTasks>, mut commands: Comman
     let port = config.brp_port;
     tasks.handle().spawn(async move {
         for _ in 0..200 {
-            if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+            if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_ok()
+            {
                 let _ = sender.send(true);
                 return;
             }
@@ -162,7 +165,9 @@ fn external_tool(
     let Some(tool) = tools.0.get(&name) else {
         commands
             .entity(invocation.entity)
-            .insert(CallOutput(format!("error: `{name}` is no longer registered")));
+            .insert(CallOutput(format!(
+                "error: `{name}` is no longer registered"
+            )));
         return;
     };
     calls.0.insert(
@@ -253,13 +258,21 @@ fn unregister_tool(In(input): In<Option<Value>>, world: &mut World) -> BrpResult
         name: String,
     }
     let Params { name } = params(input)?;
-    if world.resource_mut::<ExternalTools>().0.remove(&name).is_some() {
+    if world
+        .resource_mut::<ExternalTools>()
+        .0
+        .remove(&name)
+        .is_some()
+    {
         world.resource_mut::<ToolRegistry>().0.remove(&name);
     }
     Ok(json!({ "unregistered": name }))
 }
 
-fn watch_tool_calls(In(input): In<Option<Value>>, mut calls: ResMut<ExternalCalls>) -> BrpResult<Option<Value>> {
+fn watch_tool_calls(
+    In(input): In<Option<Value>>,
+    mut calls: ResMut<ExternalCalls>,
+) -> BrpResult<Option<Value>> {
     #[derive(Deserialize)]
     struct Params {
         plugin: String,
@@ -269,10 +282,12 @@ fn watch_tool_calls(In(input): In<Option<Value>>, mut calls: ResMut<ExternalCall
     for (call_id, call) in &mut calls.0 {
         if call.plugin == plugin && !call.delivered {
             call.delivered = true;
-            batch.push(json!({ "call_id": call_id, "name": call.name, "arguments": call.arguments }));
+            batch.push(
+                json!({ "call_id": call_id, "name": call.name, "arguments": call.arguments }),
+            );
         }
     }
-    Ok((!batch.is_empty()).then(|| Value::Array(batch)))
+    Ok((!batch.is_empty()).then_some(Value::Array(batch)))
 }
 
 fn tool_result(

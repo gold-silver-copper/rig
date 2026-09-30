@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use bevy::prelude::Resource;
 use rig_core::message::{Message, ToolCall};
 use serde::{Deserialize, Serialize};
 
@@ -75,8 +76,10 @@ pub struct ExternalTool {
     pub parameters: serde_json::Value,
 }
 
-/// The whole agent state that a reload carries over.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// The whole agent state that a reload carries over. Missing fields default,
+/// so a binary can read a session written by an older or newer build.
+#[derive(Resource, Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Session {
     /// The selected model, as an alias or Rig provider reference.
     pub model: String,
@@ -88,6 +91,8 @@ pub struct Session {
     /// The call id of the `reload` tool call awaiting the reload's outcome.
     pub reload_call: Option<String>,
     pub external_tools: Vec<ExternalTool>,
+    /// What the model should be told with the next prompt.
+    pub notes: Vec<String>,
 }
 
 impl Session {
@@ -115,8 +120,8 @@ impl Session {
     }
 
     fn load(path: &Path) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 

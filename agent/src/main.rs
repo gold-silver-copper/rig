@@ -115,11 +115,10 @@ fn run_child(options: Options) -> AppExit {
         }
     };
     let exit = App::new()
-        .add_plugins(
-            MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(16))),
-        )
+        .add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(16))))
+        .insert_resource(session)
         .add_plugins((
-            agent::AgentPlugin::new(options.clone(), session),
+            agent::AgentPlugin(options.clone()),
             tui::TuiPlugin,
             brp::BrpPlugin,
             reload::ReloadPlugin,

@@ -102,7 +102,9 @@ fn read(arguments: &Value) -> anyhow::Result<String> {
     let path = string(arguments, "path")?;
     let text = std::fs::read_to_string(path)?;
     let offset = arguments["offset"].as_u64().unwrap_or(1).max(1) as usize;
-    let limit = arguments["limit"].as_u64().map_or(usize::MAX, |l| l as usize);
+    let limit = arguments["limit"]
+        .as_u64()
+        .map_or(usize::MAX, |l| l as usize);
     let lines: Vec<&str> = text.lines().skip(offset - 1).take(limit).collect();
     let mut output = lines.join("\n");
     if output.len() > MAX_OUTPUT {
@@ -123,7 +125,11 @@ fn write(arguments: &Value) -> anyhow::Result<String> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&path, content)?;
-    Ok(format!("wrote {} bytes to {}", content.len(), path.display()))
+    Ok(format!(
+        "wrote {} bytes to {}",
+        content.len(),
+        path.display()
+    ))
 }
 
 fn edit(arguments: &Value) -> anyhow::Result<String> {

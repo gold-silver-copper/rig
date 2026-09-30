@@ -95,7 +95,10 @@ fn read_input(
             KeyCode::PageUp => input.scroll += 10,
             KeyCode::PageDown => input.scroll = input.scroll.saturating_sub(10),
             KeyCode::Up if !input.history.is_empty() => {
-                let at = input.browsing.map_or(input.history.len(), |i| i).saturating_sub(1);
+                let at = input
+                    .browsing
+                    .unwrap_or(input.history.len())
+                    .saturating_sub(1);
                 input.browsing = Some(at);
                 let text = input.history[at].clone();
                 input.set(text);
@@ -196,7 +199,10 @@ fn draw(
     let mut lines: Vec<Line> = Vec::new();
     for entry in &transcript.0 {
         let (label, style) = match entry.kind {
-            EntryKind::User => ("you › ", Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            EntryKind::User => (
+                "you › ",
+                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
             EntryKind::Assistant => ("", Style::new()),
             EntryKind::ToolCall => ("⚙ ", Style::new().fg(Color::Yellow)),
             EntryKind::ToolResult => ("  ", Style::new().fg(Color::DarkGray)),
@@ -211,7 +217,10 @@ fn draw(
         text.truncate(text.len() - hidden);
         for (i, line) in text.iter().enumerate() {
             let prefix = if i == 0 { label } else { "  " };
-            lines.push(Line::from(vec![Span::styled(prefix, style), Span::styled(*line, style)]));
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(*line, style),
+            ]));
         }
         if hidden > 0 {
             lines.push(Line::styled(format!("  … {hidden} more lines"), style));
@@ -222,7 +231,12 @@ fn draw(
     let queued: Vec<Line> = queue
         .0
         .iter()
-        .map(|prompt| Line::styled(format!("queued › {prompt}"), Style::new().fg(Color::Magenta)))
+        .map(|prompt| {
+            Line::styled(
+                format!("queued › {prompt}"),
+                Style::new().fg(Color::Magenta),
+            )
+        })
         .collect();
 
     let _ = term.0.draw(|frame| {

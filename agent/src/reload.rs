@@ -56,7 +56,13 @@ impl Plugin for ReloadPlugin {
             )
             .add_systems(
                 Update,
-                (start_user_reload, start_queued, finish_build, restart_when_ready).chain(),
+                (
+                    start_user_reload,
+                    start_queued,
+                    finish_build,
+                    restart_when_ready,
+                )
+                    .chain(),
             );
     }
 }
@@ -141,7 +147,9 @@ fn finish_build(
         (Ok(binary), call) => {
             transcript.push(EntryKind::Info, "reload: build succeeded, restarting…");
             commands.insert_resource(RestartPending {
-                call: call.and_then(|entity| calls.get(entity).ok()).map(|p| call_key(&p.call)),
+                call: call
+                    .and_then(|entity| calls.get(entity).ok())
+                    .map(|p| call_key(&p.call)),
                 entity: call,
                 binary,
             });
@@ -176,7 +184,10 @@ fn restart_when_ready(world: &mut World) {
     }
     let paths = world.resource::<Config>().paths.clone();
     let written = save_session(world).and_then(|()| {
-        std::fs::write(paths.reload(), serde_json::to_vec(&ReloadRequest { binary })?)?;
+        std::fs::write(
+            paths.reload(),
+            serde_json::to_vec(&ReloadRequest { binary })?,
+        )?;
         Ok(())
     });
     match written {
@@ -189,7 +200,9 @@ fn restart_when_ready(world: &mut World) {
             if let Some(entity) = entity {
                 world.entity_mut(entity).insert(CallOutput(message));
             } else {
-                world.resource_mut::<Transcript>().push(EntryKind::Error, message);
+                world
+                    .resource_mut::<Transcript>()
+                    .push(EntryKind::Error, message);
             }
         }
     }

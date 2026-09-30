@@ -22,7 +22,11 @@ use crate::{Options, ReloadStatus};
 pub const MODEL_ALIASES: &[(&str, &str, &str)] = &[
     ("sol", "openai", openai::GPT_6_1_SOL),
     ("opus", "anthropic", anthropic::completion::CLAUDE_OPUS_5_5),
-    ("gemini", gemini::PROVIDER_NAME, gemini::completion::GEMINI_3_8_FLASH),
+    (
+        "gemini",
+        gemini::PROVIDER_NAME,
+        gemini::completion::GEMINI_3_8_FLASH,
+    ),
     ("deepseek", "deepseek", deepseek::DEEPSEEK_V4_1_FLASH),
 ];
 
@@ -47,10 +51,16 @@ pub fn resolve_model(name: &str) -> anyhow::Result<Selection> {
     let spelled = MODEL_ALIASES
         .iter()
         .find(|(alias, ..)| *alias == name)
-        .map_or_else(|| name.to_string(), |(_, vendor, model)| format!("{vendor}:{model}"));
+        .map_or_else(
+            || name.to_string(),
+            |(_, vendor, model)| format!("{vendor}:{model}"),
+        );
     let mut reference = ProviderRef::parse(&spelled)?;
     let mut params = None;
-    if reference.id().is_some_and(|id| id.vendor() == anthropic::ANTHROPIC.name) {
+    if reference
+        .id()
+        .is_some_and(|id| id.vendor() == anthropic::ANTHROPIC.name)
+    {
         // The credential is dropped by `configured` and read again from the
         // environment by `completion_model`.
         if let ProviderConfig::Anthropic(config) = reference.config("") {
@@ -71,19 +81,8 @@ pub fn resolve_model(name: &str) -> anyhow::Result<Selection> {
     })
 }
 
-pub struct AgentPlugin {
-    options: Options,
-    session: std::sync::Mutex<Option<Session>>,
-}
-
-impl AgentPlugin {
-    pub fn new(options: Options, session: Session) -> Self {
-        Self {
-            options,
-            session: std::sync::Mutex::new(Some(session)),
-        }
-    }
-}
+/// The agent loop. Expects the [`Session`] to continue as a resource.
+pub struct AgentPlugin(pub Options);
 
 /// Settings every plugin can read.
 #[derive(Resource, Clone)]
@@ -115,6 +114,11 @@ impl Transcript {
 
 #[derive(Resource, Default)]
 pub struct PromptQueue(pub VecDeque<String>);
+
+/// Runtime events the model has not heard of yet, sent ahead of the next
+/// prompt.
+#[derive(Resource, Default)]
+pub struct Notes(pub Vec<String>);
 
 /// The selected model. `selection` is `None` when the selection has no
 /// credential, so the agent can still start and be switched.
@@ -262,9 +266,11 @@ impl AgentAppExt for App {
 
 impl Plugin for AgentPlugin {
     fn build(&self, app: &mut App) {
-        let Some(session) = self.session.lock().ok().and_then(|mut s| s.take()) else {
-            return;
-        };
+        let options = &self.0;
+        let session = app
+            .world_mut()
+            .remove_resource::<Session>()
+            .unwrap_or_default();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -278,57 +284,65 @@ impl Plugin for AgentPlugin {
         let (active, model_error) = ActiveModel::select(&session.model);
         let mut transcript = Transcript(session.transcript);
         if let Some(error) = model_error {
-            transcript.push(EntryKind::Error, format!("model `{}`: {error:#}", session.model));
+            transcript.push(
+                EntryKind::Error,
+                format!("model `{}`: {error:#}", session.model),
+            );
         }
 
         // An interrupted turn resumes where it stopped: its calls come back as
         // entities, the reload call answered with how the reload went.
-        let mut turn = Turn::Idle;
-        let reload_note = match &self.options.reload {
-            Some(ReloadStatus::Succeeded) => Some(
-                "Reload succeeded: the new build compiled, started, and is now running. \
-                 The conversation was carried over."
-                    .to_string(),
-            ),
-            Some(ReloadStatus::Failed(reason)) => Some(format!(
+        let reload_note = match &options.reload {
+            Some(ReloadStatus::Succeeded) => "Reload succeeded: the new build compiled, started, \
+                 and is now running. The conversation was carried over."
+                .to_string(),
+            Some(ReloadStatus::Failed(reason)) => format!(
                 "Reload failed: the new build compiled, but the new binary {reason}\n\
                  The agent fell back to the last binary that started successfully and is \
                  running that. Your source edits are still on disk."
-            )),
-            None => None,
+            ),
+            None => "error: this call was interrupted by a restart".to_string(),
         };
-        if !session.batch.is_empty() {
-            turn = Turn::Tools;
-            for (order, CallState { call, output }) in session.batch.into_iter().enumerate() {
-                let Some(output) = output else {
-                    let output = (session.reload_call.as_deref() == Some(call_key(&call).as_str()))
-                        .then(|| reload_note.clone())
-                        .flatten()
-                        .unwrap_or_else(|| {
-                            "error: this call was interrupted by a reload; run it again if needed"
-                                .to_string()
-                        });
-                    app.world_mut()
-                        .spawn((PendingCall { call, order }, CallOutput(output)));
-                    continue;
-                };
-                app.world_mut()
-                    .spawn((PendingCall { call, order }, CallOutput(output), Shown));
-            }
+        let turn = if session.batch.is_empty() {
+            Turn::Idle
+        } else {
+            Turn::Tools
+        };
+        for (order, CallState { call, output }) in session.batch.into_iter().enumerate() {
+            let pending = PendingCall { call, order };
+            match output {
+                Some(output) => app.world_mut().spawn((pending, CallOutput(output), Shown)),
+                None if session.reload_call == Some(call_key(&pending.call)) => app
+                    .world_mut()
+                    .spawn((pending, CallOutput(reload_note.clone()))),
+                None => app.world_mut().spawn((
+                    pending,
+                    CallOutput("error: this call was interrupted by a reload".to_string()),
+                )),
+            };
         }
-        match &self.options.reload {
-            Some(ReloadStatus::Succeeded) => transcript.push(EntryKind::Info, "reloaded into the new build"),
+        // A `/reload` answers no call, so the model hears of it with the next
+        // prompt.
+        let mut notes = Notes(session.notes);
+        if options.reload.is_some() && session.reload_call.is_none() {
+            notes.0.push(format!("The user ran /reload. {reload_note}"));
+        }
+        match &options.reload {
+            Some(ReloadStatus::Succeeded) => {
+                transcript.push(EntryKind::Info, "reloaded into the new build")
+            }
             Some(ReloadStatus::Failed(reason)) => transcript.push(
                 EntryKind::Error,
-                format!("reload failed, fell back to the last good binary: the new binary {reason}"),
+                format!(
+                    "reload failed, fell back to the last good binary: the new binary {reason}"
+                ),
             ),
             None => {}
         }
 
-        let paths = Paths::new(self.options.state_dir());
         app.insert_resource(Config {
-            paths,
-            brp_port: self.options.brp_port.unwrap_or(0),
+            paths: Paths::new(options.state_dir()),
+            brp_port: options.brp_port.unwrap_or(0),
             source_dir: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         })
         .insert_resource(Tokio(runtime))
@@ -337,6 +351,7 @@ impl Plugin for AgentPlugin {
         .insert_resource(Conversation(session.messages))
         .insert_resource(transcript)
         .insert_resource(PromptQueue(session.queue))
+        .insert_resource(notes)
         .insert_resource(crate::brp::SavedExternalTools(session.external_tools))
         .insert_resource(active)
         .insert_resource(turn)
@@ -397,6 +412,7 @@ fn show_outputs(
 fn drive_turn(
     mut turn: ResMut<Turn>,
     mut queue: ResMut<PromptQueue>,
+    mut notes: ResMut<Notes>,
     mut conversation: ResMut<Conversation>,
     mut transcript: ResMut<Transcript>,
     active: Res<ActiveModel>,
@@ -417,8 +433,19 @@ fn drive_turn(
                 return;
             };
             transcript.push(EntryKind::User, prompt.clone());
+            let prompt = match std::mem::take(&mut notes.0) {
+                notes if notes.is_empty() => prompt,
+                notes => format!("[agent runtime: {}]\n\n{prompt}", notes.join(" ")),
+            };
             conversation.0.push(Message::user(prompt));
-            *turn = request(&active, &registry, &tokio, &conversation, &config, &mut transcript);
+            *turn = request(
+                &active,
+                &registry,
+                &tokio,
+                &conversation,
+                &config,
+                &mut transcript,
+            );
         }
         Turn::Thinking(receiver) => {
             let Ok(result) = receiver.try_recv() else {
@@ -455,12 +482,14 @@ fn drive_turn(
                 });
                 let entity = entity.id();
                 match registry.0.get(call.function.name.as_str()) {
-                    Some(tool) => commands.run_system_with(tool.handler, ToolInvocation { entity, call }),
+                    Some(tool) => {
+                        commands.run_system_with(tool.handler, ToolInvocation { entity, call })
+                    }
                     None => {
                         let name = call.function.name.to_string();
-                        commands
-                            .entity(entity)
-                            .insert(CallOutput(format!("error: there is no tool named `{name}`")));
+                        commands.entity(entity).insert(CallOutput(format!(
+                            "error: there is no tool named `{name}`"
+                        )));
                     }
                 }
             }
@@ -479,12 +508,23 @@ fn drive_turn(
             let mut results = Vec::new();
             for (entity, pending, CallOutput(output)) in done {
                 // Providers reject empty tool results.
-                let output = if output.is_empty() { "(no output)" } else { output };
+                let output = if output.is_empty() {
+                    "(no output)"
+                } else {
+                    output
+                };
                 results.push(pending.call.result(vec![ToolResultContent::text(output)]));
                 commands.entity(entity).despawn();
             }
             conversation.0.push(Message::tool_results(results));
-            *turn = request(&active, &registry, &tokio, &conversation, &config, &mut transcript);
+            *turn = request(
+                &active,
+                &registry,
+                &tokio,
+                &conversation,
+                &config,
+                &mut transcript,
+            );
         }
     }
 }
@@ -501,7 +541,10 @@ fn request(
     let Some(selection) = &active.selection else {
         transcript.push(
             EntryKind::Error,
-            format!("model `{}` is unavailable; pick another with /model", active.name),
+            format!(
+                "model `{}` is unavailable; pick another with /model",
+                active.name
+            ),
         );
         return Turn::Idle;
     };
@@ -512,7 +555,13 @@ fn request(
     let mut request = CompletionRequest::new(prompt)
         .messages(history)
         .preamble(system_prompt(config))
-        .tools(registry.0.values().map(|tool| tool.definition.clone()).collect());
+        .tools(
+            registry
+                .0
+                .values()
+                .map(|tool| tool.definition.clone())
+                .collect(),
+        );
     if let Some(params) = &selection.params {
         request = request.additional_params(params.clone());
     }
@@ -585,6 +634,7 @@ fn snapshot(world: &mut World) -> Session {
         messages: world.resource::<Conversation>().0.clone(),
         transcript: world.resource::<Transcript>().0.clone(),
         queue: world.resource::<PromptQueue>().0.clone(),
+        notes: world.resource::<Notes>().0.clone(),
         batch: batch.into_iter().map(|(_, state)| state).collect(),
         reload_call: world
             .get_resource::<crate::reload::RestartPending>()
