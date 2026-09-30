@@ -14,8 +14,9 @@ target/debug/bevy-agent
 ```
 
 `hotbuild` runs `cargo rustc --bin bevy-agent -- <flags>` with the flags the
-patcher needs (see below). A plain `cargo build` also works; the agent then
-reports "hot patching unavailable" in the transcript and everything else runs.
+patcher needs (see below). A plain `cargo build` also runs, and patches still
+apply from it, but its base was dead-stripped, so a patch that references a
+symbol the base dropped fails to load and is reported in the transcript.
 
 Environment: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; `AGENT_PROVIDER`
 (`anthropic` | `openai`, default: whichever key is set); `AGENT_MODEL` (default
