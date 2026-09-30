@@ -36,9 +36,11 @@ pub struct RustcInvocation {
 pub fn intercept() -> Option<i32> {
     let dir = PathBuf::from(std::env::var_os(CAPTURE_ENV)?);
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let wrapping_rustc = args
-        .first()
-        .is_some_and(|arg| Path::new(arg).file_stem().is_some_and(|stem| stem == "rustc"));
+    let wrapping_rustc = args.first().is_some_and(|arg| {
+        Path::new(arg)
+            .file_stem()
+            .is_some_and(|stem| stem == "rustc")
+    });
     let result = if wrapping_rustc {
         wrap_rustc(&dir, args)
     } else {

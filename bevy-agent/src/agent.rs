@@ -42,11 +42,24 @@ pub struct Transcript {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Entry {
-    User { text: String },
-    Assistant { text: String },
-    Tool { name: String, arguments: String, output: Option<String>, is_error: bool },
-    Info { text: String },
-    Error { text: String },
+    User {
+        text: String,
+    },
+    Assistant {
+        text: String,
+    },
+    Tool {
+        name: String,
+        arguments: String,
+        output: Option<String>,
+        is_error: bool,
+    },
+    Info {
+        text: String,
+    },
+    Error {
+        text: String,
+    },
 }
 
 impl Transcript {
@@ -63,7 +76,9 @@ impl Transcript {
             text.push_str(fragment);
             return;
         }
-        self.push(Entry::Assistant { text: fragment.to_owned() });
+        self.push(Entry::Assistant {
+            text: fragment.to_owned(),
+        });
         self.streaming = true;
     }
 }
@@ -76,7 +91,10 @@ pub enum Turn {
         round: usize,
         streamed: bool,
     },
-    Tools { calls: Vec<Pending>, round: usize },
+    Tools {
+        calls: Vec<Pending>,
+        round: usize,
+    },
 }
 
 pub struct Pending {
@@ -147,10 +165,13 @@ impl Agent {
             .tools(tools)
             .max_tokens(8192);
         if self.cache_prompts {
-            request = request.additional_params(serde_json::json!({ "cache_control": { "type": "ephemeral" } }));
+            request = request
+                .additional_params(serde_json::json!({ "cache_control": { "type": "ephemeral" } }));
         }
         let (tx, events) = crossbeam_channel::unbounded();
-        let task = self.runtime.spawn(stream_reply(self.model.clone(), request, tx));
+        let task = self
+            .runtime
+            .spawn(stream_reply(self.model.clone(), request, tx));
         self.turn = Turn::Thinking {
             events,
             task,
@@ -216,12 +237,24 @@ impl Plugin for AgentPlugin {
             .add_message::<Clear>()
             .add_systems(
                 Update,
-                (clear, cancel, submit, poll_model, resolve_tools, report_patches).chain(),
+                (
+                    clear,
+                    cancel,
+                    submit,
+                    poll_model,
+                    resolve_tools,
+                    report_patches,
+                )
+                    .chain(),
             );
     }
 }
 
-fn clear(mut clears: MessageReader<Clear>, mut agent: ResMut<Agent>, mut transcript: ResMut<Transcript>) {
+fn clear(
+    mut clears: MessageReader<Clear>,
+    mut agent: ResMut<Agent>,
+    mut transcript: ResMut<Transcript>,
+) {
     if clears.read().count() > 0 && !agent.busy() {
         agent.history.clear();
         *transcript = Transcript::default();
@@ -250,16 +283,22 @@ fn cancel(
                         .cloned()
                         .unwrap_or_else(|_| ToolOutput::error("cancelled by the user"));
                     commands.entity(pending.entity).despawn();
-                    pending.call.result(vec![ToolResultContent::text(output.content)])
+                    pending
+                        .call
+                        .result(vec![ToolResultContent::text(output.content)])
                 })
                 .collect();
             agent.history.push(Message::tool_results(results));
         }
         Turn::Idle => {}
     }
-    agent.history.push(Message::assistant("[cancelled by the user]"));
+    agent
+        .history
+        .push(Message::assistant("[cancelled by the user]"));
     agent.queue.clear();
-    transcript.push(Entry::Info { text: "cancelled".into() });
+    transcript.push(Entry::Info {
+        text: "cancelled".into(),
+    });
 }
 
 fn submit(
@@ -287,7 +326,13 @@ fn poll_model(
     mut transcript: ResMut<Transcript>,
     specs: Query<&ToolSpec>,
 ) {
-    let Turn::Thinking { events, round, streamed, .. } = &mut agent.turn else {
+    let Turn::Thinking {
+        events,
+        round,
+        streamed,
+        ..
+    } = &mut agent.turn
+    else {
         return;
     };
     let round = *round;
@@ -316,14 +361,18 @@ fn poll_model(
         Err(error) => {
             transcript.push(Entry::Error { text: error });
             // Keep user/assistant alternation for the next prompt.
-            agent.history.push(Message::assistant("[the model call failed]"));
+            agent
+                .history
+                .push(Message::assistant("[the model call failed]"));
             agent.turn = Turn::Idle;
             return;
         }
     };
     agent.usage += response.usage;
     if !streamed && !response.text().is_empty() {
-        transcript.push(Entry::Assistant { text: response.text() });
+        transcript.push(Entry::Assistant {
+            text: response.text(),
+        });
     }
     if let Some(message) = response.message() {
         agent.history.push(message);
@@ -346,14 +395,24 @@ fn poll_model(
                 is_error: false,
             });
             let known = specs.iter().any(|spec| spec.name == name);
-            let mut entity = commands.spawn(ToolCall { name: name.clone(), arguments });
+            let mut entity = commands.spawn(ToolCall {
+                name: name.clone(),
+                arguments,
+            });
             if !known {
                 entity.insert(ToolOutput::error(format!("unknown tool `{name}`")));
             }
-            Pending { entity: entity.id(), call, entry }
+            Pending {
+                entity: entity.id(),
+                call,
+                entry,
+            }
         })
         .collect();
-    agent.turn = Turn::Tools { calls: pending, round };
+    agent.turn = Turn::Tools {
+        calls: pending,
+        round,
+    };
 }
 
 fn resolve_tools(
@@ -363,11 +422,18 @@ fn resolve_tools(
     calls: Query<Option<&ToolOutput>, With<ToolCall>>,
     specs: Query<&ToolSpec>,
 ) {
-    let Turn::Tools { calls: pending, round } = &agent.turn else {
+    let Turn::Tools {
+        calls: pending,
+        round,
+    } = &agent.turn
+    else {
         return;
     };
     // A call entity that vanished (despawned over BRP, say) counts as done.
-    if pending.iter().any(|p| matches!(calls.get(p.entity), Ok(None))) {
+    if pending
+        .iter()
+        .any(|p| matches!(calls.get(p.entity), Ok(None)))
+    {
         return;
     }
     let round = *round;
@@ -381,7 +447,12 @@ fn resolve_tools(
                 Ok(Some(output)) => output.clone(),
                 _ => ToolOutput::error("the call was removed before it finished"),
             };
-            if let Some(Entry::Tool { output: shown, is_error, .. }) = transcript.entries.get_mut(p.entry) {
+            if let Some(Entry::Tool {
+                output: shown,
+                is_error,
+                ..
+            }) = transcript.entries.get_mut(p.entry)
+            {
                 *shown = Some(output.content.clone());
                 *is_error = output.is_error;
             }
@@ -397,8 +468,12 @@ fn resolve_tools(
         .collect();
     agent.history.push(Message::tool_results(results));
     if round >= MAX_ROUNDS {
-        transcript.push(Entry::Error { text: format!("stopped after {MAX_ROUNDS} model rounds") });
-        agent.history.push(Message::assistant("[stopped: too many rounds]"));
+        transcript.push(Entry::Error {
+            text: format!("stopped after {MAX_ROUNDS} model rounds"),
+        });
+        agent
+            .history
+            .push(Message::assistant("[stopped: too many rounds]"));
         return;
     }
     agent.start(&specs, round + 1);
@@ -414,7 +489,9 @@ fn report_patches(hot: Res<HotReload>, mut seen: Local<u64>, mut transcript: Res
         PatchStatus::Applied { count, elapsed } => Entry::Info {
             text: format!("hot-patched (#{count}, {:.2}s)", elapsed.as_secs_f32()),
         },
-        PatchStatus::Failed(error) => Entry::Error { text: format!("hot patch failed:\n{error}") },
+        PatchStatus::Failed(error) => Entry::Error {
+            text: format!("hot patch failed:\n{error}"),
+        },
         _ => return,
     };
     transcript.push(entry);

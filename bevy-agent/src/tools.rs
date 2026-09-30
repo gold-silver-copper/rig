@@ -69,6 +69,13 @@ impl ToolOutput {
 #[derive(Component)]
 pub struct Claimed;
 
+/// Calls nobody has answered or taken yet.
+pub type OpenCalls<'w, 's> =
+    Query<'w, 's, (Entity, &'static ToolCall), (Without<ToolOutput>, Without<Claimed>)>;
+
+/// A native tool's function: JSON arguments in, text or an error out.
+pub type Runner = fn(Value) -> Result<String, String>;
+
 /// A native tool call running on its own thread.
 #[derive(Component)]
 struct Running(Receiver<Result<String, String>>);
@@ -79,14 +86,14 @@ pub struct Native {
     pub name: &'static str,
     pub description: String,
     pub parameters: Value,
-    pub run: fn(Value) -> Result<String, String>,
+    pub run: Runner,
 }
 
 /// Native tool functions by name, rebuilt from [`plugins::native_tools`]
 /// at startup and after every hot patch, so the pointers are always the
 /// newest code and tools added to that list go live without a restart.
 #[derive(Resource, Default)]
-struct NativeRunners(HashMap<String, fn(Value) -> Result<String, String>>);
+struct NativeRunners(HashMap<String, Runner>);
 
 pub struct ToolsPlugin;
 
@@ -139,11 +146,7 @@ fn sync_native_tools(
     }
 }
 
-fn run_native_calls(
-    mut commands: Commands,
-    runners: Res<NativeRunners>,
-    calls: Query<(Entity, &ToolCall), (Without<ToolOutput>, Without<Claimed>)>,
-) {
+fn run_native_calls(mut commands: Commands, runners: Res<NativeRunners>, calls: OpenCalls) {
     for (entity, call) in &calls {
         let Some(&run) = runners.0.get(&call.name) else {
             continue;

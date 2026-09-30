@@ -57,7 +57,10 @@ impl Patcher {
                     .iter()
                     // The jobserver cargo handed out is gone.
                     .filter(|(key, _)| {
-                        !matches!(key.as_str(), "CARGO_MAKEFLAGS" | "MAKEFLAGS" | "MFLAGS" | CAPTURE_ENV)
+                        !matches!(
+                            key.as_str(),
+                            "CARGO_MAKEFLAGS" | "MAKEFLAGS" | "MFLAGS" | CAPTURE_ENV
+                        )
                     })
                     .map(|(key, value)| (key, value)),
             )
@@ -88,20 +91,34 @@ impl Patcher {
             empty => empty.insert(SymbolCache::new(&self.fat.exe)?),
         };
         let stub = dir.join("stub.o");
-        std::fs::write(&stub, cache.stub(&objects, subsecond::aslr_reference() as u64)?)?;
+        std::fs::write(
+            &stub,
+            cache.stub(&objects, subsecond::aslr_reference() as u64)?,
+        )?;
 
-        let extension = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+        let extension = if cfg!(target_os = "macos") {
+            "dylib"
+        } else {
+            "so"
+        };
         let lib = dir.join(format!("patch-{}.{extension}", self.count));
         let output = Command::new("cc")
             .args(&objects)
             .arg(&stub)
-            .args(link_args.iter().filter(|arg| arg.ends_with(".dylib") || arg.ends_with(".so")))
+            .args(
+                link_args
+                    .iter()
+                    .filter(|arg| arg.ends_with(".dylib") || arg.ends_with(".so")),
+            )
             .args(thin_link_args(&link_args))
             .arg("-o")
             .arg(&lib)
             .output()?;
         if !output.status.success() {
-            bail!("patch link failed:\n{}", String::from_utf8_lossy(&output.stderr));
+            bail!(
+                "patch link failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         for object in &objects {
             let _ = std::fs::remove_file(object);

@@ -6,7 +6,8 @@ use crate::tools::Native;
 pub fn tool() -> Native {
     Native {
         name: "read",
-        description: "Read a text file. Returns numbered lines; use offset/limit for long files.".into(),
+        description: "Read a text file. Returns numbered lines; use offset/limit for long files."
+            .into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -23,7 +24,11 @@ pub fn tool() -> Native {
 fn run(args: Value) -> Result<String, String> {
     let path = str_arg(&args, "path")?;
     let text = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
-    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
+    let offset = args
+        .get("offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1) as usize;
     let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(2000) as usize;
     let numbered: Vec<String> = text
         .lines()

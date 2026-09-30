@@ -36,8 +36,12 @@ fn main() -> AppExit {
     let model = ProviderRef::parse(&options.model)
         .map_err(|error| error.to_string())
         .and_then(|reference| {
-            let anthropic = reference.id().is_some_and(|id| id.format() == Format::Anthropic);
-            let model = reference.completion_model().map_err(|error| error.to_string())?;
+            let anthropic = reference
+                .id()
+                .is_some_and(|id| id.format() == Format::Anthropic);
+            let model = reference
+                .completion_model()
+                .map_err(|error| error.to_string())?;
             Ok((model, anthropic))
         });
     let (model, anthropic) = match model {
@@ -47,7 +51,11 @@ fn main() -> AppExit {
             std::process::exit(1);
         }
     };
-    let runtime = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("rigpi: cannot start tokio: {error}");
@@ -57,7 +65,11 @@ fn main() -> AppExit {
     let fat = hot::bootstrap();
 
     App::new()
-        .add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 30.0))))
+        .add_plugins(
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+                1.0 / 30.0,
+            ))),
+        )
         .insert_resource(agent::Agent::new(model, options.model, anthropic, runtime))
         .add_plugins((
             hot::HotReloadPlugin(fat),
@@ -84,7 +96,9 @@ impl Options {
         };
         let mut options = Options {
             model: std::env::var("RIGPI_MODEL").unwrap_or_else(|_| default_model.to_owned()),
-            brp_port: std::env::var("RIGPI_BRP_PORT").ok().and_then(|port| port.parse().ok()),
+            brp_port: std::env::var("RIGPI_BRP_PORT")
+                .ok()
+                .and_then(|port| port.parse().ok()),
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {

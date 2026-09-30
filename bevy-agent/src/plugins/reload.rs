@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use crate::hot::{HotReload, PatchStatus};
-use crate::tools::{Claimed, ToolCall, ToolOutput, ToolSpec};
+use crate::tools::{Claimed, OpenCalls, ToolOutput, ToolSpec};
 
 pub struct ReloadPlugin;
 
@@ -29,11 +29,7 @@ fn spawn_spec(mut commands: Commands) {
     });
 }
 
-fn start_reload(
-    mut commands: Commands,
-    mut hot: ResMut<HotReload>,
-    calls: Query<(Entity, &ToolCall), (Without<ToolOutput>, Without<Claimed>)>,
-) {
+fn start_reload(mut commands: Commands, mut hot: ResMut<HotReload>, calls: OpenCalls) {
     for (entity, call) in &calls {
         if call.name != "reload" {
             continue;
@@ -41,7 +37,9 @@ fn start_reload(
         let mut entity = commands.entity(entity);
         match hot.request() {
             Some(generation) => entity.insert((Claimed, AwaitingPatch(generation))),
-            None => entity.insert(ToolOutput::error("hot-patching is unavailable in this build")),
+            None => entity.insert(ToolOutput::error(
+                "hot-patching is unavailable in this build",
+            )),
         };
     }
 }
@@ -63,6 +61,9 @@ fn finish_reload(
             PatchStatus::Failed(error) => ToolOutput::error(error.clone()),
             other => ToolOutput::error(format!("unexpected patch state: {other:?}")),
         };
-        commands.entity(entity).remove::<AwaitingPatch>().insert(output);
+        commands
+            .entity(entity)
+            .remove::<AwaitingPatch>()
+            .insert(output);
     }
 }

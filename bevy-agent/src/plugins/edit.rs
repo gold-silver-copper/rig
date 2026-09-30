@@ -6,7 +6,8 @@ use crate::tools::Native;
 pub fn tool() -> Native {
     Native {
         name: "edit",
-        description: "Replace one exact, unique occurrence of old_text with new_text in a file.".into(),
+        description: "Replace one exact, unique occurrence of old_text with new_text in a file."
+            .into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -31,6 +32,8 @@ fn run(args: Value) -> Result<String, String> {
             std::fs::write(path, text.replacen(old, new, 1)).map_err(|error| error.to_string())?;
             Ok(format!("edited {path}"))
         }
-        n => Err(format!("old_text occurs {n} times in {path}; include more context")),
+        n => Err(format!(
+            "old_text occurs {n} times in {path}; include more context"
+        )),
     }
 }

@@ -90,7 +90,11 @@ fn register_tool(In(params): In<Option<Value>>, world: &mut World) -> BrpResult 
         #[serde(default = "empty_object")]
         parameters: Value,
     }
-    let Params { name, description, parameters } = parse(params)?;
+    let Params {
+        name,
+        description,
+        parameters,
+    } = parse(params)?;
     despawn_remote(world, &name);
     let entity = world
         .spawn((
@@ -139,15 +143,19 @@ fn take_calls(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     struct Params {
         tools: Option<Vec<String>>,
     }
-    let Params { tools } = if params.is_some() { parse(params)? } else { Params::default() };
+    let Params { tools } = if params.is_some() {
+        parse(params)?
+    } else {
+        Params::default()
+    };
     let mut remote = world.query_filtered::<&ToolSpec, With<RemoteTool>>();
     let remote: Vec<String> = remote
         .iter(world)
         .map(|spec| spec.name.clone())
         .filter(|name| tools.as_ref().is_none_or(|tools| tools.contains(name)))
         .collect();
-    let mut calls = world
-        .query_filtered::<(Entity, &ToolCall), (Without<ToolOutput>, Without<Claimed>)>();
+    let mut calls =
+        world.query_filtered::<(Entity, &ToolCall), (Without<ToolOutput>, Without<Claimed>)>();
     let taken: Vec<(Entity, ToolCall)> = calls
         .iter(world)
         .filter(|(_, call)| remote.contains(&call.name))
@@ -174,7 +182,11 @@ fn complete_call(In(params): In<Option<Value>>, world: &mut World) -> BrpResult 
         #[serde(default)]
         is_error: bool,
     }
-    let Params { call, output, is_error } = parse(params)?;
+    let Params {
+        call,
+        output,
+        is_error,
+    } = parse(params)?;
     let entity = Entity::try_from_bits(call).ok_or_else(|| BrpError {
         code: error_codes::INVALID_PARAMS,
         message: format!("{call} is not an entity"),
@@ -186,7 +198,10 @@ fn complete_call(In(params): In<Option<Value>>, world: &mut World) -> BrpResult 
     if !entity_mut.contains::<ToolCall>() {
         return Err(BrpError::component_not_present("ToolCall", entity));
     }
-    entity_mut.insert(ToolOutput { content: output, is_error });
+    entity_mut.insert(ToolOutput {
+        content: output,
+        is_error,
+    });
     Ok(Value::Null)
 }
 

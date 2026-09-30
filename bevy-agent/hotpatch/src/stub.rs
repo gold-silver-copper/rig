@@ -47,7 +47,9 @@ impl SymbolCache {
             .symbols()
             .filter_map(|symbol| {
                 let flags = match symbol.flags() {
-                    SymbolFlags::Elf { st_info, st_other } => SymbolFlags::Elf { st_info, st_other },
+                    SymbolFlags::Elf { st_info, st_other } => {
+                        SymbolFlags::Elf { st_info, st_other }
+                    }
                     SymbolFlags::MachO { n_desc } => SymbolFlags::MachO { n_desc },
                     _ => SymbolFlags::None,
                 };
@@ -108,7 +110,11 @@ impl SymbolCache {
     /// original address, data becomes absolute symbols, and thread-locals
     /// get fresh storage initialized from the original TLS image.
     /// `aslr_reference` is the runtime address of `main`.
-    pub(crate) fn stub(&self, objects: &[impl AsRef<Path>], aslr_reference: u64) -> Result<Vec<u8>> {
+    pub(crate) fn stub(
+        &self,
+        objects: &[impl AsRef<Path>],
+        aslr_reference: u64,
+    ) -> Result<Vec<u8>> {
         let mut undefined = HashSet::new();
         let mut defined = HashSet::new();
         for path in objects {
@@ -133,9 +139,15 @@ impl SymbolCache {
             obj.set_macho_build_version(version);
         }
 
-        let main = self.symbols.get(MAIN).context("no main in the fat executable")?;
+        let main = self
+            .symbols
+            .get(MAIN)
+            .context("no main in the fat executable")?;
         if aslr_reference < main.address {
-            bail!("ASLR reference {aslr_reference:#x} is below main at {:#x}", main.address);
+            bail!(
+                "ASLR reference {aslr_reference:#x} is below main at {:#x}",
+                main.address
+            );
         }
         let slide = aslr_reference - main.address;
         // The Mach-O writer adds the leading underscore back.
@@ -171,7 +183,8 @@ impl SymbolCache {
                     // Each patch gets its own copy, so patched thread-locals
                     // restart from their initial value.
                     let tls = obj.section_id(StandardSection::Tls);
-                    let (offset, size) = match self.tls_init_sizes.get(&format!("{name}$tlv$init")) {
+                    let (offset, size) = match self.tls_init_sizes.get(&format!("{name}$tlv$init"))
+                    {
                         Some(&found) => found,
                         None if symbol.size > 0 => (symbol.address, symbol.size),
                         None if !self.tls_init_sizes.is_empty() => {
@@ -248,7 +261,11 @@ impl SymbolCache {
             }
         }
         map.new_base_address = new_main.context("no main in the patch")?;
-        map.aslr_reference = self.symbols.get(MAIN).context("no main in the fat executable")?.address;
+        map.aslr_reference = self
+            .symbols
+            .get(MAIN)
+            .context("no main in the fat executable")?
+            .address;
         Ok(map)
     }
 }

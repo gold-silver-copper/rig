@@ -4,6 +4,7 @@ use std::io::{Stdout, stdout};
 use std::time::Duration;
 
 use bevy::prelude::*;
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -16,7 +17,6 @@ use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
-use ratatui::Terminal;
 
 use crate::agent::{Agent, Cancel, Clear, Entry, Submit, Transcript, Turn};
 use crate::hot::HotReload;
@@ -99,7 +99,11 @@ fn read_input(
                 exit.write(AppExit::Success);
             }
             KeyCode::Char('j') if ctrl => editor.input.push('\n'),
-            KeyCode::Enter if key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
+            KeyCode::Enter
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
                 editor.input.push('\n');
             }
             KeyCode::Enter => {
@@ -115,7 +119,9 @@ fn read_input(
                     }
                     "/reload" => {
                         if hot.request().is_none() {
-                            transcript.push(Entry::Error { text: "hot-patching is unavailable".into() });
+                            transcript.push(Entry::Error {
+                                text: "hot-patching is unavailable".into(),
+                            });
                         }
                     }
                     _ => {
@@ -147,7 +153,13 @@ fn draw(
     agent: Res<Agent>,
 ) {
     let mut lines = transcript_lines(&transcript);
-    if matches!(agent.turn, Turn::Thinking { streamed: false, .. }) {
+    if matches!(
+        agent.turn,
+        Turn::Thinking {
+            streamed: false,
+            ..
+        }
+    ) {
         lines.push(Line::styled("…", Style::new().fg(Color::DarkGray)));
     }
     let _ = term.0.draw(|frame| {
@@ -171,14 +183,30 @@ fn draw(
         frame.render_widget(transcript.scroll((top, 0)), body);
         frame.render_widget(Paragraph::new(status.0.clone()), status_area);
 
-        let hint = if agent.busy() { " esc to stop " } else { " enter to send · /reload · /clear · /quit " };
+        let hint = if agent.busy() {
+            " esc to stop "
+        } else {
+            " enter to send · /reload · /clear · /quit "
+        };
         let input = Paragraph::new(editor.input.as_str())
             .wrap(Wrap { trim: false })
-            .block(Block::bordered().border_style(Style::new().fg(Color::DarkGray)).title_bottom(hint));
+            .block(
+                Block::bordered()
+                    .border_style(Style::new().fg(Color::DarkGray))
+                    .title_bottom(hint),
+            );
         frame.render_widget(input, input_area);
 
-        let last = editor.input.split('\n').last().unwrap_or_default().chars().count() as u16;
-        let row = input_rows.saturating_sub(1).min(input_area.height.saturating_sub(3));
+        let last = editor
+            .input
+            .rsplit('\n')
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .count() as u16;
+        let row = input_rows
+            .saturating_sub(1)
+            .min(input_area.height.saturating_sub(3));
         frame.set_cursor_position(Position::new(
             input_area.x + 1 + last % width,
             input_area.y + 1 + row,
@@ -195,13 +223,23 @@ fn transcript_lines(transcript: &Transcript) -> Vec<Line<'static>> {
                 for (i, line) in text.lines().enumerate() {
                     let prefix = if i == 0 { "› " } else { "  " };
                     lines.push(Line::from(vec![
-                        Span::styled(prefix, Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            prefix,
+                            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        ),
                         Span::styled(line.to_owned(), Style::new().add_modifier(Modifier::BOLD)),
                     ]));
                 }
             }
-            Entry::Assistant { text } => lines.extend(text.lines().map(|line| Line::raw(line.to_owned()))),
-            Entry::Tool { name, arguments, output, is_error } => {
+            Entry::Assistant { text } => {
+                lines.extend(text.lines().map(|line| Line::raw(line.to_owned())))
+            }
+            Entry::Tool {
+                name,
+                arguments,
+                output,
+                is_error,
+            } => {
                 let mut args: String = arguments.chars().take(120).collect();
                 if arguments.chars().count() > 120 {
                     args.push('…');
@@ -210,7 +248,11 @@ fn transcript_lines(transcript: &Transcript) -> Vec<Line<'static>> {
                     Span::styled(format!("⚙ {name} "), Style::new().fg(Color::Yellow)),
                     Span::styled(args, dim),
                 ]));
-                let style = if *is_error { Style::new().fg(Color::Red) } else { dim };
+                let style = if *is_error {
+                    Style::new().fg(Color::Red)
+                } else {
+                    dim
+                };
                 match output {
                     None => lines.push(Line::styled("  running…", dim)),
                     Some(output) => {
@@ -226,7 +268,10 @@ fn transcript_lines(transcript: &Transcript) -> Vec<Line<'static>> {
             }
             Entry::Info { text } => lines.push(Line::styled(format!("· {text}"), dim)),
             Entry::Error { text } => {
-                lines.extend(text.lines().map(|line| Line::styled(line.to_owned(), Style::new().fg(Color::Red))));
+                lines.extend(
+                    text.lines()
+                        .map(|line| Line::styled(line.to_owned(), Style::new().fg(Color::Red))),
+                );
             }
         }
         lines.push(Line::default());

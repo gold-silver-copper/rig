@@ -159,7 +159,11 @@ impl Plugin for HotReloadPlugin {
 /// Request a patch once source files stop changing for a moment, so a burst
 /// of edits builds once.
 fn watch_sources(mut hot: ResMut<HotReload>) {
-    if hot.requests.is_none() || hot.last_scan.is_some_and(|at| at.elapsed() < Duration::from_millis(250)) {
+    if hot.requests.is_none()
+        || hot
+            .last_scan
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(250))
+    {
         return;
     }
     hot.last_scan = Some(Instant::now());
@@ -169,7 +173,10 @@ fn watch_sources(mut hot: ResMut<HotReload>) {
         hot.changed_at = Some(Instant::now());
     }
     hot.watched = current;
-    if hot.changed_at.is_some_and(|at| at.elapsed() > Duration::from_millis(600)) {
+    if hot
+        .changed_at
+        .is_some_and(|at| at.elapsed() > Duration::from_millis(600))
+    {
         hot.changed_at = None;
         hot.request();
     }

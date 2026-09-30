@@ -46,7 +46,10 @@ fn update_status(
     status.0 = Line::from(vec![
         Span::styled(" rigpi ", Style::new().fg(Color::Black).bg(Color::Cyan)),
         Span::styled(
-            format!(" {} · {state} · {tokens} · {patch} · brp :{} ", agent.model_name, port.0),
+            format!(
+                " {} · {state} · {tokens} · {patch} · brp :{} ",
+                agent.model_name, port.0
+            ),
             dim,
         ),
     ]);
