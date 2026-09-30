@@ -46,7 +46,8 @@ struct RedactPlugin;
 
 impl Plugin for RedactPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Secrets::from_env()).add_observer(redact);
+        app.insert_resource(Secrets::from_env())
+            .add_observer(redact);
     }
 }
 
@@ -81,7 +82,11 @@ impl Secrets {
     }
 }
 
-fn redact(insert: On<Insert<ToolOutput>>, mut outputs: Query<&mut ToolOutput>, secrets: Res<Secrets>) {
+fn redact(
+    insert: On<Insert<ToolOutput>>,
+    mut outputs: Query<&mut ToolOutput>,
+    secrets: Res<Secrets>,
+) {
     if let Ok(mut output) = outputs.get_mut(insert.entity)
         && let Some(redacted) = secrets.redact(&output.0)
     {

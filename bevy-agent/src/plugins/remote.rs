@@ -16,10 +16,10 @@ use bevy_remote::{BrpError, BrpResult, error_codes};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{KeepSessions, State};
 use crate::glue::{self, Model, Turn};
 use crate::plugins::brp::{add_method, params};
 use crate::session::{self, Origin, Prompts, SessionId, SessionStore, Transcript};
+use crate::{KeepSessions, State};
 
 pub struct RemoteSessionsPlugin;
 
@@ -58,7 +58,10 @@ struct CreateParams {
 }
 
 fn create(In(raw): In<Option<Value>>, world: &mut World) -> BrpResult {
-    let CreateParams { model } = raw.map(|raw| params(Some(raw))).transpose()?.unwrap_or_default();
+    let CreateParams { model } = raw
+        .map(|raw| params(Some(raw)))
+        .transpose()?
+        .unwrap_or_default();
     let model = model.unwrap_or_else(|| world.resource::<State>().model.clone());
     let id = session::new_session_id();
     let agent = session::spawn_agent(world, id.clone(), Origin::Remote, &model);

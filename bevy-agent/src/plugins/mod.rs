@@ -2,4 +2,6 @@
 //! leaves out.
 
 pub mod brp;
+pub mod cassette;
+pub mod durable;
 pub mod remote;

@@ -15,10 +15,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::{BrpPort, State};
 use crate::glue::{self, Model, Turn};
 use crate::reload::Reload;
 use crate::session::{self, Entry, MODELS, Origin, Prompts, Transcript, Usage};
+use crate::{BrpPort, State};
 
 pub struct TuiPlugin;
 
@@ -87,7 +87,9 @@ fn input(world: &mut World) {
             }
             KeyCode::Char('o') if control => editor.expanded = !editor.expanded,
             KeyCode::Char('p') if control => {
-                let current = world.get::<Model>(agent).map(|model| model.spec().to_owned());
+                let current = world
+                    .get::<Model>(agent)
+                    .map(|model| model.spec().to_owned());
                 let next = MODELS
                     .iter()
                     .position(|spec| Some(*spec) == current.as_deref())
@@ -116,7 +118,14 @@ fn input(world: &mut World) {
 
 fn draw(
     screen: Option<ResMut<Screen>>,
-    agents: Query<(&Origin, &Transcript, &Prompts, &Turn, Option<&Model>, Option<&Usage>)>,
+    agents: Query<(
+        &Origin,
+        &Transcript,
+        &Prompts,
+        &Turn,
+        Option<&Model>,
+        Option<&Usage>,
+    )>,
     editor: Res<Editor>,
     reload: Res<Reload>,
     state: Res<State>,
@@ -134,9 +143,11 @@ fn draw(
         _ if reload.building() => "building".to_owned(),
         Turn::Idle => "idle".to_owned(),
         Turn::Request => "thinking".to_owned(),
-        Turn::Tools { calls, results } => calls
-            .get(results.len())
-            .map_or("tools".to_owned(), |call| format!("running {}", call.function.name)),
+        Turn::Tools { calls, results } => {
+            calls.get(results.len()).map_or("tools".to_owned(), |call| {
+                format!("running {}", call.function.name)
+            })
+        }
     };
     let mut footer = format!(
         " {} · {} · {activity}",
@@ -176,7 +187,12 @@ fn draw(
         let shown = &input[input.len() - input_height..];
         let cursor_x = shown.last().map_or(0, |line| line.chars().count()) as u16;
         frame.render_widget(
-            Paragraph::new(shown.iter().map(|line| Line::raw(line.clone())).collect::<Vec<_>>()),
+            Paragraph::new(
+                shown
+                    .iter()
+                    .map(|line| Line::raw(line.clone()))
+                    .collect::<Vec<_>>(),
+            ),
             field,
         );
         frame.set_cursor_position((
@@ -196,15 +212,20 @@ fn render(
     let entries = transcript.0.iter().map(|entry| match entry {
         Entry::User(text) => (Style::new().fg(Color::Cyan).bold(), format!("› {text}")),
         Entry::Assistant(text) => (Style::new(), text.clone()),
-        Entry::Call(text) => (Style::new().fg(Color::Yellow), format!("⚙ {}", clip(text, 3))),
+        Entry::Call(text) => (
+            Style::new().fg(Color::Yellow),
+            format!("⚙ {}", clip(text, 3)),
+        ),
         Entry::Output(text) => (Style::new().fg(Color::DarkGray), clip(text, output_lines)),
         Entry::Notice(text) => (Style::new().fg(Color::Magenta), text.clone()),
         Entry::Error(text) => (Style::new().fg(Color::Red), text.clone()),
     });
-    let queued = prompts
-        .queue
-        .iter()
-        .map(|text| (Style::new().fg(Color::DarkGray), format!("› (queued) {text}")));
+    let queued = prompts.queue.iter().map(|text| {
+        (
+            Style::new().fg(Color::DarkGray),
+            format!("› (queued) {text}"),
+        )
+    });
     let mut lines = Vec::new();
     for (style, text) in entries.chain(queued) {
         for line in wrap(&text, width) {

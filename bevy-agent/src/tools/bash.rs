@@ -93,7 +93,10 @@ fn run(command: &str, timeout: Option<f64>) -> Result<ToolOutput, ToolExecutionE
     }
     // Background processes can hold the pipe open; do not wait for them.
     let _ = eof.recv_timeout(Duration::from_millis(500));
-    let bytes = output.lock().map(|output| output.clone()).unwrap_or_default();
+    let bytes = output
+        .lock()
+        .map(|output| output.clone())
+        .unwrap_or_default();
     let mut text = tail(&String::from_utf8_lossy(&bytes));
     let status = match status {
         None => Some(format!(

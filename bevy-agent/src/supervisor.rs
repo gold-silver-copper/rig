@@ -13,9 +13,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bevy::prelude::*;
 use rig_core::message::ToolResultContent;
 
-use crate::{BrpPort, State};
 use crate::glue::Turn;
 use crate::session::{self, Entry, Origin, Prompts, Transcript};
+use crate::{BrpPort, State};
 
 /// Set in the environment of the agent process the supervisor starts.
 pub const CHILD_ENV: &str = "BEVY_AGENT_CHILD";
@@ -233,6 +233,10 @@ pub fn settle_restart(world: &mut World) {
                 prompts.notes.push(note);
             }
         }
-        None => session::log(world, agent, Entry::Notice("Reloaded into the new build.".into())),
+        None => session::log(
+            world,
+            agent,
+            Entry::Notice("Reloaded into the new build.".into()),
+        ),
     }
 }

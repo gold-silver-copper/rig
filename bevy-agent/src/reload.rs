@@ -101,10 +101,17 @@ fn finish(world: &mut World) {
     let failure = match result {
         Ok(binary) => {
             let state = world.resource::<Reload>().state.clone();
-            notify(world, caller_agent, Entry::Notice("Build succeeded. Restarting…".into()));
+            notify(
+                world,
+                caller_agent,
+                Entry::Notice("Build succeeded. Restarting…".into()),
+            );
             // The `reload` call stays unanswered: the new process answers it.
             match save_everything(world).and_then(|()| {
-                std::fs::write(state.join("next-binary"), binary.to_string_lossy().as_bytes())
+                std::fs::write(
+                    state.join("next-binary"),
+                    binary.to_string_lossy().as_bytes(),
+                )
             }) {
                 Ok(()) => {
                     world.write_message(AppExit::from_code(RELOAD_CODE));

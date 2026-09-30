@@ -41,8 +41,10 @@ pub struct State {
     pub cwd_label: String,
     /// The model new sessions get.
     pub model: String,
-    /// Whether the TUI session is opened.
+    /// Whether the terminal interface runs.
     pub tui: bool,
+    /// Whether the primary session, the one the TUI shows, is opened.
+    pub primary: bool,
 }
 
 /// Values plugins keep across a restart, such as the BRP port, saved with
@@ -70,6 +72,11 @@ impl ProcessState {
         std::fs::write(&tmp, serde_json::to_vec(&self.0)?)?;
         std::fs::rename(tmp, path)
     }
+}
+
+/// Where the agent's own cassettes live, apart from Rig's corpus.
+pub fn cassette_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/cassettes")
 }
 
 /// The port the BRP plugin serves, when it runs.
@@ -124,9 +131,11 @@ pub fn app(state: State, deterministic: bool) -> App {
     let preamble = preamble(deterministic);
     let dir = state.dir.clone();
     let tui = state.tui;
-    app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
-        Duration::from_secs_f64(1.0 / 30.0),
-    )))
+    app.add_plugins(
+        MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+            1.0 / 30.0,
+        ))),
+    )
     .insert_resource(ProcessState::load(&dir))
     .insert_resource(SessionStore::new(dir.join(supervisor::SESSIONS)))
     .insert_resource(Preamble(preamble))
@@ -154,7 +163,7 @@ fn open_sessions(world: &mut World) {
         .query::<&Origin>()
         .iter(world)
         .any(|origin| *origin == Origin::Tui);
-    if state.tui && !has_tui {
+    if state.primary && !has_tui {
         session::spawn_agent(world, session::new_session_id(), Origin::Tui, &state.model);
     }
     supervisor::settle_restart(world);

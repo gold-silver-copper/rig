@@ -77,7 +77,11 @@ fn edit(args: Args) -> Result<ToolOutput, ToolExecutionError> {
         let old = replacement.old_text.replace("\r\n", "\n");
         let new = replacement.new_text.replace("\r\n", "\n");
         if old.is_empty() {
-            return fail(format!("{}.oldText must not be empty in {}.", name(index), args.path));
+            return fail(format!(
+                "{}.oldText must not be empty in {}.",
+                name(index),
+                args.path
+            ));
         }
         let matches: Vec<usize> = content.match_indices(&old).map(|(at, _)| at).collect();
         let span = match matches.as_slice() {

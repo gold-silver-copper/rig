@@ -124,7 +124,11 @@ impl External {
             return false;
         }
         let mut tools = world.resource_mut::<Tools>();
-        if tools.0.get(&definition.name).is_some_and(|tool| tool.run.is_some()) {
+        if tools
+            .0
+            .get(&definition.name)
+            .is_some_and(|tool| tool.run.is_some())
+        {
             // A native tool of the same name wins.
             return false;
         }
@@ -171,7 +175,9 @@ fn serve(In(raw): In<Option<Value>>, world: &mut World) -> BrpResult<Option<Valu
     let ServeParams { tools: served } = params(raw)?;
     world.resource_scope(|world, mut external: Mut<External>| {
         for definition in &served {
-            external.seen.insert(definition.name.clone(), Instant::now());
+            external
+                .seen
+                .insert(definition.name.clone(), Instant::now());
             external.register(world, definition.clone());
         }
         let Some(call) = external
@@ -222,8 +228,16 @@ fn tool_result(
 
 /// Fails calls whose plugin does not connect in time, and forgets calls
 /// that were cancelled.
-fn expire(mut external: ResMut<External>, calls: Query<(), With<ToolCall>>, mut commands: Commands) {
-    let External { calls: pending, seen, .. } = &mut *external;
+fn expire(
+    mut external: ResMut<External>,
+    calls: Query<(), With<ToolCall>>,
+    mut commands: Commands,
+) {
+    let External {
+        calls: pending,
+        seen,
+        ..
+    } = &mut *external;
     pending.retain(|call| {
         if !calls.contains(call.entity) {
             return false;

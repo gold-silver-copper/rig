@@ -16,7 +16,9 @@ use rig_core::message::Message;
 use rig_memory::FileConversationMemory;
 use serde::{Deserialize, Serialize};
 
-use crate::glue::{Agent, AgentEvent, Conversation, GlueSystems, Instructions, Model, ModelFactory, Turn};
+use crate::glue::{
+    Agent, AgentEvent, Conversation, GlueSystems, Instructions, Model, ModelFactory, Turn,
+};
 use crate::reload::Reload;
 
 pub struct SessionPlugin;
@@ -70,6 +72,10 @@ pub struct Prompts {
     pub notes: Vec<String>,
 }
 
+/// Every line typed into a session, in order: what a replay types again.
+#[derive(Component, Default, Clone, Serialize, Deserialize)]
+pub struct Inputs(pub Vec<String>);
+
 /// Tokens a session has used, as providers report them.
 #[derive(Component, Default, Clone, Copy)]
 pub struct Usage {
@@ -94,6 +100,7 @@ pub fn new_session_id() -> String {
 
 /// Spawns an agent with an empty conversation.
 pub fn spawn_agent(world: &mut World, id: String, origin: Origin, model: &str) -> Entity {
+    let model_spec = model.to_owned();
     let model = world.resource::<ModelFactory>().model(model);
     let instructions = Instructions(world.resource::<Preamble>().0.clone());
     world
@@ -106,6 +113,7 @@ pub fn spawn_agent(world: &mut World, id: String, origin: Origin, model: &str) -
             Transcript::default(),
             Prompts::default(),
             Usage::default(),
+            Inputs(vec![format!("/model {model_spec}")]),
         ))
         .id()
 }
@@ -133,6 +141,11 @@ pub const MODELS: [&str; 4] = [
 /// Handles a line typed into `agent`: a command now, or a prompt into its queue.
 pub fn submit(world: &mut World, agent: Entity, text: &str) {
     let text = text.trim();
+    if !text.is_empty()
+        && let Some(mut inputs) = world.get_mut::<Inputs>(agent)
+    {
+        inputs.0.push(text.to_owned());
+    }
     let (command, argument) = text.split_once(' ').unwrap_or((text, ""));
     let argument = argument.trim();
     match command {
@@ -152,7 +165,9 @@ pub fn submit(world: &mut World, agent: Entity, text: &str) {
             log(world, agent, Entry::Notice(help));
         }
         "/model" if argument.is_empty() => {
-            let current = world.get::<Model>(agent).map(|model| model.spec().to_owned());
+            let current = world
+                .get::<Model>(agent)
+                .map(|model| model.spec().to_owned());
             log(
                 world,
                 agent,

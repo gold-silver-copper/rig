@@ -35,9 +35,15 @@ struct Args {
 
 fn write(args: Args) -> Result<ToolOutput, ToolExecutionError> {
     let path = std::path::Path::new(&args.path);
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent).map_err(ToolExecutionError::from_error)?;
     }
     std::fs::write(path, &args.content).map_err(ToolExecutionError::from_error)?;
-    Ok(ToolOutput::text(format!("Successfully wrote to {}", args.path)))
+    Ok(ToolOutput::text(format!(
+        "Successfully wrote to {}",
+        args.path
+    )))
 }

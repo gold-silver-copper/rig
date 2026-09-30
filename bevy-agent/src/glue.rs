@@ -113,7 +113,9 @@ impl Model {
 /// Builds [`Model`]s. The default reads credentials from the environment;
 /// a plugin may replace it, for example to send through a recording proxy.
 #[derive(Resource)]
-pub struct ModelFactory(pub Box<dyn Fn(&ProviderRef) -> Result<DynModel<Completion>, String> + Send + Sync>);
+pub struct ModelFactory(
+    pub Box<dyn Fn(&ProviderRef) -> Result<DynModel<Completion>, String> + Send + Sync>,
+);
 
 impl Default for ModelFactory {
     fn default() -> Self {
@@ -156,7 +158,10 @@ pub struct Tool {
 
 impl Tools {
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.0.values().map(|tool| tool.definition.clone()).collect()
+        self.0
+            .values()
+            .map(|tool| tool.definition.clone())
+            .collect()
     }
 }
 
@@ -285,7 +290,14 @@ pub fn report(error: &dyn Error) -> String {
 fn send_requests(
     mut commands: Commands,
     agents: Query<
-        (Entity, &Turn, &Conversation, &Instructions, &Model, Option<&TurnSpan>),
+        (
+            Entity,
+            &Turn,
+            &Conversation,
+            &Instructions,
+            &Model,
+            Option<&TurnSpan>,
+        ),
         (With<Agent>, Without<InFlight>),
     >,
     tools: Res<Tools>,
@@ -436,7 +448,9 @@ fn dispatch_calls(
         );
         let mut entity = commands.spawn((ToolCall(call.clone()), CallOf(agent), CallSpan(span)));
         if !tools.0.contains_key(name) {
-            entity.insert(ToolOutput(format!("error: there is no tool named `{name}`")));
+            entity.insert(ToolOutput(format!(
+                "error: there is no tool named `{name}`"
+            )));
         }
     }
 }
@@ -509,7 +523,9 @@ fn collect_results(
             output: output.clone(),
         });
         if results.len() == calls.len() {
-            conversation.0.push(Message::tool_results(std::mem::take(results)));
+            conversation
+                .0
+                .push(Message::tool_results(std::mem::take(results)));
             *turn = Turn::Request;
         }
     }
