@@ -381,6 +381,7 @@ version = "0.1.0"
 dependencies = [
  "agent-hotpatch",
  "anyhow",
+ "async-channel",
  "bevy_app",
  "bevy_ecs",
  "bevy_reflect",

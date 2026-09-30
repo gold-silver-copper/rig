@@ -10,6 +10,7 @@ members = ["hotpatch"]
 [dependencies]
 agent-hotpatch = { path = "hotpatch" }
 anyhow = "1"
+async-channel = "2"
 bevy_app = { version = "0.20.0-rc.2" }
 bevy_ecs = { version = "0.20.0-rc.2", features = ["hotpatching"] }
 bevy_reflect = { version = "0.20.0-rc.2" }

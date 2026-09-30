@@ -36,13 +36,16 @@ pub const RUSTC_FLAGS: &[&str] = &[
     "-Clink-arg=-Wl,--export-dynamic-symbol,main",
 ];
 
-/// The `cargo rustc` invocation that builds `bin` of `package` with [`RUSTC_FLAGS`].
-pub fn build_command(manifest_dir: &Path, package: &str, bin: &str) -> Command {
+/// The `cargo rustc` invocation that builds `bin` of `package` with [`RUSTC_FLAGS`],
+/// reporting as JSON messages when `json`.
+pub fn build_command(manifest_dir: &Path, package: &str, bin: &str, json: bool) -> Command {
     let mut cmd = Command::new("cargo");
     cmd.current_dir(manifest_dir)
-        .args(["rustc", "-p", package, "--bin", bin, "--message-format=json"])
-        .arg("--")
-        .args(RUSTC_FLAGS);
+        .args(["rustc", "-p", package, "--bin", bin]);
+    if json {
+        cmd.arg("--message-format=json");
+    }
+    cmd.arg("--").args(RUSTC_FLAGS);
     cmd
 }
 
@@ -81,7 +84,10 @@ impl Patcher {
     pub fn new(manifest_dir: impl Into<PathBuf>, package: &str, bin: &str) -> Result<Self> {
         let aslr_reference = subsecond::aslr_reference() as u64;
         if aslr_reference == 0 {
-            bail!("`main` is not exported from this binary; build it with `{}`", flags_hint());
+            bail!(
+                "`main` is not exported from this binary; build it with `{}`",
+                flags_hint()
+            );
         }
         let exe = std::env::current_exe()?;
         let bytes = std::fs::read(&exe).with_context(|| format!("read {}", exe.display()))?;
@@ -93,7 +99,9 @@ impl Patcher {
                 // Only ELF wants the base's flags back; Mach-O n_type would override
                 // the absolute section the stub sets.
                 let flags = match s.flags() {
-                    SymbolFlags::Elf { st_info, st_other } => SymbolFlags::Elf { st_info, st_other },
+                    SymbolFlags::Elf { st_info, st_other } => {
+                        SymbolFlags::Elf { st_info, st_other }
+                    }
                     _ => SymbolFlags::None,
                 };
                 Some((
@@ -110,7 +118,11 @@ impl Patcher {
             })
             .collect::<HashMap<_, _>>();
         if !symbols.contains_key(main_symbol()) {
-            bail!("no `{}` in {}; is it stripped?", main_symbol(), exe.display());
+            bail!(
+                "no `{}` in {}; is it stripped?",
+                main_symbol(),
+                exe.display()
+            );
         }
 
         // TLS init image and, on Mach-O (no symbol sizes), sizes from adjacent symbols.
@@ -154,22 +166,34 @@ impl Patcher {
         let objects = self.rebuild(log)?;
         let build = started.elapsed();
         if objects.is_empty() {
-            bail!("nothing to patch: the rebuild wrote no objects (unchanged source, or a base not built with `{}`)", flags_hint());
+            bail!(
+                "nothing to patch: the rebuild wrote no objects (unchanged source, or a base not built with `{}`)",
+                flags_hint()
+            );
         }
 
         let out_dir = self.manifest_dir.join("target").join("hotpatch");
         std::fs::create_dir_all(&out_dir)?;
-        let millis = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
         let stub = out_dir.join(format!("stub-{millis}.o"));
         std::fs::write(&stub, self.stub(&objects)?)?;
 
         let linking = Instant::now();
         let dylib = out_dir.join(format!("lib{}-patch-{millis}.{}", self.bin, DYLIB_EXT));
         let mut cc = Command::new("cc");
-        cc.args(LINK_FLAGS).args(&objects).arg(&stub).arg("-o").arg(&dylib);
+        cc.args(LINK_FLAGS)
+            .args(&objects)
+            .arg(&stub)
+            .arg("-o")
+            .arg(&dylib);
         let output = cc.output().context("run cc")?;
         if !output.status.success() {
-            bail!("patch link failed:\n{}", String::from_utf8_lossy(&output.stderr));
+            bail!(
+                "patch link failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         let link = linking.elapsed();
         log(format!("linked {}", dylib.display()));
@@ -178,8 +202,14 @@ impl Patcher {
         let mapped = table.map.len();
         // SAFETY: the map pairs symbols of the same name from the same source, built
         // with the same flags, so signatures and layouts agree.
-        unsafe { subsecond::apply_patch(table) }.map_err(|e| anyhow::anyhow!("apply patch: {e}"))?;
-        Ok(PatchReport { dylib, mapped, build, link })
+        unsafe { subsecond::apply_patch(table) }
+            .map_err(|e| anyhow::anyhow!("apply patch: {e}"))?;
+        Ok(PatchReport {
+            dylib,
+            mapped,
+            build,
+            link,
+        })
     }
 
     /// Run cargo and return every object of the tip crate. The crate's old objects
@@ -191,7 +221,9 @@ impl Patcher {
         let prefix = format!("{}-", self.bin.replace('-', "_"));
         let is_object = |name: &str| {
             name.strip_prefix(&prefix).is_some_and(|rest| {
-                rest.len() > 17 && rest.as_bytes()[16] == b'.' && rest[..16].bytes().all(|b| b.is_ascii_hexdigit())
+                rest.len() > 17
+                    && rest.as_bytes()[16] == b'.'
+                    && rest[..16].bytes().all(|b| b.is_ascii_hexdigit())
             }) && (name.ends_with(".rcgu.o") || name.ends_with(".rcgu.bc"))
         };
         if deps.is_dir() {
@@ -202,7 +234,7 @@ impl Patcher {
             }
         }
 
-        let output = build_command(&self.manifest_dir, &self.package, &self.bin)
+        let output = build_command(&self.manifest_dir, &self.package, &self.bin, true)
             .output()
             .context("run cargo")?;
         let mut diagnostics = String::new();
@@ -273,7 +305,11 @@ impl Patcher {
         }
         let base_main = self.symbols[main_symbol()].address;
         if self.aslr_reference < base_main {
-            bail!("ASLR reference {:#x} below main {:#x}", self.aslr_reference, base_main);
+            bail!(
+                "ASLR reference {:#x} below main {:#x}",
+                self.aslr_reference,
+                base_main
+            );
         }
         let slide = self.aslr_reference - base_main;
         let strip = usize::from(FORMAT == BinaryFormat::MachO);
@@ -282,7 +318,9 @@ impl Patcher {
         let mut names: Vec<_> = undefined.difference(&defined).collect();
         names.sort();
         for name in names {
-            let Some(sym) = self.symbols.get(name) else { continue };
+            let Some(sym) = self.symbols.get(name) else {
+                continue;
+            };
             if sym.undefined {
                 continue;
             }
@@ -331,14 +369,20 @@ impl Patcher {
                 }
                 kind => {
                     let flags = match sym.flags {
-                        SymbolFlags::Elf { st_info, st_other } => SymbolFlags::Elf { st_info, st_other },
+                        SymbolFlags::Elf { st_info, st_other } => {
+                            SymbolFlags::Elf { st_info, st_other }
+                        }
                         _ => SymbolFlags::None,
                     };
                     obj.add_symbol(Symbol {
                         name: symbol_name,
                         value: address,
                         size: 0,
-                        kind: if kind == SymbolKind::Unknown { SymbolKind::Data } else { kind },
+                        kind: if kind == SymbolKind::Unknown {
+                            SymbolKind::Data
+                        } else {
+                            kind
+                        },
                         scope: SymbolScope::Linkage,
                         weak: sym.weak,
                         section: SymbolSection::Absolute,
@@ -381,7 +425,11 @@ fn flags_hint() -> String {
 }
 
 const fn main_symbol() -> &'static str {
-    if cfg!(target_os = "macos") { "_main" } else { "main" }
+    if cfg!(target_os = "macos") {
+        "_main"
+    } else {
+        "main"
+    }
 }
 
 #[cfg(target_os = "macos")]
