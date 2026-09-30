@@ -8,14 +8,25 @@ readme = "README.md"
 description = "Conversation memory policies (sliding window, token budget, ...) for the Rig agent framework."
 repository = "https://github.com/0xPlaygrounds/rig"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
+
+[features]
+default = []
+# `FileConversationMemory`, a JSON Lines backend on the local file system.
+# Native targets only.
+file = ["dep:serde_json"]
 
 [dependencies]
 rig-core = { path = "../rig-core", version = "0.43.0", default-features = false }
 tracing = { workspace = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
+assert_fs = { workspace = true }
 rig-core = { path = "../rig-core", version = "0.43.0", features = ["reqwest"] }
 anyhow = { workspace = true }
 rig-agent.workspace = true

@@ -201,3 +201,57 @@ async fn a_fallible_tests_own_error_survives_an_unplayed_session() {
         Err("the test's error")
     );
 }
+
+#[tokio::test]
+async fn try_finish_reports_an_unplayed_interaction_as_an_error() {
+    let scratch = assert_fs::TempDir::new().expect("temporary fixtures");
+    let root = scratch.path().join("fixtures/cassettes");
+    write_fixture(
+        &root,
+        "pair",
+        &[r#"{"answer":"first"}"#, r#"{"answer":"second"}"#],
+    );
+    let cassette = start(&root, "pair").await;
+    assert_eq!(post(&cassette, 0).await, StatusCode::OK);
+
+    let error = cassette
+        .try_finish()
+        .await
+        .expect_err("an unplayed interaction fails finish");
+    assert!(
+        error.message().contains("left unused interactions"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn try_finish_accepts_a_fully_played_session() {
+    let scratch = assert_fs::TempDir::new().expect("temporary fixtures");
+    let root = scratch.path().join("fixtures/cassettes");
+    write_fixture(&root, "single", &[r#"{"answer":"only"}"#]);
+    let cassette = start(&root, "single").await;
+    assert_eq!(post(&cassette, 0).await, StatusCode::OK);
+    cassette
+        .try_finish()
+        .await
+        .expect("a played session finishes");
+}
+
+#[tokio::test]
+async fn try_start_at_reports_a_missing_fixture_as_an_error() {
+    let scratch = assert_fs::TempDir::new().expect("temporary fixtures");
+    let error = ProviderCassette::try_start_at(
+        RecordVia::Proxy,
+        "example",
+        CassetteSpec::new("absent"),
+        "https://example.invalid/v1",
+        CassetteMode::Replay,
+        scratch.path().join("absent.yaml"),
+    )
+    .await
+    .expect_err("a missing fixture cannot replay");
+    assert!(
+        error.message().contains("missing provider cassette"),
+        "{error}"
+    );
+}

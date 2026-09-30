@@ -109,3 +109,59 @@ fn a_result_answers_only_its_own_call() {
         Err(TranscriptError::OrphanToolResult { .. })
     ));
 }
+
+#[test]
+fn unanswered_calls_at_the_end_get_a_new_results_message() {
+    let mut history = vec![Message::user("hi"), assistant(vec![call("c1"), call("c2")])];
+    let added = answer_unanswered(&mut history, |call| format!("lost {}", call.id));
+    assert_eq!(added, 2);
+    assert_eq!(history.len(), 3);
+    validate_canonical(&history).expect("repaired history is canonical");
+}
+
+#[test]
+fn partly_answered_calls_are_completed_in_place_ahead_of_text() {
+    let mut history = vec![
+        Message::user("hi"),
+        assistant(vec![call("c1"), call("c2")]),
+        Message::User {
+            content: vec![result("c1"), UserContent::text("and then?")],
+        },
+        assistant(vec![AssistantContent::text("done")]),
+    ];
+    assert_eq!(answer_unanswered(&mut history, |_| "interrupted".into()), 1);
+    assert_eq!(history.len(), 4);
+    let Some(Message::User { content }) = history.get(2) else {
+        panic!("the results message stays in place");
+    };
+    assert!(
+        matches!(content.get(1), Some(UserContent::ToolResult(r)) if r.call == crate::message::CallId::from_wire("c2"))
+    );
+    assert!(matches!(content.get(2), Some(UserContent::Text(_))));
+    validate_canonical(&history).expect("repaired history is canonical");
+}
+
+#[test]
+fn canonical_histories_are_left_alone() {
+    let mut history = vec![
+        Message::user("hi"),
+        assistant(vec![call("c1")]),
+        Message::User {
+            content: vec![result("c1")],
+        },
+    ];
+    let before = history.clone();
+    assert_eq!(answer_unanswered(&mut history, |_| unreachable!()), 0);
+    assert_eq!(history, before);
+}
+
+#[test]
+fn a_call_followed_by_an_assistant_message_is_answered_between_them() {
+    let mut history = vec![
+        assistant(vec![call("c1")]),
+        assistant(vec![AssistantContent::text("again")]),
+    ];
+    assert_eq!(answer_unanswered(&mut history, |_| "interrupted".into()), 1);
+    assert!(matches!(history.get(1), Some(Message::User { .. })));
+    validate_canonical(&history).expect("repaired history is canonical");
+}

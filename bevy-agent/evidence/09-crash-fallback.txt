@@ -1,0 +1,55 @@
+   |                 expected due to this
+```
+
+I've removed the broken line from `src/tools/read.rs` and didn't reload. The file now matches the working `[read v2]` build that's still running.
+
+› Now test your crash fallback: add  panic!("boom on startup");  as the first statement of ReadPlugin's build method in src/tools/read.rs, call reload, and show me
+exactly what reload returned. Then remove the panic again, but do NOT reload.
+
+⚙ read {"path":"src/tools/read.rs","limit":15}
+
+[read v2]
+use bevy::prelude::*;
+use rig_core::tool::{DynamicTool, ToolExecutionError, ToolOutput};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use super::{MAX_BYTES, MAX_LINES, arguments};
+use crate::glue::AddTool;
+… 10 more lines (Ctrl+O)
+
+⚙ edit {"path":"src/tools/read.rs","edits":[{"oldText":"    fn build(&self, app: &mut App) {\n","newText":"    fn build(&self, app: &mut App) {\n        panic!(\"boom on
+startup\");\n"}]}
+
+Successfully replaced 1 block(s) in src/tools/read.rs.
+
+⚙ reload {}
+
+Build succeeded. Restarting…
+
+Reload failed: the new binary exited with code 101 before it finished starting, so the agent fell back to the previous binary, which is running now. Nothing changed. The
+new binary's stderr ended with:
+
+thread 'main' (68563818) panicked at src/tools/read.rs:13:9:
+boom on startup
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+⚙ edit {"path":"src/tools/read.rs","edits":[{"oldText":"        panic!(\"boom on startup\");\n","newText":""}]}
+
+Successfully replaced 1 block(s) in src/tools/read.rs.
+
+The new binary crashed on startup and the agent fell back to the previous one. This is exactly what reload returned:
+
+```
+Reload failed: the new binary exited with code 101 before it finished starting, so the agent fell back to the previous binary, which is running now. Nothing changed. The
+new binary's stderr ended with:
+
+thread 'main' (68563818) panicked at src/tools/read.rs:13:9:
+boom on startup
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+I've removed the `panic!` line from `src/tools/read.rs` and didn't reload. The file is back to the working `[read v2]` version.
+
+ ~/Desktop/code/many_rigs/rig-bevy-agent-o55-f343c3/.work/final2/bevy-agent · anthropic:claude-opus-5-5 · idle · ↑15806 ↓361 · brp :59256 · gen 3 · /help
+>

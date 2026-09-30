@@ -212,6 +212,35 @@ pub struct AnthropicConfig {
     pub betas: Vec<String>,
     /// Which Messages-format provider this is.
     pub dialect: Dialect,
+    /// What the API does with a replayed thinking block whose conversation
+    /// changed since it was created; `None` leaves the API default, which
+    /// rejects the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_prefix_mismatch: Option<ThinkingPrefixMismatch>,
+}
+
+/// The `anthropic-beta` flag that enables [`ThinkingPrefixMismatch`].
+pub const THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
+
+/// How the API treats a replayed thinking block bound to a different
+/// conversation prefix, as happens when the tool list changes between
+/// turns (an MCP server connecting, a tool registered at runtime).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingPrefixMismatch {
+    /// Reject the request with an invalid-signature error.
+    Reject,
+    /// Drop the stale block and continue.
+    DropBlock,
+}
+
+impl ThinkingPrefixMismatch {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Reject => "reject",
+            Self::DropBlock => "drop_block",
+        }
+    }
 }
 
 impl AnthropicConfig {
@@ -228,6 +257,7 @@ impl AnthropicConfig {
             version: super::completion::ANTHROPIC_VERSION_LATEST.to_owned(),
             betas: Vec::new(),
             dialect: *dialect,
+            thinking_prefix_mismatch: None,
         }
     }
 
@@ -256,6 +286,15 @@ impl AnthropicConfig {
     /// Request an `anthropic-beta` flag.
     pub fn with_beta(mut self, beta: impl Into<String>) -> Self {
         self.betas.push(beta.into());
+        self
+    }
+
+    /// Set what the API does with replayed thinking blocks after the
+    /// conversation prefix changed, and request the beta flag it needs.
+    /// [`ThinkingPrefixMismatch::DropBlock`] keeps a conversation going when
+    /// tools are added or removed between turns.
+    pub fn with_thinking_prefix_mismatch(mut self, behavior: ThinkingPrefixMismatch) -> Self {
+        self.thinking_prefix_mismatch = Some(behavior);
         self
     }
 
@@ -299,10 +338,16 @@ impl AnthropicConfig {
         let builder = builder
             .header("x-api-key", self.api_key.expose())
             .header("anthropic-version", &self.version);
-        if self.betas.is_empty() {
+        let mut betas = self.betas.clone();
+        if self.thinking_prefix_mismatch.is_some()
+            && !betas.iter().any(|beta| beta == THINKING_BINDING_BETA)
+        {
+            betas.push(THINKING_BINDING_BETA.to_owned());
+        }
+        if betas.is_empty() {
             builder
         } else {
-            builder.header("anthropic-beta", self.betas.join(","))
+            builder.header("anthropic-beta", betas.join(","))
         }
     }
 }
@@ -476,6 +521,19 @@ impl Messages {
                 .then_some(strict_tool_transform as fn(&mut ToolDefinition)),
         )?;
         let mut body = serde_json::to_value(&typed)?;
+        if let Some(behavior) = self.provider.thinking_prefix_mismatch
+            && let Some(map) = body.as_object_mut()
+        {
+            let thinking = map
+                .entry("thinking")
+                .or_insert_with(|| serde_json::json!({}));
+            if let Some(thinking) = thinking.as_object_mut() {
+                thinking.insert(
+                    "block_binding".to_owned(),
+                    serde_json::json!({ "prefix_mismatch_behavior": behavior.as_str() }),
+                );
+            }
+        }
         if mode == Mode::Unary {
             return Ok(body);
         }

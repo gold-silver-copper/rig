@@ -205,3 +205,59 @@ fn a_base_url_that_already_names_the_endpoint_is_trimmed() {
         assert_eq!(normalize_base_url(pasted), "https://example.invalid");
     }
 }
+
+/// Opting into dropping stale thinking blocks states the behavior in the
+/// body, merges with a caller's own `thinking` settings, and asks for the
+/// beta flag once.
+#[test]
+fn thinking_prefix_mismatch_reaches_the_body_and_the_beta_header() {
+    let config = AnthropicConfig::new("sk-test")
+        .with_beta(THINKING_BINDING_BETA)
+        .with_thinking_prefix_mismatch(ThinkingPrefixMismatch::DropBlock);
+    let mut request = CompletionRequest::new("hi");
+    request.additional_params = Some(serde_json::json!({"thinking": {"type": "adaptive"}}));
+    let encoded = config
+        .completion("claude-opus-5-5")
+        .encode(request, Mode::Streaming)
+        .expect("encodes");
+    let Body::Bytes(bytes) = encoded.request.body() else {
+        panic!("a JSON body");
+    };
+    let body: serde_json::Value = serde_json::from_slice(bytes).expect("JSON");
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(
+        body["thinking"]["block_binding"]["prefix_mismatch_behavior"],
+        "drop_block"
+    );
+    let betas = encoded
+        .request
+        .headers()
+        .get("anthropic-beta")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert_eq!(betas, THINKING_BINDING_BETA);
+}
+
+/// Without the option nothing changes, and stored configurations without
+/// the field still load.
+#[test]
+fn thinking_prefix_mismatch_is_opt_in_and_backward_compatible() {
+    let encoded = wire()
+        .encode(CompletionRequest::new("hi"), Mode::Unary)
+        .expect("encodes");
+    let Body::Bytes(bytes) = encoded.request.body() else {
+        panic!("a JSON body");
+    };
+    let body: serde_json::Value = serde_json::from_slice(bytes).expect("JSON");
+    assert!(body.get("thinking").is_none());
+    assert!(encoded.request.headers().get("anthropic-beta").is_none());
+    let stored = r#"{"api_key":"[redacted]","base_url":"https://api.anthropic.com","version":"2023-06-01","betas":[],"dialect":"anthropic"}"#;
+    let config: AnthropicConfig =
+        serde_json::from_str(stored).expect("an older configuration loads");
+    assert_eq!(config.thinking_prefix_mismatch, None);
+    let round_trip = serde_json::to_value(
+        config.with_thinking_prefix_mismatch(ThinkingPrefixMismatch::DropBlock),
+    )
+    .expect("serializes");
+    assert_eq!(round_trip["thinking_prefix_mismatch"], "drop_block");
+}

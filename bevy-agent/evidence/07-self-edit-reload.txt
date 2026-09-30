@@ -1,0 +1,55 @@
+42:fn read(args: Args) -> Result<ToolOutput, ToolExecutionError> {
+44:        .map_err(|error| ToolExecutionError::not_found(format!("{}: {error}", args.path)))?;
+48:        return Err(ToolExecutionError::invalid_args(format!(
+69:        output.push_str(&format!(
+76:        output.push_str(&format!(
+… 1 more lines (Ctrl+O)
+
+⚙ read {"path":"src/tools/read.rs","offset":42}
+
+fn read(args: Args) -> Result<ToolOutput, ToolExecutionError> {
+    let text = std::fs::read_to_string(&args.path)
+        .map_err(|error| ToolExecutionError::not_found(format!("{}: {error}", args.path)))?;
+    let lines: Vec<&str> = text.split('\n').collect();
+    let start = args.offset.unwrap_or(1).max(1) - 1;
+    if start >= lines.len() {
+        return Err(ToolExecutionError::invalid_args(format!(
+            "Offset {} is beyond end of file ({} lines total)",
+… 34 more lines (Ctrl+O)
+
+⚙ edit {"path":"src/tools/read.rs","edits":[{"oldText":"    Ok(ToolOutput::text(output))","newText":"    Ok(ToolOutput::text(format!(\"[read v2]\\n{output}\")))"}]}
+
+Successfully replaced 1 block(s) in src/tools/read.rs.
+
+⚙ reload {}
+
+Build succeeded. Restarting…
+
+Reloaded: the new build is running now, with this conversation intact.
+
+⚙ read {"path":"a.txt"}
+
+[read v2]
+hello
+
+I changed `src/tools/read.rs` so every successful read now starts with a `[read v2]` line, then reloaded. Reading `a.txt` in this same turn uses the new version. Raw
+tool output:
+
+```
+[read v2]
+hello
+```
+
+› Call the shout tool with the text 'queued prompt survived the reload'.
+
+⚙ shout {"text":"queued prompt survived the reload"}
+
+QUEUED PROMPT SURVIVED THE RELOAD! (shout #2 from plugin pid 38698)
+
+Output: `QUEUED PROMPT SURVIVED THE RELOAD! (shout #2 from plugin pid 38698)`
+
+The plugin shows the same pid (38698) as before the reload, and its count went from #1 to #2. So the shout plugin process kept running through the reload and wasn't
+restarted.
+
+ ~/Desktop/code/many_rigs/rig-bevy-agent-o55-f343c3/.work/final2/bevy-agent · anthropic:claude-opus-5-5 · idle · ↑23970 ↓344 · brp :59256 · gen 1 · /help
+>

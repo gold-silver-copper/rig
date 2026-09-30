@@ -681,3 +681,36 @@ fn the_family_name_is_the_configuration_tag() {
         );
     }
 }
+
+/// Gemini's vendor is the dotted `gcp.gemini`; its last segment reads as the
+/// same selection and writes back qualified.
+#[test]
+fn a_dotted_vendor_resolves_from_its_last_segment() {
+    let gemini = ProviderId::resolve("gcp.gemini").unwrap();
+    assert_eq!(ProviderId::resolve("gemini"), Ok(gemini));
+    assert_eq!(ProviderId::resolve("gemini/gemini"), Ok(gemini));
+    let reference = ProviderRef::parse("gemini:gemini-3.8-flash").unwrap();
+    assert_eq!(reference.id(), Some(gemini));
+    assert_eq!(reference.to_string(), "gcp.gemini/gemini:gemini-3.8-flash");
+    assert!(matches!(
+        ProviderId::resolve("gcp"),
+        Err(SelectionError::Unknown { .. })
+    ));
+}
+
+/// A base URL override moves every family to the new host and keeps the
+/// rest of the configuration.
+#[test]
+fn a_base_url_override_reaches_every_family() {
+    for spec in ["openai:m", "anthropic:m", "gemini:m", "deepseek:m"] {
+        let reference = ProviderRef::parse(spec).unwrap();
+        let config = reference.config("k").with_base_url("http://127.0.0.1:9");
+        assert_eq!(config.id(), reference.id(), "{spec} keeps its selection");
+        let json = serde_json::to_value(&config).unwrap();
+        let family = json
+            .as_object()
+            .and_then(|tagged| tagged.values().next())
+            .unwrap();
+        assert_eq!(family["base_url"], "http://127.0.0.1:9", "{spec}: {json}");
+    }
+}

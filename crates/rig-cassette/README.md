@@ -148,6 +148,9 @@ verification pass replays with `CassetteMode::Replay` even when the environment
 asks for recording, so a candidate is never implicitly promoted to a fixture.
 While a live run is in progress, `checkpoint_recording` writes the completed,
 scrubbed exchanges to a partial path without finalizing the recording.
+Applications that record or replay outside a test use `try_start_at` and
+`try_finish`, which return a `CassetteError` where `start_at` and `finish`
+would panic.
 
 A recording only becomes the fixture when the test passed and the recording is
 clean. A failed test's exchanges, and a recording `finish` refuses, go under

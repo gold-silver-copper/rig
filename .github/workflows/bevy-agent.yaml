@@ -1,0 +1,43 @@
+# The bevy-agent workspace: its own toolchain and lockfile, so it is checked
+# here rather than by the Rig verification planner. The replay tests run the
+# agent against its recorded provider cassettes, with no API keys.
+name: bevy-agent
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "bevy-agent/**"
+      - "crates/**"
+      - ".github/workflows/bevy-agent.yaml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: bevy-agent / clippy and replay tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bevy-agent
+    steps:
+      - uses: actions/checkout@v5
+      # Bevy's remote protocol pulls in its audio and input crates.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+      # rustup installs the toolchain rust-toolchain.toml names on first use.
+      - run: rustup component add clippy rustfmt
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: bevy-agent
+          save-if: false
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked

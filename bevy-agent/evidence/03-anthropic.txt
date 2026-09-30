@@ -1,0 +1,36 @@
+MCP server facts: facts__planet_facts
+
+› Use bash to count the .txt files in this directory, then read a.txt. Answer in one line.
+
+⚙ bash {"command":"ls -1 *.txt 2>/dev/null | wc -l"}
+
+       2
+
+⚙ read {"path":"a.txt"}
+
+hello
+
+There are 2 .txt files, and a.txt contains "hello".
+
+Model: openai:gpt-6.1-sol
+
+› Read b.txt, then tell me what the earlier bash count was. One short line.
+
+⚙ read {"path":"b.txt"}
+
+world
+
+The earlier bash count was 2 .txt files.
+
+Model: anthropic:claude-opus-5-5
+
+› Use bash to print the current year, then list the tools you called so far in this conversation, in order. Be brief.
+
+⚙ bash {"command":"date +%Y"}
+
+2026
+
+The year is 2026. Tools I've called so far, in order: bash (count .txt files), read (a.txt), read (b.txt), bash (year).
+
+ ~/Desktop/code/many_rigs/rig-bevy-agent-o55-f343c3/.work/final2/bevy-agent · anthropic:claude-opus-5-5 · idle · ↑18245 ↓280 · brp :59256 · gen 0 · /help
+>

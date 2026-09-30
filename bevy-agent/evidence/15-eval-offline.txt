@@ -1,0 +1,6 @@
+PASS openai reads a file: called ["read"]; answered "pineapple"
+PASS anthropic reads a file: called ["read"]; answered "pineapple"
+PASS gemini runs a command: called ["bash"]; answered "pineapple"
+PASS deepseek reads a file: called ["read"]; answered "pineapple"
+4/4 cases passed
+exit 0
