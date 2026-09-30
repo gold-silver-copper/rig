@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":3,"result":[{"id":"1790805845512-1","origin":"Remote","model":"deepseek:deepseek-flash","busy":false},{"id":"1790805841624-0","origin":"Tui","model":"gemini:gemini-3.8-flash","busy":true}]}

@@ -298,6 +298,11 @@ this tree:
   external collector before and after a reload.
 - A live Gemini session recorded with `--record` replayed offline with the
   same tool calls and final answer.
+- A remote client drove a session over BRP with plain JSON-RPC calls
+  (`curl`: `session.create`, `session.prompt`, `session.list`,
+  `session.transcript`). That DeepSeek session and the Gemini TUI session
+  both showed as busy at the same moment, each ran its own tool call, and
+  each remembered only its own conversation.
 - The four-provider eval suite passed from its cassettes with every API key
   unset. CI runs it as `tests/replay.rs`, next to the Anthropic regression
   replay.
