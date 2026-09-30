@@ -16,6 +16,9 @@ use serde::{Deserialize, Serialize};
 use crate::json_utils;
 
 pub const DEEPSEEK_V4_FLASH: &str = "deepseek-v4-flash";
+/// DeepSeek V4.1 Flash. The model-list API names it `DeepSeek-V4.1-Flash`
+/// under the unversioned API ID `deepseek-flash`.
+pub const DEEPSEEK_V4_1_FLASH: &str = "deepseek-flash";
 pub const DEEPSEEK_V4_PRO: &str = "deepseek-v4-pro";
 
 /// The response shape from the DeepSeek API
