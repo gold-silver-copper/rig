@@ -1,0 +1,140 @@
+› Use the bash tool to run 'echo hello-from-bash && uname -s', then tell me the output in one sentence.
+
+⚙ bash {"command":"echo hello-from-bash && uname -s"}
+
+  ↳ exit: 0
+    stdout:
+    hello-from-bash
+    Darwin
+
+    stderr:
+
+
+The output was `hello-from-bash` followed by `Darwin`.
+
+· model: anthropic/anthropic:claude-opus-5-5
+
+› Use bash to run 'echo claude-was-here'. Then, in one sentence, tell me its output and also what the previous command in this conversation printed.
+
+⚙ bash {"command":"echo claude-was-here"}
+
+  ↳ exit: 0
+    stdout:
+    claude-was-here
+
+    stderr:
+
+
+This command printed `claude-was-here`, and the previous one printed `hello-from-bash` and `Darwin`.
+
+! unknown model `3`: no registered provider is named `gemini`
+
+› Use bash to run 'echo gemini-was-here'. Then in one sentence tell me its output and list the outputs of all earlier commands in this conversation.
+
+⚙ bash {"command":"echo gemini-was-here"}
+
+  ↳ exit: 0
+    stdout:
+    gemini-was-here
+
+    stderr:
+
+
+This command printed `gemini-was-here`, and the earlier ones printed `hello-from-bash` and `Darwin` (first command) and `claude-was-here` (second comm
+and).
+
+· reload requested: it builds once the current turn is done
+
+· building…
+
+· build succeeded; restarting into the new binary
+
+· restarted into the new binary (pid 58727)
+
+· model: gcp.gemini/gemini:gemini-3.8-flash
+
+› Use bash to run 'echo gemini-was-here'. Then in one sentence tell me its output and list the outputs of all earlier commands in this conversation.
+
+⚙ bash {"command":"echo gemini-was-here"}
+
+  ↳ exit: 0
+    stdout:
+    gemini-was-here
+
+    stderr:
+
+
+This command printed `gemini-was-here`, and the previous commands printed `hello-from-bash` and `Darwin` (first), `claude-was-here` (second), and `gem
+ini-was-here` (third).
+
+· model: deepseek/openai:deepseek-flash
+
+› Use bash to run 'echo deepseek-was-here'. Then in one sentence tell me its output and how many bash commands were run before it in this conversati
+  on.
+
+⚙ bash {"command":"echo deepseek-was-here"}
+
+  ↳ exit: 0
+    stdout:
+    deepseek-was-here
+
+    stderr:
+
+
+This command printed `deepseek-was-here`, and it was the fifth bash command run in this conversation.
+
+· model: openai/openai:gpt-6.1-sol
+
+› Use bash to run 'echo back-to-gpt' and tell me its output in a few words.
+
+⚙ bash {"command":"echo back-to-gpt"}
+
+  ↳ exit: 0
+    stdout:
+    back-to-gpt
+
+    stderr:
+
+
+It printed `back-to-gpt`.
+
+· model: anthropic/anthropic:claude-opus-5-5
+
+› Use bash to run 'echo back-to-claude' and tell me its output in a few words.
+
+⚙ bash {"command":"echo back-to-claude"}
+
+  ↳ exit: 0
+    stdout:
+    back-to-claude
+
+    stderr:
+
+
+It printed `back-to-claude`.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ anthropic/anthropic:claude-opus-5-5 │ idle │ BRP 127.0.0.1:63370 │ /help
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│›                                                                                                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
