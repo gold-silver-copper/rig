@@ -221,9 +221,9 @@ impl ProviderId {
         }
         let Some(format) = format else {
             let mut registered = Self::vendor_selections(vendor);
-            let first = registered.next().ok_or_else(|| SelectionError::Unknown {
-                vendor: vendor.to_owned(),
-            })?;
+            let first = registered
+                .next()
+                .ok_or_else(|| SelectionError::unknown(vendor))?;
             return match registered.next() {
                 None => Ok(first),
                 Some(_) => Err(SelectionError::Ambiguous {
@@ -240,9 +240,7 @@ impl ProviderId {
         Self::new(vendor, family).ok_or_else(|| {
             let alternatives = alternatives(vendor);
             match alternatives.is_empty() {
-                true => SelectionError::Unknown {
-                    vendor: vendor.to_owned(),
-                },
+                true => SelectionError::unknown(vendor),
                 false => SelectionError::Unregistered {
                     vendor: vendor.to_owned(),
                     format: family,
@@ -307,6 +305,43 @@ impl ProviderId {
     }
 }
 
+/// The registered vendors `vendor` most likely meant: a case-insensitive
+/// match, else a match on one dotted segment (`gemini` for `gcp.gemini`),
+/// else every registered vendor, in registration order.
+fn vendor_candidates(vendor: &str) -> Vec<String> {
+    let mut registered: Vec<&'static str> = Vec::new();
+    for id in ProviderId::all() {
+        if !registered.contains(&id.vendor()) {
+            registered.push(id.vendor());
+        }
+    }
+    let rank = |name: &str| {
+        if name.eq_ignore_ascii_case(vendor) {
+            0
+        } else if name
+            .split('.')
+            .any(|segment| segment.eq_ignore_ascii_case(vendor))
+        {
+            1
+        } else {
+            2
+        }
+    };
+    let best = registered.iter().map(|name| rank(name)).min().unwrap_or(2);
+    registered
+        .into_iter()
+        .filter(|name| rank(name) == best)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn unknown_vendor_hint(candidates: &[String]) -> String {
+    match candidates {
+        [only] => format!("did you mean `{only}`?"),
+        all => format!("registered providers: {}", all.join(", ")),
+    }
+}
+
 /// The qualified spellings registered for `vendor`, in registration order.
 fn alternatives(vendor: &str) -> Vec<String> {
     ProviderId::vendor_selections(vendor)
@@ -337,10 +372,16 @@ impl<'de> Deserialize<'de> for ProviderId {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SelectionError {
     /// No registered provider goes by this vendor name.
-    #[error("no registered provider is named `{vendor}`")]
+    #[error(
+        "no registered provider is named `{vendor}`; {}",
+        unknown_vendor_hint(candidates)
+    )]
     Unknown {
         /// The vendor named.
         vendor: String,
+        /// The registered vendors it most likely meant, or every registered
+        /// vendor when none is close.
+        candidates: Vec<String>,
     },
     /// The vendor is registered, but not for this protocol family.
     #[error(
@@ -378,6 +419,15 @@ pub enum SelectionError {
         /// What was given.
         selection: String,
     },
+}
+
+impl SelectionError {
+    fn unknown(vendor: &str) -> Self {
+        Self::Unknown {
+            vendor: vendor.to_owned(),
+            candidates: vendor_candidates(vendor),
+        }
+    }
 }
 
 /// A provider configuration tagged by protocol family, such as `{"openai": {…}}`.

@@ -197,9 +197,7 @@ fn a_second_format_for_a_vendor_leaves_qualified_references_unambiguous() {
     // The single-format vendors keep their shorthand.
     assert_eq!(
         ProviderId::resolve("deepseek"),
-        ProviderId::new("deepseek", Format::OpenAi).ok_or(SelectionError::Unknown {
-            vendor: "deepseek".to_owned()
-        })
+        ProviderId::new("deepseek", Format::OpenAi).ok_or(SelectionError::unknown("deepseek"))
     );
 }
 
@@ -219,6 +217,38 @@ fn ambiguous_shorthand_offers_resolvable_alternatives() {
     assert!(
         error.to_string().contains("zai/openai"),
         "the message names them: {error}"
+    );
+}
+
+/// An unknown vendor points at the registered name it most likely meant, and
+/// otherwise lists every registered name, so a caller can recover.
+#[test]
+fn unknown_vendor_names_what_is_registered() {
+    let unknown = |selection: &str| match ProviderId::resolve(selection) {
+        Err(SelectionError::Unknown { candidates, .. }) => candidates,
+        other => panic!("`{selection}` should be unknown: {other:?}"),
+    };
+    assert_eq!(unknown("gemini"), ["gcp.gemini"]);
+    assert_eq!(unknown("OpenAI"), ["openai"]);
+    assert_eq!(unknown("gemini/gemini"), ["gcp.gemini"]);
+    let everything = unknown("nosuchvendor");
+    assert!(everything.len() > 2);
+    for candidate in &everything {
+        assert!(
+            ProviderId::vendor_selections(candidate).next().is_some(),
+            "`{candidate}` is registered"
+        );
+    }
+
+    let error = ProviderId::resolve("gemini").expect_err("`gemini` is not a vendor");
+    assert!(
+        error.to_string().contains("did you mean `gcp.gemini`?"),
+        "{error}"
+    );
+    let error = ProviderId::resolve("nosuchvendor").expect_err("unknown");
+    assert!(
+        error.to_string().contains("registered providers: openai"),
+        "{error}"
     );
 }
 
