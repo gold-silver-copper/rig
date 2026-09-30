@@ -1,4 +1,5 @@
-//! Conversation validation and constructors for real or synthetic tool results.
+//! Conversation validation, repair of unanswered tool calls, and constructors
+//! for real or synthetic tool results.
 //!
 //! ```
 //! use rig_core::{message::Message, transcript::validate_canonical};
@@ -9,7 +10,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::message::{AssistantContent, CallId, Message, ToolName, ToolResultContent, UserContent};
+use crate::message::{
+    AssistantContent, CallId, Message, ToolCall, ToolName, ToolResultContent, UserContent,
+};
 use crate::tool::ToolOutput;
 
 /// Why a history is not a canonical transcript. See [`validate_canonical`].
@@ -105,6 +108,83 @@ pub fn validate_canonical(messages: &[Message]) -> Result<(), TranscriptError> {
         });
     }
     Ok(())
+}
+
+/// Answers every tool call that has no result in the message after it, so a
+/// history cut short mid-turn (a crash, a restart, a cancelled run) becomes
+/// canonical again. `reason` supplies the synthetic result text for each
+/// unanswered call. Missing results join the tool results of the following
+/// user message, or a new user message when the next message is not one.
+/// Returns how many results were added. Orphan results are left alone.
+///
+/// ```
+/// use rig_core::message::{AssistantContent, Message, ToolName};
+/// use rig_core::transcript::{answer_unanswered, validate_canonical};
+///
+/// let call = AssistantContent::tool_call("c1", ToolName::new("bash")?, serde_json::json!({}));
+/// let mut history = vec![
+///     Message::user("run it"),
+///     Message::Assistant { id: None, content: vec![call] },
+/// ];
+/// assert_eq!(answer_unanswered(&mut history, |_| "interrupted".into()), 1);
+/// validate_canonical(&history)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn answer_unanswered<F>(messages: &mut Vec<Message>, mut reason: F) -> usize
+where
+    F: FnMut(&ToolCall) -> String,
+{
+    let mut added = 0;
+    let mut index = 0;
+    while let Some(message) = messages.get(index) {
+        let mut calls: Vec<ToolCall> = Vec::new();
+        if let Message::Assistant { content, .. } = message {
+            for part in content {
+                if let AssistantContent::ToolCall(call) = part
+                    && !calls.iter().any(|seen| seen.id == call.id)
+                {
+                    calls.push(call.clone());
+                }
+            }
+        }
+        index += 1;
+        if calls.is_empty() {
+            continue;
+        }
+        let answered: BTreeSet<CallId> = match messages.get(index) {
+            Some(Message::User { content }) => content
+                .iter()
+                .filter_map(|part| match part {
+                    UserContent::ToolResult(result) => Some(result.call.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => BTreeSet::new(),
+        };
+        let missing: Vec<UserContent> = calls
+            .iter()
+            .filter(|call| !answered.contains(&call.id))
+            .map(|call| {
+                tool_result_message(call.id.clone(), call.function.name.clone(), reason(call))
+            })
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        added += missing.len();
+        match messages.get_mut(index) {
+            // Results lead the message: some providers reject text before them.
+            Some(Message::User { content }) => {
+                let results = content
+                    .iter()
+                    .take_while(|part| matches!(part, UserContent::ToolResult(_)))
+                    .count();
+                content.splice(results..results, missing);
+            }
+            _ => messages.insert(index, Message::User { content: missing }),
+        }
+    }
+    added
 }
 
 /// Shape a canonical real tool output as a tool result without reparsing text.

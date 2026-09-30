@@ -711,9 +711,6 @@ fn a_base_url_override_reaches_every_family() {
             .as_object()
             .and_then(|tagged| tagged.values().next())
             .unwrap();
-        assert_eq!(
-            family["base_url"], "http://127.0.0.1:9",
-            "{spec}: {json}"
-        );
+        assert_eq!(family["base_url"], "http://127.0.0.1:9", "{spec}: {json}");
     }
 }
