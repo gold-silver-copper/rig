@@ -205,22 +205,25 @@ fn supervise(
             Ok(status) => describe(status),
             Err(error) => error.clone(),
         };
-        let tail = log_tail(&log_path, log_start);
+        let tail = match log_tail(&log_path, log_start) {
+            tail if tail.trim().is_empty() => String::new(),
+            tail => format!(" Its stderr ended with:\n{tail}"),
+        };
         if !up && next == good {
-            return Err(format!("the agent failed to start: {what}\n{tail}"));
+            return Err(format!("the agent failed to start: {what}.{tail}"));
         }
         if up {
             crashes += 1;
             if crashes > 3 {
-                return Err(format!("the agent keeps crashing: {what}\n{tail}"));
+                return Err(format!("the agent keeps crashing: {what}.{tail}"));
             }
             note = Some(format!(
-                "The agent crashed ({what}) and was restarted. Its stderr ended with:\n{tail}"
+                "The agent crashed ({what}) and was restarted.{tail}"
             ));
         } else {
             note = Some(format!(
                 "Reload failed: the new binary {} {what} before it was up. Fell back to the last \
-                 good binary {}. Its stderr ended with:\n{tail}",
+                 good binary {}.{tail}",
                 next.display(),
                 good.display()
             ));
