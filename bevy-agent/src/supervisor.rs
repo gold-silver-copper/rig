@@ -55,7 +55,9 @@ fn supervise(state: &Path) -> std::io::Result<ExitCode> {
         let _ = fs::remove_file(state.join(NEXT));
         let started_at = Instant::now();
         let status = Command::new(&current)
-            .args(std::env::args().skip(1).filter(|_| generation == 0))
+            // Every generation gets the same arguments, so plugins keep their
+            // configuration; sessions keep their own model and resume only once.
+            .args(std::env::args().skip(1))
             .env(CHILD_ENV, "1")
             .env(GENERATION_ENV, generation.to_string())
             .env(STATE_ENV, state)
