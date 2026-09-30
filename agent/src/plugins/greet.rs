@@ -3,13 +3,14 @@
 use bevy::prelude::*;
 use serde_json::json;
 
-use crate::tools::AddTool;
+use crate::glue::{Tool, Tools};
+use crate::tools::blocking;
 
 pub struct GreetPlugin;
 
 impl Plugin for GreetPlugin {
     fn build(&self, app: &mut App) {
-        app.add_tool(
+        let greet = blocking(
             "greet",
             "Greet someone by name.",
             json!({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
@@ -18,5 +19,6 @@ impl Plugin for GreetPlugin {
                 Ok(format!("Hello, {name}!"))
             },
         );
+        app.world_mut().get_resource_or_init::<Tools>().add(Tool::Task(greet));
     }
 }

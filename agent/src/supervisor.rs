@@ -17,36 +17,33 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
 
-use crate::{Env, RELOAD_EXIT};
-
-const USAGE: &str = "usage: rig-pi [--model vendor:model] [--port N] [--state DIR]
-
-  --model   start on this model (default: the saved one, else openai:gpt-6.1-sol)
-  --port    BRP HTTP port (default: the saved one, else a free port)
-  --state   session, binaries and logs (default: ./.rig-pi)";
+use crate::{Env, Options, RELOAD_EXIT, USAGE};
 
 /// How long a new binary gets to come up before it counts as failed.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub fn run(args: &[String]) -> i32 {
-    let mut model = None;
-    let mut port = None;
-    let mut adopt = None;
-    let mut state = PathBuf::from(".rig-pi");
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        match (arg.as_str(), args.next()) {
-            ("--model", Some(value)) => model = Some(value.clone()),
-            ("--port", Some(value)) => port = value.parse().ok(),
-            ("--state", Some(value)) => state = PathBuf::from(value),
-            ("--adopt", Some(value)) => adopt = value.parse().ok(),
+    let mut extra = Vec::new();
+    let options = match Options::parse(args, &mut extra) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{error}\n{USAGE}");
+            return 2;
+        }
+    };
+    let (mut port, mut adopt, mut state) = (None, None, PathBuf::from(".rig-pi"));
+    for (flag, value) in extra {
+        match flag.as_str() {
+            "--port" => port = value.parse().ok(),
+            "--state" => state = PathBuf::from(value),
+            "--adopt" => adopt = value.parse().ok(),
             _ => {
-                eprintln!("{USAGE}");
+                eprintln!("unknown option {flag}\n{USAGE}");
                 return 2;
             }
         }
     }
-    match supervise(model, port, &state, adopt) {
+    match supervise(&options, port, &state, adopt) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("rig-pi: {error}");
@@ -95,11 +92,12 @@ impl Agent {
 }
 
 fn supervise(
-    mut model: Option<String>,
+    options: &Options,
     port: Option<u16>,
     state: &Path,
     adopt: Option<i32>,
 ) -> Result<i32, String> {
+    let mut launch = adopt.is_none();
     let bins = state.join("bin");
     std::fs::create_dir_all(&bins).map_err(|e| format!("{}: {e}", bins.display()))?;
     let state = state.canonicalize().map_err(|e| e.to_string())?;
@@ -136,13 +134,17 @@ fn supervise(
                     .append(true)
                     .open(&log_path)
                     .map_err(|e| e.to_string())?;
+                let args = options.to_args(launch);
+                let restarted = if launch { "" } else { "1" };
+                launch = false;
                 Command::new(&next)
                     .arg("--child")
+                    .args(args)
                     .env("RIG_PI_STATE", &state)
                     .env("RIG_PI_PORT", port.to_string())
                     .env("RIG_PI_READY", &ready)
                     .env("RIG_PI_NOTE", note.take().unwrap_or_default())
-                    .env("RIG_PI_MODEL", model.take().unwrap_or_default())
+                    .env("RIG_PI_RESTARTED", restarted)
                     .stderr(log)
                     .spawn()
                     .map(Agent::Spawned)
@@ -160,6 +162,7 @@ fn supervise(
                 if up && good != me {
                     // Only returns on failure; then keep supervising as we are.
                     let error = Command::new(&good)
+                        .args(options.to_args(false))
                         .args(["--state", &state.to_string_lossy()])
                         .args(["--port", &port.to_string()])
                         .args(["--adopt", &agent.id().to_string()])
