@@ -6,7 +6,7 @@
 //!   `{"call_id", "tool", "arguments"}` events. Sending it again, for example
 //!   after a reload closed the stream, re-registers the same tools.
 //! - `agent.tool_result` with `{"call_id", "output"}` answers a call.
-//! - `agent.prompt` with `{"text"}` queues a prompt, as typing it would.
+//! - `agent.prompt` with `{"text"}` sends a prompt or command, as typing it would.
 //! - `agent.transcript` with `{"since"}` returns the transcript entries from
 //!   that index on, and whether the agent is busy.
 //!
@@ -26,6 +26,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::agent::{ToolReply, Tools};
+use crate::reload::Reload;
 use crate::session::Session;
 
 /// How long a call waits for its plugin to (re)connect.
@@ -169,10 +170,10 @@ struct PromptParams {
     text: String,
 }
 
-fn prompt(In(params): In<Option<Value>>, mut session: ResMut<Session>) -> BrpResult {
+fn prompt(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     let PromptParams { text } = parse(params)?;
-    session.queue.push_back(text);
-    Ok(json!({"queued": session.queue.len()}))
+    crate::agent::submit(world, text.trim());
+    Ok(json!({"queued": world.resource::<Session>().queue.len()}))
 }
 
 #[derive(Deserialize, Default)]
@@ -181,7 +182,11 @@ struct TranscriptParams {
     since: usize,
 }
 
-fn transcript(In(params): In<Option<Value>>, session: Res<Session>) -> BrpResult {
+fn transcript(
+    In(params): In<Option<Value>>,
+    session: Res<Session>,
+    reload: Res<Reload>,
+) -> BrpResult {
     let TranscriptParams { since } = params
         .map(|params| parse(Some(params)))
         .transpose()?
@@ -190,7 +195,7 @@ fn transcript(In(params): In<Option<Value>>, session: Res<Session>) -> BrpResult
     Ok(json!({
         "entries": entries,
         "next": session.transcript.len(),
-        "busy": session.busy() || !session.queue.is_empty(),
+        "busy": session.busy() || !session.queue.is_empty() || reload.building(),
         "model": session.model,
     }))
 }

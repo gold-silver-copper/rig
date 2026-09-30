@@ -13,17 +13,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::Boot;
-use crate::agent::{self, Llm};
+use crate::agent;
 use crate::reload::Reload;
 use crate::session::{Entry, Session, Turn};
-
-/// Models offered by `/model`; any `vendor[/format]:model` Rig knows works.
-const MODELS: [&str; 4] = [
-    "openai:gpt-6.1-sol",
-    "anthropic:claude-opus-5-5",
-    "gemini:gemini-3.8-flash",
-    "deepseek:deepseek-flash",
-];
 
 pub struct TuiPlugin;
 
@@ -86,39 +78,10 @@ fn input(world: &mut World) {
             KeyCode::Enter => {
                 let text = std::mem::take(&mut prompt.text);
                 prompt.scroll = 0;
-                submit(world, text.trim());
+                agent::submit(world, text.trim());
             }
             _ => {}
         }
-    }
-}
-
-fn submit(world: &mut World, text: &str) {
-    let (command, argument) = text.split_once(' ').unwrap_or((text, ""));
-    match command {
-        "" => {}
-        "/quit" => {
-            world.write_message(AppExit::Success);
-        }
-        "/model" if argument.is_empty() => {
-            let mut session = world.resource_mut::<Session>();
-            let current = session.model.clone();
-            session.log(Entry::Notice(format!(
-                "Model: {current}. Switch with /model <vendor:model>, for example:\n{}",
-                MODELS.join("\n")
-            )));
-        }
-        "/model" => world.resource_scope(|world, mut llm: Mut<Llm>| {
-            agent::switch_model(
-                &mut world.resource_mut::<Session>(),
-                &mut llm,
-                argument.trim(),
-            );
-        }),
-        _ => world
-            .resource_mut::<Session>()
-            .queue
-            .push_back(text.to_owned()),
     }
 }
 

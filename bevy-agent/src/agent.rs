@@ -21,6 +21,14 @@ use serde_json::Value;
 use crate::reload::Reload;
 use crate::session::{self, Entry, Session, StateDir, Turn};
 
+/// Models offered by `/model`; any `vendor[/format]:model` Rig knows works.
+const MODELS: [&str; 4] = [
+    "openai:gpt-6.1-sol",
+    "anthropic:claude-opus-5-5",
+    "gemini:gemini-3.8-flash",
+    "deepseek:deepseek-flash",
+];
+
 pub struct AgentPlugin;
 
 impl Plugin for AgentPlugin {
@@ -30,19 +38,21 @@ impl Plugin for AgentPlugin {
             .enable_all()
             .build()
             .unwrap_or_else(|error| panic!("cannot start the tokio runtime: {error}"));
-        let spec = app.world().resource::<Session>().model.clone();
-        app.insert_resource(Llm {
-            runtime,
-            model: connect(&spec),
-        })
-        .init_resource::<Tools>()
-        .init_resource::<InFlight>()
-        .init_resource::<Running>()
-        .add_systems(
-            Update,
-            (start_turn, drive_request, drive_tools, session::autosave).chain(),
-        )
-        .add_systems(Last, session::save_on_exit);
+        let mut session = app.world_mut().resource_mut::<Session>();
+        let model = connect(&session.model);
+        if let Err(error) = &model {
+            let message = format!("Cannot use {}: {error}", session.model);
+            session.log(Entry::Error(message));
+        }
+        app.insert_resource(Llm { runtime, model })
+            .init_resource::<Tools>()
+            .init_resource::<InFlight>()
+            .init_resource::<Running>()
+            .add_systems(
+                Update,
+                (start_turn, drive_request, drive_tools, session::autosave).chain(),
+            )
+            .add_systems(Last, session::save_on_exit);
     }
 }
 
@@ -50,7 +60,7 @@ impl Plugin for AgentPlugin {
 #[derive(Resource)]
 pub struct Llm {
     runtime: tokio::runtime::Runtime,
-    pub model: Result<DynModel<Completion>, String>,
+    model: Result<DynModel<Completion>, String>,
 }
 
 /// A completion model for `vendor[/format]:model`, credentialed from the environment.
@@ -212,13 +222,38 @@ fn preamble() -> String {
     )
 }
 
+/// Handles a line the user sent: a command now, or a prompt into the queue.
+pub fn submit(world: &mut World, text: &str) {
+    let (command, argument) = text.split_once(' ').unwrap_or((text, ""));
+    match command {
+        "" => {}
+        "/quit" => {
+            world.write_message(AppExit::Success);
+        }
+        "/model" if argument.is_empty() => {
+            let mut session = world.resource_mut::<Session>();
+            let current = session.model.clone();
+            session.log(Entry::Notice(format!(
+                "Model: {current}. Switch with /model <vendor:model>, for example:\n{}",
+                MODELS.join("\n")
+            )));
+        }
+        "/model" => world.resource_scope(|world, mut llm: Mut<Llm>| {
+            switch_model(
+                &mut world.resource_mut::<Session>(),
+                &mut llm,
+                argument.trim(),
+            );
+        }),
+        _ => world
+            .resource_mut::<Session>()
+            .queue
+            .push_back(text.to_owned()),
+    }
+}
+
 /// Starts the next queued prompt, or a queued `/reload`, once idle.
-fn start_turn(
-    mut session: ResMut<Session>,
-    mut reload: ResMut<Reload>,
-    llm: Res<Llm>,
-    state: Res<StateDir>,
-) {
+fn start_turn(mut session: ResMut<Session>, mut reload: ResMut<Reload>, state: Res<StateDir>) {
     if session.busy() || reload.building() {
         return;
     }
@@ -229,9 +264,6 @@ fn start_turn(
         session.queue.pop_front();
         session.log(Entry::Notice("Building…".into()));
         reload.start(None, &state.0);
-        return;
-    }
-    if llm.model.is_err() {
         return;
     }
     let Some(prompt) = session.queue.pop_front() else {
