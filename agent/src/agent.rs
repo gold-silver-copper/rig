@@ -12,7 +12,7 @@ use rig_core::completion::{CompletionRequest, CompletionResponse, ToolDefinition
 use rig_core::error::ProviderError;
 use rig_core::message::{Message, ToolCall, ToolResultContent};
 use rig_core::operation::Completion;
-use rig_core::providers::registry::{ProviderConfig, ProviderRef};
+use rig_core::providers::registry::ProviderRef;
 use rig_core::providers::{anthropic, deepseek, gemini, openai};
 
 use crate::session::{CallState, Entry, EntryKind, Paths, Session};
@@ -32,17 +32,10 @@ pub const MODEL_ALIASES: &[(&str, &str, &str)] = &[
 
 pub const DEFAULT_MODEL: &str = "opus";
 
-/// Anthropic binds thinking blocks to the conversation they were made in,
-/// tools list included, and rejects them once it differs. Tools change here
-/// (reloads, BRP plugins), so ask it to drop such blocks instead.
-const THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
-
 /// A resolved model selection.
 pub struct Selection {
     pub reference: ProviderRef,
     pub model: DynModel<Completion>,
-    /// Provider-specific request fields to send with every request.
-    pub params: Option<serde_json::Value>,
 }
 
 /// Resolve an alias or provider reference into a model, credentials from the
@@ -55,30 +48,9 @@ pub fn resolve_model(name: &str) -> anyhow::Result<Selection> {
             || name.to_string(),
             |(_, vendor, model)| format!("{vendor}:{model}"),
         );
-    let mut reference = ProviderRef::parse(&spelled)?;
-    let mut params = None;
-    if reference
-        .id()
-        .is_some_and(|id| id.vendor() == anthropic::ANTHROPIC.name)
-    {
-        // The credential is dropped by `configured` and read again from the
-        // environment by `completion_model`.
-        if let ProviderConfig::Anthropic(config) = reference.config("") {
-            reference = ProviderRef::configured(
-                ProviderConfig::Anthropic(config.with_beta(THINKING_BINDING_BETA)),
-                reference.model(),
-            )?;
-            params = Some(serde_json::json!({
-                "thinking": { "block_binding": { "prefix_mismatch_behavior": "drop_block" } }
-            }));
-        }
-    }
+    let reference = ProviderRef::parse(&spelled)?;
     let model = reference.completion_model()?;
-    Ok(Selection {
-        reference,
-        model,
-        params,
-    })
+    Ok(Selection { reference, model })
 }
 
 /// The agent loop. Expects the [`Session`] to continue as a resource.
@@ -552,7 +524,7 @@ fn request(
     let Some(prompt) = history.pop() else {
         return Turn::Idle;
     };
-    let mut request = CompletionRequest::new(prompt)
+    let request = CompletionRequest::new(prompt)
         .messages(history)
         .preamble(system_prompt(config))
         .tools(
@@ -562,9 +534,6 @@ fn request(
                 .map(|tool| tool.definition.clone())
                 .collect(),
         );
-    if let Some(params) = &selection.params {
-        request = request.additional_params(params.clone());
-    }
     let (sender, receiver) = crossbeam_channel::bounded(1);
     let call = selection.model.call(request);
     tokio.0.spawn(async move {
