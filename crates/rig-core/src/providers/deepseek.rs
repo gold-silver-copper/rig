@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::json_utils;
 
+/// DeepSeek V4.1 Flash. The models endpoint lists it as `deepseek-flash`
+/// (display name `DeepSeek-V4.1-Flash`), not under a versioned ID.
+pub const DEEPSEEK_V4_1_FLASH: &str = "deepseek-flash";
 pub const DEEPSEEK_V4_FLASH: &str = "deepseek-v4-flash";
 pub const DEEPSEEK_V4_PRO: &str = "deepseek-v4-pro";
 
