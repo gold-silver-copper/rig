@@ -39,7 +39,8 @@ The Gemini and DeepSeek IDs came from the providers' model-list APIs.
 
 **Loop.** One `drive` system per frame: poll the model task (Bevy `IoTaskPool`;
 rig-reqwest brings its own tokio runtime), collect finished tools, start the
-next step. Every step is saved to `session.json` (history, transcript, queued
+next step. A reply's tool calls run one at a time, in order, with `reload`
+last. Every step is saved to `session.json` (history, transcript, queued
 prompts, remote tools, the in-flight turn with its per-call results, model and
 port).
 
@@ -90,6 +91,11 @@ until the plugin is back and are resent after it registers again.
    reload in one turn. The agent's PID changes; the port and the plugin
    process stay the same (`05`).
 6. A prompt queued during a turn survives the restart and then runs (`06`).
+7. A final run on the final build covers every path in one turn: a compile
+   error, a startup crash with fallback, a self-edit reload, and the BRP tool
+   before and after (`07`). In it the model found a bug: it had sent two
+   `edit`s of one file in parallel, and they raced. Tool calls now run in
+   sequence, and a re-test shows both edits applied (`08`).
 
 ## Rig changes
 
@@ -111,6 +117,8 @@ until the plugin is back and are resent after it registers again.
 - **Resolving `gemini:` in rig's registry**: rig's registry deliberately never
   falls back, and a suggestion field would break `SelectionError`. The agent
   accepts a unique dotted vendor suffix itself (`gemini` → `gcp.gemini`).
+- **Running a reply's tool calls in parallel**: two edits to one file raced
+  and corrupted it. They now run in sequence, as pi does.
 - **ratatui's wrapped line count** needs an unstable feature. The transcript is
   hard-wrapped by hand.
 

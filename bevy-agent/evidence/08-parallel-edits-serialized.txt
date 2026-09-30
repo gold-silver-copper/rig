@@ -1,0 +1,35 @@
+› In ONE response, issue two edit calls in parallel on par.txt in the working directory: one replacing 'alpha = 1' with 'alpha = 1111111111', the ot
+  her replacing 'gamma = 3' with 'g = 3'. Then read par.txt and show me its content.
+
+⚙ edit {"new_text":"alpha = 1111111111","old_text":"alpha = 1","path":"par.txt"}
+
+⚙ edit {"new_text":"g = 3","old_text":"gamma = 3","path":"par.txt"}
+
+  ↳ edit: edited par.txt
+
+  ↳ edit: edited par.txt
+
+⚙ read {"path":"par.txt"}
+
+  ↳ read:     1    alpha = 1111111111
+        2    beta = 2
+        3    g = 3
+
+Both edits went through and neither overwrote the other. `par.txt` now contains:
+
+```
+alpha = 1111111111
+beta = 2
+g = 3
+```
+
+I didn't read the file before editing, so I can't show you what it looked like first. I'm assuming it was `alpha = 1`, `beta = 2`, `gamma = 3`.
+
+So the problem from reload 2 didn't happen this time, even though this test covered both suspected causes: two edits at once, and one edit that makes
+the file shorter. That doesn't prove the tool is safe. A timing problem between simultaneous edits may only show up sometimes. To settle it, we could
+run this test several times in a row, or read the `edit` tool's code to see whether it locks the file and clears leftover text when writing.
+
+ anthropic/anthropic:claude-opus-5-5 │ idle │ BRP 127.0.0.1:52804 │ /help
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│›                                                                                                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

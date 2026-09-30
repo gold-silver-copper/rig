@@ -307,13 +307,17 @@ fn drive(
         return;
     }
 
-    // Run every open call except `reload`, which goes last, alone.
+    // Run open calls one at a time, in order: two edits of one file must not
+    // race. `reload` goes last, alone.
     let mut reload_call = None;
     for (index, pending) in calls.iter_mut().enumerate().filter(|(_, p)| p.result.is_none()) {
         let name = pending.call.function.name.as_str();
         let arguments = pending.call.function.arguments.clone();
         match tools.0.get(name).map(|tool| &tool.handler) {
-            Some(Handler::Native(run)) => rt.running.push((index, spawn_native(run.clone(), arguments))),
+            Some(Handler::Native(run)) => {
+                rt.running.push((index, spawn_native(run.clone(), arguments)));
+                break;
+            }
             Some(Handler::Remote { plugin }) => {
                 rt.next_call += 1;
                 let output = slot();
@@ -327,6 +331,7 @@ fn drive(
                     slot: output.clone(),
                 });
                 rt.running.push((index, output));
+                break;
             }
             Some(Handler::Reload) => {
                 reload_call.get_or_insert(index);

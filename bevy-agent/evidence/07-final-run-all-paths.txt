@@ -1,0 +1,135 @@
+› Run this sequence in one go, without asking me anything. (1) Call reverse with text 'abc'. (2) In your greeter plugin source add the line  let bro
+  ken: u32 = "x";  inside the tool closure and call reload. (3) Replace that line with  panic!("boom");  as the first statement of GreeterPlugin::bu
+  ild instead, and call reload. (4) Remove the panic, change the greeting from 'Hello, {name}!' to 'Howdy, {name}!', and call reload. (5) Call greet
+   with name Zed and reverse with text 'xyz'. Finally, summarize in one line what each reload returned and the two final tool results.
+
+⚙ reverse {"text":"abc"}
+
+⚙ bash {"command":"cd ../../bevy-agent/src/plugins && ls && cat greeter*.rs 2>/dev/null || grep -rl Greeter ."}
+
+  ↳ reverse: cba (served by plugin pid 99328)
+
+  ↳ bash: exit: 0
+    stdout:
+    coding.rs
+    greeter.rs
+    mod.rs
+    //! An example native plugin: an ordinary Bevy plugin that adds one tool.
+    … (24 more lines)
+
+⚙ edit {"new_text":"            |args: Value| {\n                let broken: u32 = \"x\";\n","old_text":"            |args: Value| {\n","path":"/Use
+  rs/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/b…
+
+  ↳ edit: edited /Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/bevy-agent/src/plugins/greeter.rs
+
+⚙ reload {}
+
+  ↳ reload: Reload aborted, the old binary keeps running. cargo build failed after 4s:
+    error[E0308]: mismatched types
+      --> src/plugins/greeter.rs:18:35
+       |
+    18 |                 let broken: u32 = "x";
+       |                             ---   ^^^ expected `u32`, found `&str`
+    … (4 more lines)
+
+⚙ edit {"new_text":"            |args: Value| {\n","old_text":"            |args: Value| {\n                let broken: u32 = \"x\";\n","path":"/Use
+  rs/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/b…
+
+⚙ edit {"new_text":"    fn build(&self, app: &mut App) {\n        panic!(\"boom\");\n","old_text":"    fn build(&self, app: &mut App) {\n","path":"/
+  Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e…
+
+  ↳ edit: edited /Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/bevy-agent/src/plugins/greeter.rs
+
+  ↳ edit: edited /Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/bevy-agent/src/plugins/greeter.rs
+
+⚙ reload {}
+
+  ↳ reload: Reload aborted, the old binary keeps running. cargo build failed after 1s:
+    error: unexpected closing delimiter: `}`
+      --> src/plugins/greeter.rs:25:13
+       |
+    11 | impl Plugin for GreeterPlugin {
+       |                               - this opening brace...
+    … (8 more lines)
+
+⚙ bash {"command":"cat -A ../../bevy-agent/src/plugins/greeter.rs | sed -n 10,30p"}
+
+  ↳ bash: exit: 0
+    stdout:
+
+    stderr:
+    cat: illegal option -- A
+    usage: cat [-belnstuv] [file ...]
+
+⚙ bash {"command":"cat -n ../../bevy-agent/src/plugins/greeter.rs"}
+
+  ↳ bash: exit: 0
+    stdout:
+         1    //! An example native plugin: an ordinary Bevy plugin that adds one tool.
+         2    //! Edit it, then `reload`, and the change is live.
+         3
+         4    use bevy::prelude::*;
+    … (26 more lines)
+
+⚙ write {"content":"//! An example native plugin: an ordinary Bevy plugin that adds one tool.\n//! Edit it, then `reload`, and the change is live.\n
+  \nuse bevy::prelude::*;\nuse serde_json::{Value, json};\n\nu…
+
+⚙ reload {}
+
+  ↳ write: wrote 715 bytes to /Users/kisaczka/Desktop/code/many_rigs/rig-bevy-opus55-2e15e2/bevy-agent/src/plugins/greeter.rs
+
+· build succeeded; restarting into the new binary
+
+  ↳ reload: Reload failed: the new binary failed to start (exit code 101; stderr:
+
+    thread 'main' (67547674) panicked at src/plugins/greeter.rs:13:9:
+    boom
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace); fell back to the last good binary
+
+⚙ bash {"command":"cd ../../bevy-agent/src/plugins && sed -i '' '/panic!(\"boom\");/d; s/Hello, {name}!/Howdy, {name}!/' greeter.rs && cat -n greete
+  r.rs | sed -n 11,24p"}
+
+  ↳ bash: exit: 0
+    stdout:
+        11    impl Plugin for GreeterPlugin {
+        12        fn build(&self, app: &mut App) {
+        13            app.add_tool(
+        14                "greet",
+    … (11 more lines)
+
+⚙ reload {}
+
+· build succeeded; restarting into the new binary
+
+· restarted into the new binary (pid 7889)
+
+  ↳ reload: Reload succeeded: rebuilt and restarted into the new binary. Your changes are live and the conversation is intact.
+
+⚙ greet {"name":"Zed"}
+
+⚙ reverse {"text":"xyz"}
+
+  ↳ greet: Howdy, Zed!
+
+  ↳ reverse: zyx (served by plugin pid 99328)
+
+All steps are done and the greeting change is live. Step 3 took an extra reload because of a file-editing problem.
+
+- **Step 1:** `reverse('abc')` returned `cba`.
+- **Reload 1 (step 2):** the build failed with `error[E0308]: mismatched types` (expected `u32`, found `&str`). The old binary kept running.
+- **Reload 2 (step 3):** this attempt wasn't a real test of the panic. I made two edits to the same file at the same time, and the file ended up with
+leftover text after the closing brace. The build failed with `unexpected closing delimiter` before the panic could run. Either the two edits collided,
+ or the `edit` tool doesn't clear leftover text when the new content is shorter. I rewrote the whole file with only `panic!("boom");` added and reload
+ed again.
+- **Reload 2, retry:** the build succeeded, but the new binary panicked at `greeter.rs:13:9: boom` on startup (exit code 101). It went back to the las
+t good binary.
+- **Reload 3 (step 4):** with the panic removed and the greeting changed to `Howdy`, the rebuild and restart succeeded.
+- **Final results:** `greet('Zed')` returned `Howdy, Zed!` and `reverse('xyz')` returned `zyx`. Both `reverse` calls were answered by the same outside
+ process (pid 99328), so it stayed connected through all the reloads.
+
+That possible `edit` tool bug is worth checking before relying on edits that shorten a file.
+
+ anthropic/anthropic:claude-opus-5-5 │ idle │ BRP 127.0.0.1:52804 │ /help
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│›                                                                                                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
