@@ -24,3 +24,4 @@ examples/discord_bot/Cargo.lock
 # Isolated Sprout research, local build artifacts and live transcripts.
 /.sprout-research/
 /tools/sprout/.sprout/
+/tools/sprout/**/__pycache__/

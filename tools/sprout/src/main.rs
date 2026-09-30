@@ -150,26 +150,26 @@ fn main() -> Result<()> {
                     port,
                 )
             })?;
-            if event::poll(Duration::from_millis(33))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            if event::poll(Duration::from_millis(33))?
+                && let Event::Key(key) = event::read()?
+            {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if key.code == KeyCode::Esc
+                    || (key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                {
+                    break;
+                }
+                let mut agent = app.world_mut().resource_mut::<Agent>();
+                match key.code {
+                    KeyCode::Enter => agent.submit()?,
+                    KeyCode::Backspace => {
+                        agent.input.pop();
                     }
-                    if key.code == KeyCode::Esc
-                        || (key.code == KeyCode::Char('c')
-                            && key.modifiers.contains(KeyModifiers::CONTROL))
-                    {
-                        break;
-                    }
-                    let mut agent = app.world_mut().resource_mut::<Agent>();
-                    match key.code {
-                        KeyCode::Enter => agent.submit()?,
-                        KeyCode::Backspace => {
-                            agent.input.pop();
-                        }
-                        KeyCode::Char(c) => agent.input.push(c),
-                        _ => {}
-                    }
+                    KeyCode::Char(c) => agent.input.push(c),
+                    _ => {}
                 }
             }
         }

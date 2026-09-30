@@ -1,0 +1,45 @@
+{
+  "model": "gpt-4.1-mini",
+  "dx_on_path": false,
+  "pid": 38769,
+  "brp_url": "http://127.0.0.1:49263",
+  "prompt_tool_final": true,
+  "native_patch": {
+    "pid": 38769,
+    "ticks": 529,
+    "generation": 1,
+    "native": "native: flourishing"
+  },
+  "external_process": {
+    "pid": 38947,
+    "result": "EXTERNAL_EXTENSION_OK"
+  },
+  "compile_failure_preserves_old_plugin": true,
+  "second_patch": {
+    "pid": 38769,
+    "ticks": 844,
+    "generation": 2,
+    "native": "native: seedling"
+  },
+  "transcript": [
+    "Ready. OPENAI_API_KEY from environment; SPROUT_MODEL defaults to gpt-4.1-mini.",
+    "you: Use shell to run printf SPROUT_TOOL_OK exactly once. Then answer exactly SPROUT_TOOL_OK.",
+    "tool shell: {\"command\":\"printf SPROUT_TOOL_OK\"}",
+    "result shell: exit exit status: 0\nSPROUT_TOOL_OK",
+    "assistant: SPROUT_TOOL_OK",
+    "you: Use shell to edit only native/src/behavior.rs: replace native: seedling with native: flourishing. Do not edit any other file, build manually, or restart anything. Then answer exactly PATCH_REQUESTED.",
+    "tool shell: {\"command\":\"sed -i '' 's/native: seedling/native: flourishing/' native/src/behavior.rs\"}",
+    "result shell: exit exit status: 0\n",
+    "native change detected; compiling without dx\u2026",
+    "assistant: PATCH_REQUESTED",
+    "native patched #1 (same process)",
+    "you: Call the uppercase tool with text external_extension_ok. Do not use shell. Then answer exactly the returned text.",
+    "tool uppercase: {\"text\":\"external_extension_ok\"}",
+    "result uppercase: EXTERNAL_EXTENSION_OK",
+    "assistant: EXTERNAL_EXTENSION_OK",
+    "native change detected; compiling without dx\u2026",
+    "native patch rejected: cargo failed; see /Users/kisaczka/Desktop/code/many_rigs/rig-bevy-sprout-429f9f/tools/sprout/.sprout/native-build.log",
+    "native change detected; compiling without dx\u2026",
+    "native patched #2 (same process)"
+  ]
+}

@@ -1,0 +1,34 @@
+name: Sprout
+
+on:
+  pull_request:
+    paths:
+      - "tools/sprout/**"
+      - ".github/workflows/sprout.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sprout-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    # Matches the locally verified native hotpatch platform. No model keys in CI.
+    runs-on: macos-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tools/sprout
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: tools/sprout -> target
+          save-if: false
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings

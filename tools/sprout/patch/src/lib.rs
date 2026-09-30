@@ -1,4 +1,5 @@
 //! Stable symbol discovery replaces dx's whole-program linker machinery.
+#[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {}
 
