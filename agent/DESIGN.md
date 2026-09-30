@@ -303,5 +303,7 @@ code mode was registered.
   Upstream, `process_remote_requests` `return`s on an unknown method.
 - Compaction summaries use `TemplateCompactor`, not a model. They are recomputed after a
   restart.
+- `edit` matches exactly. pi's fallback matching (trailing whitespace, smart quotes and
+  Unicode dashes normalized) is not implemented.
 - The transcript wraps by character. The `bash` timeout kills `bash` but not its
   grandchildren.
