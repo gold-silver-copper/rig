@@ -41,7 +41,7 @@ fn supervise(state: &Path) -> std::io::Result<ExitCode> {
     let mut current = good.clone();
     let mut generation = 0u32;
     let mut quick_crashes = 0;
-    loop {
+    let code = loop {
         let _ = fs::remove_file(state.join(STARTED));
         let _ = fs::remove_file(state.join(NEXT));
         let started_at = Instant::now();
@@ -56,7 +56,7 @@ fn supervise(state: &Path) -> std::io::Result<ExitCode> {
         generation += 1;
         if let Ok(status) = &status {
             match status.code() {
-                Some(0) => return Ok(ExitCode::SUCCESS),
+                Some(0) => break ExitCode::SUCCESS,
                 Some(code) if code == i32::from(RELOAD_CODE) => {
                     if started && good != current {
                         let _ = fs::remove_file(&good);
@@ -99,13 +99,16 @@ fn supervise(state: &Path) -> std::io::Result<ExitCode> {
         if !started || quick_crashes >= 3 {
             eprintln!("bevy-agent {what}. Its stderr ended with:\n{tail}");
             eprintln!("Resume the conversation with `bevy-agent --continue`.");
-            return Ok(ExitCode::FAILURE);
+            break ExitCode::FAILURE;
         }
         fs::write(
             state.join(NOTE),
             format!("The agent {what} and was restarted. Its stderr ended with:\n{tail}"),
         )?;
-    }
+    };
+    let _ = fs::remove_file(&good);
+    let _ = fs::remove_file(&current);
+    Ok(code)
 }
 
 /// A private copy of `binary`, which later builds cannot overwrite.
