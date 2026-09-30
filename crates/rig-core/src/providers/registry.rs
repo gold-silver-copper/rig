@@ -448,6 +448,26 @@ impl ProviderConfig {
         }
     }
 
+    /// The API root requests go to.
+    pub fn base_url(&self) -> &str {
+        match self {
+            Self::OpenAi(provider) => &provider.base_url,
+            Self::Anthropic(provider) => &provider.base_url,
+            Self::Gemini(provider) => &provider.base_url,
+        }
+    }
+
+    /// The same configuration sending to `base_url`, such as a proxy or a
+    /// local recording server, with every other setting kept.
+    pub fn with_base_url(self, base_url: impl Into<String>) -> Self {
+        let base_url = base_url.into();
+        match self {
+            Self::OpenAi(provider) => Self::OpenAi(provider.with_base_url(base_url)),
+            Self::Anthropic(provider) => Self::Anthropic(provider.with_base_url(base_url)),
+            Self::Gemini(provider) => Self::Gemini(provider.with_base_url(base_url)),
+        }
+    }
+
     /// The same configuration with `api_key` as its credential: how a host
     /// rehydrates a configuration it loaded from data.
     pub fn with_credential(mut self, api_key: impl Into<Secret>) -> Self {
