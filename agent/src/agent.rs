@@ -33,7 +33,11 @@ impl InFlight {
 
 enum Running {
     Local(Task<Result<String, String>>),
-    Remote { id: String, since: Instant },
+    Remote {
+        id: String,
+        plugin: String,
+        since: Instant,
+    },
     Reload(Task<Result<std::path::PathBuf, String>>),
 }
 
@@ -181,10 +185,6 @@ fn drive_model(session: &mut ResMut<Session>, inflight: &mut InFlight, tools: &T
             AssistantContent::Text(text) if !text.text.trim().is_empty() => {
                 session.log(Kind::Assistant, text.text.trim())
             }
-            AssistantContent::ToolCall(call) => session.log(
-                Kind::Call,
-                format!("{} {}", call.function.name, call.function.arguments),
-            ),
             _ => {}
         }
     }
@@ -212,6 +212,7 @@ fn drive_tool(
 ) {
     let Some(running) = &mut inflight.tool else {
         let args = call.function.arguments.clone();
+        session.log(Kind::Call, format!("{} {args}", call.function.name));
         inflight.tool = match tools
             .0
             .get(call.function.name.as_str())
@@ -232,6 +233,7 @@ fn drive_tool(
                 remote.enqueue(&plugin, &id, call.function.name.as_str(), args);
                 Some(Running::Remote {
                     id,
+                    plugin,
                     since: Instant::now(),
                 })
             }
@@ -244,9 +246,15 @@ fn drive_tool(
     };
     let outcome = match running {
         Running::Local(task) => check_ready(task),
-        Running::Remote { id, since } => remote.take_result(id).or_else(|| {
-            (since.elapsed() > Duration::from_secs(300))
-                .then(|| Err("the plugin did not answer within 300s".into()))
+        Running::Remote { id, plugin, since } => remote.take_result(id).or_else(|| {
+            let waited = since.elapsed();
+            if !remote.connected(plugin) && waited > Duration::from_secs(30) {
+                Some(Err(format!("BRP plugin `{plugin}` is not connected")))
+            } else if waited > Duration::from_secs(300) {
+                Some(Err(format!("BRP plugin `{plugin}` did not answer within 300s")))
+            } else {
+                None
+            }
         }),
         Running::Reload(task) => match check_ready(task) {
             Some(Ok(binary)) => match reload::restart(session, env, &binary, exit) {

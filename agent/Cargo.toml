@@ -12,6 +12,7 @@ description = "A minimal self-reloading coding agent on Bevy and Rig."
 [dependencies]
 bevy = { version = "0.20.0-rc.2", default-features = false, features = ["std", "multi_threaded", "bevy_log"] }
 bevy_remote = { version = "0.20.0-rc.2", default-features = false, features = ["http"] }
+libc = "0.2"
 ratatui = "0.30"
 rig-core = { path = "../crates/rig-core", default-features = false, features = ["reqwest", "rustls"] }
 serde = { version = "1", features = ["derive"] }

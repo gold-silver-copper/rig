@@ -32,6 +32,11 @@ pub struct BrpPlugin {
 
 impl Plugin for BrpPlugin {
     fn build(&self, app: &mut App) {
+        // bevy_remote reports a failed bind nowhere, so check the port first.
+        if let Err(error) = std::net::TcpListener::bind(("127.0.0.1", self.port)) {
+            let text = format!("BRP port {} is unavailable: {error}", self.port);
+            app.world_mut().resource_mut::<Session>().log(Kind::Error, text);
+        }
         app.init_resource::<Remote>()
             .add_plugins((
                 RemotePlugin::default()

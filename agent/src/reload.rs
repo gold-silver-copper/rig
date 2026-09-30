@@ -135,12 +135,22 @@ fn build(source: &Path, state: &Path) -> Result<PathBuf, String> {
 /// The error diagnostics of a failed build: rustc separates diagnostics
 /// with blank lines, and warnings would crowd the errors out.
 fn errors_only(stderr: &str) -> String {
+    let stderr: String = stderr
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            !["Compiling ", "Checking ", "Blocking ", "Building "]
+                .iter()
+                .any(|progress| line.starts_with(progress))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
     let blocks: Vec<&str> = stderr
         .split("\n\n")
         .filter(|block| block.trim_start().starts_with("error"))
         .collect();
     let text = if blocks.is_empty() {
-        stderr.to_owned()
+        stderr.clone()
     } else {
         blocks.join("\n\n")
     };
