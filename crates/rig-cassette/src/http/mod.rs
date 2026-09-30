@@ -187,6 +187,41 @@ fn contains_case_insensitive(values: &[&str], needle: &str) -> bool {
         .any(|value| needle.eq_ignore_ascii_case(value))
 }
 
+/// Why [`ProviderCassette::try_start_at`] or [`ProviderCassette::try_finish`]
+/// failed: the engine's assertion message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CassetteError {
+    message: String,
+}
+
+impl CassetteError {
+    fn from_panic(payload: PanicPayload) -> Self {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|text| (*text).to_owned())
+            })
+            .unwrap_or_else(|| "the cassette engine failed".to_owned());
+        Self { message }
+    }
+
+    /// The failure as the engine reported it.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for CassetteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CassetteError {}
+
 /// Whether to replay frozen traffic or record genuine upstream exchanges.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CassetteMode {
@@ -783,6 +818,39 @@ impl ProviderCassette {
         }
         write_scrubbed_cassette(&cassette_path, policy, &yaml).await;
         clock.finish().await;
+    }
+
+    /// [`Self::start_at`] for applications that record or replay outside a
+    /// test: a missing or malformed fixture or a bind failure is an error
+    /// instead of a panic.
+    pub async fn try_start_at(
+        transport: RecordVia,
+        provider: &'static str,
+        spec: CassetteSpec,
+        real_base_url: &str,
+        mode: CassetteMode,
+        cassette_path: PathBuf,
+    ) -> Result<Self, CassetteError> {
+        AssertUnwindSafe(Self::start_at(
+            transport,
+            provider,
+            spec,
+            real_base_url,
+            mode,
+            cassette_path,
+        ))
+        .catch_unwind()
+        .await
+        .map_err(CassetteError::from_panic)
+    }
+
+    /// [`Self::finish`] for applications: a refused recording, a failed
+    /// write, or a replay that left interactions unused is an error instead
+    /// of a panic. A refused recording is still kept under [`attempt_root`].
+    pub async fn try_finish(self) -> Result<(), CassetteError> {
+        self.finish_catching_unwind()
+            .await
+            .map_err(CassetteError::from_panic)
     }
 
     /// Finalize after a successful test, preserving its original panic otherwise.
