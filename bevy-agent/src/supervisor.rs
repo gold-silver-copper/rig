@@ -5,6 +5,7 @@
 //! live in the state directory.
 
 use std::fs;
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -140,11 +141,24 @@ fn tail(path: &Path) -> String {
 }
 
 /// Tells the supervisor this binary started, which makes it the fallback for
-/// the next reload.
-pub fn mark_started(time: Res<Time<Real>>, dir: Res<StateDir>, mut done: Local<bool>) {
-    if !*done && time.elapsed() > Duration::from_secs(1) {
+/// the next reload: it has run for a second and its BRP port answers. A
+/// binary whose port never answers exits, so the supervisor falls back.
+pub fn mark_started(
+    time: Res<Time<Real>>,
+    dir: Res<StateDir>,
+    session: Res<Session>,
+    mut done: Local<bool>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if *done || time.elapsed() < Duration::from_secs(1) {
+        return;
+    }
+    if TcpStream::connect(("127.0.0.1", session.brp_port)).is_ok() {
         *done = true;
         let _ = fs::write(dir.0.join(STARTED), std::process::id().to_string());
+    } else if time.elapsed() > Duration::from_secs(10) {
+        eprintln!("the BRP port {} is not listening", session.brp_port);
+        exit.write(AppExit::error());
     }
 }
 
