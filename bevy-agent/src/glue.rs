@@ -443,7 +443,13 @@ fn receive_replies(
 fn dispatch_calls(
     mut commands: Commands,
     mut agents: Query<
-        (Entity, &mut Turn, &mut Conversation, Option<&ToolCalls>, Option<&TurnSpan>),
+        (
+            Entity,
+            &mut Turn,
+            &mut Conversation,
+            Option<&ToolCalls>,
+            Option<&TurnSpan>,
+        ),
         With<Agent>,
     >,
     top_level: Query<(), (With<ToolCall>, Without<Nested>)>,
@@ -458,7 +464,9 @@ fn dispatch_calls(
             continue;
         }
         let Some(call) = calls.get(results.len()) else {
-            conversation.0.push(Message::tool_results(std::mem::take(results)));
+            conversation
+                .0
+                .push(Message::tool_results(std::mem::take(results)));
             *turn = Turn::Request;
             continue;
         };

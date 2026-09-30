@@ -50,7 +50,8 @@ async fn an_anthropic_conversation_survives_a_tool_added_between_turns() {
     );
     let mut first = CompletionRequest::new(prompt.clone());
     first.tools = vec![tool("add", "Add two integers")];
-    first.additional_params = Some(json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}));
+    first.additional_params =
+        Some(json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}));
     let reply = model.call(first).await.expect("the first turn");
     assert!(
         reply
@@ -62,14 +63,30 @@ async fn an_anthropic_conversation_survives_a_tool_added_between_turns() {
     let call = reply.tool_calls().next().cloned().expect("a tool call");
 
     let mut second = CompletionRequest::new(prompt);
-    second.chat_history.push(reply.message().expect("an assistant message"));
+    second
+        .chat_history
+        .push(reply.message().expect("an assistant message"));
     second.chat_history.push(Message::tool_results(vec![
         call.result(vec![ToolResultContent::text("6912")]),
     ]));
-    second.tools = vec![tool("add", "Add two integers"), tool("mul", "Multiply two integers")];
-    second.additional_params = Some(json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}));
-    let answer = model.call(second).await.expect("the second turn, with a tool added");
-    assert!(answer.text().contains("6912") || answer.text().contains("6,912"), "{}", answer.text());
+    second.tools = vec![
+        tool("add", "Add two integers"),
+        tool("mul", "Multiply two integers"),
+    ];
+    second.additional_params =
+        Some(json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}));
+    let answer = model
+        .call(second)
+        .await
+        .expect("the second turn, with a tool added");
+    assert!(
+        answer.text().contains("6912") || answer.text().contains("6,912"),
+        "{}",
+        answer.text()
+    );
 
-    cassette.try_finish().await.expect("the recording is complete");
+    cassette
+        .try_finish()
+        .await
+        .expect("the recording is complete");
 }
