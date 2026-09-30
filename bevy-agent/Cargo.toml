@@ -17,6 +17,8 @@ rig-core = { path = "../crates/rig-core", default-features = false, features = [
 rig-memory = { path = "../crates/rig-memory", features = ["file"] }
 rig-reqwest = { path = "../crates/rig-reqwest" }
 rig-cassette = { path = "../crates/rig-cassette", features = ["http"] }
+rig-rmcp = { path = "../crates/rig-rmcp" }
+rmcp = { version = "2", features = ["client", "transport-child-process"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-opentelemetry = "0.33"

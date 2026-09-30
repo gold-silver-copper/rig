@@ -21,14 +21,16 @@ struct Args {
     cassettes: Option<PathBuf>,
     headless: bool,
     otlp: Option<String>,
+    mcp: Vec<String>,
+    mcp_config: Option<PathBuf>,
 }
 
 const USAGE: &str = "usage: bevy-agent [--model vendor:model] [--state-dir dir] [--brp-port port]
                   [--continue | --resume id] [--compact-at tokens]
                   [--record name | --replay name] [--cassettes dir] [--headless]
-                  [--otlp http://host:port]
+                  [--otlp http://host:port] [--mcp name=command...] [--mcp-config mcp.json]
                   [--disable plugin,...]
-plugins: brp, remote, durable, telemetry (with --otlp or OTEL_EXPORTER_OTLP_ENDPOINT)";
+plugins: brp, remote, durable, mcp, telemetry (with --otlp or OTEL_EXPORTER_OTLP_ENDPOINT)";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args::default();
@@ -57,6 +59,8 @@ fn parse_args() -> Result<Args, String> {
             "--cassettes" => args.cassettes = Some(value()?.into()),
             "--headless" => args.headless = true,
             "--otlp" => args.otlp = Some(value()?),
+            "--mcp" => args.mcp.push(value()?),
+            "--mcp-config" => args.mcp_config = Some(value()?.into()),
             "--disable" => args
                 .disabled
                 .extend(value()?.split(',').map(|name| name.trim().to_owned())),
@@ -116,6 +120,17 @@ fn main() -> ExitCode {
         .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok());
     if let Some(endpoint) = otlp.filter(|_| enabled("telemetry")) {
         app.add_plugins(plugins::telemetry::TelemetryPlugin { endpoint });
+    }
+    let mut servers: Vec<_> = args
+        .mcp
+        .iter()
+        .filter_map(|text| plugins::mcp::parse_server(text))
+        .collect();
+    if let Some(config) = &args.mcp_config {
+        servers.extend(plugins::mcp::load_config(config));
+    }
+    if !servers.is_empty() && enabled("mcp") {
+        app.add_plugins(plugins::mcp::McpPlugin { servers });
     }
     if enabled("durable") {
         app.add_plugins(plugins::durable::DurablePlugin {
