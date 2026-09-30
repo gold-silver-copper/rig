@@ -1,0 +1,28 @@
+[package]
+name = "bevy-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "A minimal self-reloading coding agent built on Bevy and Rig."
+
+# Its own workspace: Bevy 0.20 needs a newer toolchain than the Rig workspace
+# pins, and the agent's lockfile stays out of Rig's.
+[workspace]
+
+[dependencies]
+bevy = { version = "=0.20.0-rc.2", default-features = false, features = ["std", "async_executor"] }
+# Direct, so the `bevy_render` default of the facade's `bevy_remote` stays off.
+bevy_remote = { version = "=0.20.0-rc.2", default-features = false, features = ["http"] }
+rig-core = { path = "../crates/rig-core", default-features = false, features = ["reqwest", "rustls"] }
+ratatui = "0.30"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+futures = "0.3"
+async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
