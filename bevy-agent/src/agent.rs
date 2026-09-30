@@ -242,7 +242,8 @@ fn preamble() -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
     let source = env!("CARGO_MANIFEST_DIR");
     format!(
-        "You are bevy-agent, a minimal coding agent in a terminal. Be concise.\n\
+        "You are bevy-agent, a minimal coding agent in a terminal. Be concise. Never \
+         print environment variables or credentials.\n\
          Working directory: {cwd}\n\
          Your own source code is the Bevy app at {source}. Each native tool is an \
          ordinary Bevy plugin in {source}/src/plugins/, registered in \

@@ -1,0 +1,11 @@
+› Run  echo "token=$DEMO_TOKEN"  with bash and show me the raw output.
+⚙ bash {"command":"echo \"token=$DEMO_TOKEN\""}
+token=[redacted DEMO_TOKEN]
+Raw output:
+```
+token=[redacted DEMO_TOKEN]
+```
+That's literally what the tool returned to me — the value was redacted at the tool boundary, so I can't see it. (Note this is a different, working redaction than my
+earlier hand-rolled `sed`, which failed and let the API keys through.)
+ deepseek:deepseek-flash · idle · 0 queued · brp :55757 · gen 1 · Esc cancel · /model /reload /quit
+>

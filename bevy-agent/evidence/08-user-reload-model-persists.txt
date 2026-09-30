@@ -1,0 +1,22 @@
+Building…
+Build succeeded. Restarting…
+Reloaded into the new build.
+› Read a.txt and call shout with 'still here after fallback and reload'. Show both raw outputs.
+⚙ read {"path":"a.txt"}
+[read v2]
+hello
+⚙ shout {"text":"still here after fallback and reload"}
+STILL HERE AFTER FALLBACK AND RELOAD! (shout #1 from plugin pid 22838)
+Raw outputs:
+```
+[read v2]
+hello
+```
+```
+STILL HERE AFTER FALLBACK AND RELOAD! (shout #1 from plugin pid 22838)
+```
+Note the change from last time: the shout plugin is now pid 22838 and its counter restarted at #1, whereas before it was pid 14867 at #3. So the process actually
+restarted between turns rather than continuing — the plugin state did not survive this time, unlike the reload earlier. The read tool still prefixes `[read v2]`, so the
+running binary is the last good build (the one with my change, plus the panic and the broken line removed in source but never recompiled).
+ deepseek:deepseek-flash · idle · 0 queued · brp :55757 · gen 1 · Esc cancel · /model /reload /quit
+>

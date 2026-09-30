@@ -1,0 +1,60 @@
+
+⚙ edit {"new_text":"fn read(In(args): In<Value>) -> ToolReply {\n","old_text":"fn read(In(args): In<Value>) -> ToolReply {\n    let broken: u32 =
+\"oops\";\n","path":"src/plugins/read.rs"}
+
+edited src/plugins/read.rs
+
+The error path works: the build failed and I'm still running the previous binary. Reload returned exactly this:
+
+```
+Reload failed; still running the previous binary.
+error[E0308]: mismatched types
+  --> src/plugins/read.rs:37:23
+   |
+37 |     let broken: u32 = "oops";
+   |                 ---   ^^^^^^ expected `u32`, found `&str`
+   |                 |
+   |                 expected due to this
+```
+
+I've removed the `broken` line again and did not reload. `src/plugins/read.rs` is back to the working `[read v2]` version.
+
+› Now test your crash fallback: add  panic!("boom on startup");  as the first statement of ReadPlugin's build method in src/plugins/read.rs, call reload, and show me
+exactly what reload returned. Then remove the panic again, but do NOT reload.
+
+⚙ edit {"new_text":"    fn build(&self, app: &mut App) {\n        panic!(\"boom on startup\");\n","old_text":"    fn build(&self, app: &mut App)
+{\n","path":"src/plugins/read.rs"}
+
+edited src/plugins/read.rs
+
+⚙ reload {}
+
+Build succeeded. Restarting…
+
+Reload failed: the new binary exited with code 101 before it finished starting, so the agent fell back to the previous binary, which is running now. Nothing changed. The
+new binary's stderr ended with:
+
+thread 'main' (67587716) panicked at src/plugins/read.rs:11:9:
+boom on startup
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+⚙ edit {"new_text":"    fn build(&self, app: &mut App) {\n","old_text":"    fn build(&self, app: &mut App) {\n        panic!(\"boom on
+startup\");\n","path":"src/plugins/read.rs"}
+
+edited src/plugins/read.rs
+
+The crash fallback works: the new build crashed on startup, and the agent went back to the previous binary. Reload returned exactly this:
+
+```
+Reload failed: the new binary exited with code 101 before it finished starting, so the agent fell back to the previous binary, which is running now. Nothing changed. The
+new binary's stderr ended with:
+
+thread 'main' (67587716) panicked at src/plugins/read.rs:11:9:
+boom on startup
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+I've removed the `panic!` line again and did not reload. `src/plugins/read.rs` is back to the working `[read v2]` version, which is also the version still running.
+
+ anthropic:claude-opus-5-5 · idle · 0 queued · brp :55757 · gen 3 · Esc cancel · /model /reload /quit
+>

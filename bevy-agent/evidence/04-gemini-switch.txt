@@ -1,0 +1,58 @@
+› Use bash to count the .txt files in this directory, then read a.txt. Answer in one line.
+
+⚙ bash {"command":"ls *.txt 2>/dev/null | wc -l"}
+
+       2
+
+⚙ read {"path":"a.txt"}
+
+hello
+
+There are 2 .txt files here, and a.txt contains "hello".
+
+Model: openai:gpt-6.1-sol
+
+› Read b.txt, and call the shout tool with the words the two files form together. Then tell me what the earlier bash count was. One short paragraph.
+
+⚙ read {"path":"b.txt"}
+
+world
+
+⚙ shout {"text":"hello world"}
+
+HELLO WORLD! (shout #1 from plugin pid 14867)
+
+The two files form “HELLO WORLD!” The earlier bash count was 2 .txt files.
+
+Model: anthropic:claude-opus-5-5
+
+› Use bash to print the current year, then list every tool you called so far in this conversation, in order. Be brief.
+
+⚙ bash {"command":"date +%Y"}
+
+2026
+
+The bash command printed the year: 2026.
+
+Tools called so far, in order:
+1. `bash`: counted the .txt files (2)
+2. `read`: a.txt → "hello"
+3. `read`: b.txt → "world"
+4. `shout`: "hello world" → "HELLO WORLD! (shout #1 from plugin pid 14867)"
+5. `bash`: printed the year
+
+A correction to my last answer: the two files together say "hello world". "HELLO WORLD!" was what the shout tool returned, not what the files say.
+
+Model: gemini:gemini-3.8-flash
+
+› Use bash to run 'echo gemini here', then in one sentence say which provider or model you think answered the previous turn and why.
+
+⚙ bash {"command":"echo gemini here"}
+
+gemini here
+
+The previous turn was answered by an OpenAI or Anthropic model (likely Claude or GPT-4o) rather than Gemini, given the self-correcting reflection pattern ("A correction
+to my last answer...") and standard concise formatting typical of those models.
+
+ gemini:gemini-3.8-flash · idle · 0 queued · brp :55757 · gen 0 · Esc cancel · /model /reload /quit
+>
