@@ -205,3 +205,117 @@ fn a_base_url_that_already_names_the_endpoint_is_trimmed() {
         assert_eq!(normalize_base_url(pasted), "https://example.invalid");
     }
 }
+
+/// A conversation whose assistant turn carries a signed Anthropic thinking
+/// block, the shape a replayed tool loop has.
+fn replaying_thinking(
+    issuer: &'static str,
+    additional_params: Option<serde_json::Value>,
+) -> CompletionRequest {
+    let thinking =
+        crate::message::Reasoning::new_with_signature("thought", Some("sig".into())).sealed(issuer);
+    CompletionRequest {
+        chat_history: vec![
+            crate::message::Message::user("first"),
+            crate::message::Message::Assistant {
+                id: None,
+                content: vec![
+                    AssistantContent::Reasoning(thinking),
+                    AssistantContent::text("answer"),
+                ],
+            },
+            crate::message::Message::user("second"),
+        ],
+        additional_params,
+        ..request()
+    }
+}
+
+fn beta_header(encoded: &Encoded) -> Option<&str> {
+    encoded
+        .request
+        .headers()
+        .get("anthropic-beta")
+        .and_then(|value| value.to_str().ok())
+}
+
+#[test]
+fn a_model_that_binds_thinking_blocks_drops_stale_ones_instead_of_rejecting_the_request() {
+    let wire = AnthropicConfig::new("sk-test")
+        .with_beta("other-beta")
+        .completion(super::super::completion::CLAUDE_OPUS_5_5);
+    let encoded = wire
+        .encode(replaying_thinking("anthropic", None), Mode::Unary)
+        .expect("the request encodes");
+    assert_eq!(
+        body_of(&encoded)["thinking"],
+        serde_json::json!({ "block_binding": { "prefix_mismatch_behavior": "drop_block" } })
+    );
+    assert_eq!(
+        beta_header(&encoded),
+        Some("other-beta,thinking-binding-controls-2026-08-01")
+    );
+}
+
+#[test]
+fn thinking_block_binding_keeps_the_callers_thinking_settings() {
+    let wire =
+        AnthropicConfig::new("sk-test").completion(super::super::completion::CLAUDE_OPUS_5_5);
+    let params = serde_json::json!({ "thinking": { "type": "adaptive" } });
+    let body = body_of(
+        &wire
+            .encode(
+                replaying_thinking("anthropic", Some(params)),
+                Mode::Streaming,
+            )
+            .expect("the request encodes"),
+    );
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(
+        body["thinking"]["block_binding"]["prefix_mismatch_behavior"],
+        "drop_block"
+    );
+
+    let params = serde_json::json!({
+        "thinking": { "block_binding": { "prefix_mismatch_behavior": "error" } }
+    });
+    let encoded = wire
+        .encode(replaying_thinking("anthropic", Some(params)), Mode::Unary)
+        .expect("the request encodes");
+    assert_eq!(
+        body_of(&encoded)["thinking"]["block_binding"]["prefix_mismatch_behavior"],
+        "error"
+    );
+    assert_eq!(beta_header(&encoded), Some(THINKING_BINDING_BETA));
+}
+
+#[test]
+fn thinking_block_binding_is_left_out_where_it_is_not_needed_or_not_taken() {
+    // No thinking to replay.
+    let opus =
+        AnthropicConfig::new("sk-test").completion(super::super::completion::CLAUDE_OPUS_5_5);
+    let encoded = opus
+        .encode(request(), Mode::Unary)
+        .expect("the request encodes");
+    assert_eq!(body_of(&encoded).get("thinking"), None);
+    assert_eq!(beta_header(&encoded), None);
+
+    // A model that does not bind its thinking blocks, and requires
+    // `thinking.type` whenever `thinking` is present.
+    let sonnet =
+        AnthropicConfig::new("sk-test").completion(super::super::completion::CLAUDE_SONNET_5_5);
+    let encoded = sonnet
+        .encode(replaying_thinking("anthropic", None), Mode::Unary)
+        .expect("the request encodes");
+    assert_eq!(body_of(&encoded).get("thinking"), None);
+    assert_eq!(beta_header(&encoded), None);
+
+    // A gateway speaking the Messages format.
+    let gateway = AnthropicConfig::with_dialect("sk-test", &MINIMAX)
+        .completion(super::super::completion::CLAUDE_OPUS_5_5);
+    let encoded = gateway
+        .encode(replaying_thinking(MINIMAX.name, None), Mode::Unary)
+        .expect("the request encodes");
+    assert_eq!(body_of(&encoded).get("thinking"), None);
+    assert_eq!(beta_header(&encoded), None);
+}

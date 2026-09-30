@@ -1093,6 +1093,19 @@ const MID_CONVERSATION_SYSTEM: [&str; 6] = [
     CLAUDE_OPUS_4_8,
 ];
 
+/// Models that bind each thinking block to the conversation it was produced
+/// in, tools and system prompt included, and accept `thinking.block_binding`.
+const BINDS_THINKING_BLOCKS: [&str; 3] = [CLAUDE_FABLE_5_1, CLAUDE_FABLE_5, CLAUDE_OPUS_5_5];
+
+/// The `anthropic-beta` flag that `thinking.block_binding` requires.
+pub const THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
+
+/// Whether `model` rejects replayed thinking blocks whose conversation prefix
+/// has changed since they were produced.
+pub(super) fn binds_thinking_blocks(model: &str) -> bool {
+    BINDS_THINKING_BLOCKS.iter().any(|id| is_model(model, id))
+}
+
 /// Return the published synchronous output limit for a recognized model.
 /// Unknown models require an explicit `max_tokens` value.
 pub(super) fn default_max_tokens_for_model(model: &str) -> Option<u64> {
