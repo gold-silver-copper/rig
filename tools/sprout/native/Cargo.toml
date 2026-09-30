@@ -1,0 +1,10 @@
+[package]
+name = "sprout-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+subsecond.workspace = true
