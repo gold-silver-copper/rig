@@ -1,6 +1,9 @@
-//! The terminal interface: the transcript, a status line and the prompt,
-//! drawn with ratatui every frame. Keys are read without blocking. A prompt
-//! sent while the agent is busy waits in the queue.
+//! The terminal interface for the TUI session: its transcript, the prompt
+//! editor and a footer, drawn with ratatui every frame. Keys follow pi:
+//! Enter sends (queued while the agent is busy), Alt+Enter adds a line, Esc
+//! cancels the turn, Ctrl+C clears the editor and quits when it is empty,
+//! Ctrl+D quits, Ctrl+P switches to the next model and Ctrl+O expands tool
+//! output.
 
 use std::time::Duration;
 
@@ -12,30 +15,35 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::Boot;
-use crate::agent;
+use crate::State;
+use crate::glue::{self, Model, Turn};
 use crate::reload::Reload;
-use crate::session::{Entry, Session, Turn};
+use crate::session::{self, Entry, MODELS, Origin, Prompts, Transcript, Usage};
 
 pub struct TuiPlugin;
 
 impl Plugin for TuiPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Prompt>()
+        app.init_resource::<Editor>()
             .add_systems(Startup, open)
             .add_systems(PreUpdate, input)
             .add_systems(PostUpdate, draw);
     }
 }
 
+/// The BRP port, when the BRP plugin serves one, for the footer.
+#[derive(Resource)]
+pub struct BrpPort(pub u16);
+
 #[derive(Resource)]
 struct Screen(DefaultTerminal);
 
 #[derive(Resource, Default)]
-struct Prompt {
+struct Editor {
     text: String,
     /// Lines scrolled up from the bottom of the transcript.
     scroll: usize,
+    expanded: bool,
 }
 
 fn open(mut commands: Commands, mut exit: MessageWriter<AppExit>) {
@@ -48,6 +56,14 @@ fn open(mut commands: Commands, mut exit: MessageWriter<AppExit>) {
     }
 }
 
+fn tui_agent(world: &mut World) -> Option<Entity> {
+    world
+        .query::<(Entity, &Origin)>()
+        .iter(world)
+        .find(|(_, origin)| **origin == Origin::Tui)
+        .map(|(entity, _)| entity)
+}
+
 fn input(world: &mut World) {
     while let Ok(true) = event::poll(Duration::ZERO) {
         let Ok(Event::Key(key)) = event::read() else {
@@ -56,30 +72,47 @@ fn input(world: &mut World) {
         if key.kind != KeyEventKind::Press {
             continue;
         }
+        let Some(agent) = tui_agent(world) else {
+            return;
+        };
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        let mut prompt = world.resource_mut::<Prompt>();
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let mut editor = world.resource_mut::<Editor>();
         match key.code {
-            KeyCode::Char('c' | 'd') if control => {
-                if prompt.text.is_empty() {
+            KeyCode::Char('c') if control => {
+                if editor.text.is_empty() {
                     world.write_message(AppExit::Success);
                 } else {
-                    prompt.text.clear();
+                    editor.text.clear();
                 }
             }
-            KeyCode::Char(c) => prompt.text.push(c),
-            KeyCode::Backspace => {
-                prompt.text.pop();
+            KeyCode::Char('d') if control && editor.text.is_empty() => {
+                world.write_message(AppExit::Success);
             }
-            KeyCode::Up => prompt.scroll += 1,
-            KeyCode::Down => prompt.scroll = prompt.scroll.saturating_sub(1),
-            KeyCode::PageUp => prompt.scroll += 10,
-            KeyCode::PageDown => prompt.scroll = prompt.scroll.saturating_sub(10),
-            KeyCode::Esc => agent::cancel(world),
+            KeyCode::Char('o') if control => editor.expanded = !editor.expanded,
+            KeyCode::Char('p') if control => {
+                let current = world.get::<Model>(agent).map(|model| model.spec().to_owned());
+                let next = MODELS
+                    .iter()
+                    .position(|spec| Some(*spec) == current.as_deref())
+                    .map_or(0, |index| (index + 1) % MODELS.len());
+                session::switch_model(world, agent, MODELS[next]);
+            }
+            KeyCode::Char(c) if !control => editor.text.push(c),
+            KeyCode::Enter if alt => editor.text.push('\n'),
             KeyCode::Enter => {
-                let text = std::mem::take(&mut prompt.text);
-                prompt.scroll = 0;
-                agent::submit(world, text.trim());
+                let text = std::mem::take(&mut editor.text);
+                editor.scroll = 0;
+                session::submit(world, agent, &text);
             }
+            KeyCode::Backspace => {
+                editor.text.pop();
+            }
+            KeyCode::Up => editor.scroll += 1,
+            KeyCode::Down => editor.scroll = editor.scroll.saturating_sub(1),
+            KeyCode::PageUp => editor.scroll += 10,
+            KeyCode::PageDown => editor.scroll = editor.scroll.saturating_sub(10),
+            KeyCode::Esc => glue::cancel(world, agent),
             _ => {}
         }
     }
@@ -87,35 +120,47 @@ fn input(world: &mut World) {
 
 fn draw(
     screen: Option<ResMut<Screen>>,
-    session: Res<Session>,
-    prompt: Res<Prompt>,
+    agents: Query<(&Origin, &Transcript, &Prompts, &Turn, Option<&Model>, Option<&Usage>)>,
+    editor: Res<Editor>,
     reload: Res<Reload>,
-    boot: Res<Boot>,
+    state: Res<State>,
+    port: Option<Res<BrpPort>>,
 ) {
     let Some(mut screen) = screen else {
         return;
     };
-    let state = match &session.turn {
+    let Some((_, transcript, prompts, turn, model, usage)) =
+        agents.iter().find(|(origin, ..)| **origin == Origin::Tui)
+    else {
+        return;
+    };
+    let activity = match turn {
         _ if reload.building() => "building".to_owned(),
         Turn::Idle => "idle".to_owned(),
         Turn::Request => "thinking".to_owned(),
-        Turn::Tools { calls, results } => {
-            calls.get(results.len()).map_or("tools".to_owned(), |call| {
-                format!("running {}", call.function.name)
-            })
-        }
+        Turn::Tools { calls, results } => calls
+            .get(results.len())
+            .map_or("tools".to_owned(), |call| format!("running {}", call.function.name)),
     };
-    let status = format!(
-        " {} · {state} · {} queued · brp :{} · gen {} · Esc cancel · /model /reload /quit",
-        session.model,
-        session.queue.len(),
-        session.brp_port,
-        boot.generation,
+    let mut footer = format!(
+        " {} · {} · {activity}",
+        state.cwd_label,
+        model.map_or("no model", Model::spec),
     );
+    if let Some(usage) = usage {
+        footer.push_str(&format!(" · ↑{} ↓{}", usage.input, usage.output));
+    }
+    if !prompts.queue.is_empty() {
+        footer.push_str(&format!(" · {} queued", prompts.queue.len()));
+    }
+    if let Some(port) = port {
+        footer.push_str(&format!(" · brp :{}", port.0));
+    }
+    footer.push_str(&format!(" · gen {} · /help", state.generation));
     let _ = screen.0.draw(|frame| {
         let width = usize::from(frame.area().width.max(1));
-        let input = wrap(&format!("> {}", prompt.text), width);
-        let input_height = input.len().min(5);
+        let input = wrap(&format!("> {}", editor.text), width);
+        let input_height = input.len().min(8);
         let [body, bar, field] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(1),
@@ -123,24 +168,19 @@ fn draw(
         ])
         .areas(frame.area());
 
-        let lines = transcript(&session, width);
+        let lines = render(transcript, prompts, width, editor.expanded);
         let height = usize::from(body.height);
-        let end = lines.len() - prompt.scroll.min(lines.len().saturating_sub(height));
+        let end = lines.len() - editor.scroll.min(lines.len().saturating_sub(height));
         let start = end.saturating_sub(height);
         frame.render_widget(Paragraph::new(lines[start..end].to_vec()), body);
         frame.render_widget(
-            Paragraph::new(status).style(Style::new().add_modifier(Modifier::REVERSED)),
+            Paragraph::new(footer.clone()).style(Style::new().add_modifier(Modifier::REVERSED)),
             bar,
         );
         let shown = &input[input.len() - input_height..];
         let cursor_x = shown.last().map_or(0, |line| line.chars().count()) as u16;
         frame.render_widget(
-            Paragraph::new(
-                shown
-                    .iter()
-                    .map(|line| Line::raw(line.clone()))
-                    .collect::<Vec<_>>(),
-            ),
+            Paragraph::new(shown.iter().map(|line| Line::raw(line.clone())).collect::<Vec<_>>()),
             field,
         );
         frame.set_cursor_position((
@@ -150,25 +190,26 @@ fn draw(
     });
 }
 
-fn transcript(session: &Session, width: usize) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let entries = session.transcript.iter().map(|entry| match entry {
+fn render(
+    transcript: &Transcript,
+    prompts: &Prompts,
+    width: usize,
+    expanded: bool,
+) -> Vec<Line<'static>> {
+    let output_lines = if expanded { usize::MAX } else { 8 };
+    let entries = transcript.0.iter().map(|entry| match entry {
         Entry::User(text) => (Style::new().fg(Color::Cyan).bold(), format!("› {text}")),
         Entry::Assistant(text) => (Style::new(), text.clone()),
-        Entry::Call(text) => (
-            Style::new().fg(Color::Yellow),
-            format!("⚙ {}", clip(text, 3)),
-        ),
-        Entry::Output(text) => (Style::new().fg(Color::DarkGray), clip(text, 8)),
+        Entry::Call(text) => (Style::new().fg(Color::Yellow), format!("⚙ {}", clip(text, 3))),
+        Entry::Output(text) => (Style::new().fg(Color::DarkGray), clip(text, output_lines)),
         Entry::Notice(text) => (Style::new().fg(Color::Magenta), text.clone()),
         Entry::Error(text) => (Style::new().fg(Color::Red), text.clone()),
     });
-    let queued = session.queue.iter().map(|text| {
-        (
-            Style::new().fg(Color::DarkGray),
-            format!("› (queued) {text}"),
-        )
-    });
+    let queued = prompts
+        .queue
+        .iter()
+        .map(|text| (Style::new().fg(Color::DarkGray), format!("› (queued) {text}")));
+    let mut lines = Vec::new();
     for (style, text) in entries.chain(queued) {
         for line in wrap(&text, width) {
             lines.push(Line::from(Span::styled(line, style)));
@@ -182,7 +223,7 @@ fn transcript(session: &Session, width: usize) -> Vec<Line<'static>> {
 fn clip(text: &str, max: usize) -> String {
     let total = text.lines().count();
     let mut shown: Vec<&str> = text.lines().take(max).collect();
-    let more = format!("… {} more lines", total.saturating_sub(max));
+    let more = format!("… {} more lines (Ctrl+O)", total.saturating_sub(max));
     if total > max {
         shown.push(&more);
     }
@@ -209,4 +250,11 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         lines.push(line.iter().collect());
     }
     lines
+}
+
+/// Shows `entry` in the TUI session's transcript, when there is one.
+pub fn notify(world: &mut World, entry: Entry) {
+    if let Some(agent) = tui_agent(world) {
+        session::log(world, agent, entry);
+    }
 }

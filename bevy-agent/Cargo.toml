@@ -14,6 +14,8 @@ bevy = { version = "=0.20.0-rc.2", default-features = false, features = ["std", 
 # Direct, so the `bevy_render` default of the facade's `bevy_remote` stays off.
 bevy_remote = { version = "=0.20.0-rc.2", default-features = false, features = ["http"] }
 rig-core = { path = "../crates/rig-core", default-features = false, features = ["reqwest", "rustls"] }
+rig-memory = { path = "../crates/rig-memory", features = ["file"] }
+tracing = "0.1"
 ratatui = "0.30"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 futures = "0.3"

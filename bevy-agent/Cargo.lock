@@ -378,9 +378,11 @@ dependencies = [
  "futures",
  "ratatui",
  "rig-core",
+ "rig-memory",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4433,6 +4435,15 @@ dependencies = [
  "mime",
  "thiserror 2.0.21",
  "url",
+]
+
+[[package]]
+name = "rig-memory"
+version = "0.43.0"
+dependencies = [
+ "rig-core",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

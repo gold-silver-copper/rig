@@ -13,8 +13,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bevy::prelude::*;
 use rig_core::message::ToolResultContent;
 
-use crate::session::{Entry, Session, StateDir, Turn};
-use crate::{CHILD_ENV, GENERATION_ENV};
+use crate::State;
+use crate::glue::Turn;
+use crate::session::{self, Entry, Origin, Prompts, Transcript};
+use crate::tui::BrpPort;
+
+/// Set in the environment of the agent process the supervisor starts.
+pub const CHILD_ENV: &str = "BEVY_AGENT_CHILD";
+/// How many restarts came before this process; 0 is the first start.
+pub const GENERATION_ENV: &str = "BEVY_AGENT_GENERATION";
 
 /// The exit code with which the agent asks to be restarted into `next-binary`.
 pub const RELOAD_CODE: u8 = 75;
@@ -22,8 +29,10 @@ pub const STATE_ENV: &str = "BEVY_AGENT_STATE";
 const STARTED: &str = "started";
 const NEXT: &str = "next-binary";
 const NOTE: &str = "note.txt";
-const BACKUP: &str = "session.before-reload.json";
+const BACKUP: &str = "sessions.before-reload";
 const STDERR: &str = "agent.stderr.log";
+/// Where sessions and the process state are saved, relative to the state directory.
+pub const SESSIONS: &str = "sessions";
 
 pub fn run(state: &Path) -> ExitCode {
     match supervise(state) {
@@ -64,7 +73,7 @@ fn supervise(state: &Path) -> std::io::Result<ExitCode> {
                         good = current.clone();
                     }
                     if let Ok(next) = fs::read_to_string(state.join(NEXT)) {
-                        let _ = fs::copy(state.join("session.json"), state.join(BACKUP));
+                        let _ = copy_dir(&state.join(SESSIONS), &state.join(BACKUP));
                         current = next.into();
                     }
                     continue;
@@ -79,7 +88,7 @@ fn supervise(state: &Path) -> std::io::Result<ExitCode> {
         };
         let tail = tail(&state.join(STDERR));
         if !started && current != good {
-            let _ = fs::copy(state.join(BACKUP), state.join("session.json"));
+            let _ = copy_dir(&state.join(BACKUP), &state.join(SESSIONS));
             fs::write(
                 state.join(NOTE),
                 format!(
@@ -112,6 +121,19 @@ fn supervise(state: &Path) -> std::io::Result<ExitCode> {
     Ok(code)
 }
 
+/// Replaces `to` with a copy of the files in `from`.
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    let _ = fs::remove_dir_all(to);
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            fs::copy(entry.path(), to.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
 /// A private copy of `binary`, which later builds cannot overwrite.
 pub fn install(binary: &Path, state: &Path) -> std::io::Result<PathBuf> {
     let stamp = SystemTime::now()
@@ -141,36 +163,48 @@ fn tail(path: &Path) -> String {
 }
 
 /// Tells the supervisor this binary started, which makes it the fallback for
-/// the next reload: it has run for a second and its BRP port answers. A
-/// binary whose port never answers exits, so the supervisor falls back.
+/// the next reload: it has run for a second and its BRP port, if it serves
+/// one, answers. A binary whose port never answers exits, so the supervisor
+/// falls back.
 pub fn mark_started(
     time: Res<Time<Real>>,
-    dir: Res<StateDir>,
-    session: Res<Session>,
+    state: Res<State>,
+    port: Option<Res<BrpPort>>,
     mut done: Local<bool>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if *done || time.elapsed() < Duration::from_secs(1) {
         return;
     }
-    if TcpStream::connect(("127.0.0.1", session.brp_port)).is_ok() {
+    if port
+        .as_ref()
+        .is_none_or(|port| TcpStream::connect(("127.0.0.1", port.0)).is_ok())
+    {
         *done = true;
-        let _ = fs::write(dir.0.join(STARTED), std::process::id().to_string());
+        let _ = fs::write(state.dir.join(STARTED), std::process::id().to_string());
     } else if time.elapsed() > Duration::from_secs(10) {
-        eprintln!("the BRP port {} is not listening", session.brp_port);
+        eprintln!("the BRP port is not listening");
         exit.write(AppExit::error());
     }
 }
 
-/// Settles a restart: answers the tool call the previous process was
-/// running, which is `reload` unless it crashed, and passes on what the
-/// supervisor noted about the restart.
-pub fn resume(session: &mut Session, state: &StateDir, generation: u32) {
-    let note = fs::read_to_string(state.0.join(NOTE)).ok();
-    let _ = fs::remove_file(state.0.join(NOTE));
-    if let Turn::Tools { calls, results } = &mut session.turn
-        && let Some(call) = calls.get(results.len())
-    {
+/// Settles a restart: answers each tool call a session was running when the
+/// previous process stopped, which is `reload` unless it crashed, and passes
+/// on what the supervisor noted about the restart.
+pub fn settle_restart(world: &mut World) {
+    let dir = world.resource::<State>().dir.clone();
+    let generation = world.resource::<State>().generation;
+    let note = fs::read_to_string(dir.join(NOTE)).ok();
+    let _ = fs::remove_file(dir.join(NOTE));
+    let mut answered = false;
+    let mut agents = world.query::<(&mut Turn, &mut Transcript)>();
+    for (mut turn, mut transcript) in agents.iter_mut(world) {
+        let Turn::Tools { calls, results } = &mut *turn else {
+            continue;
+        };
+        let Some(call) = calls.get(results.len()) else {
+            continue;
+        };
         let text = match (&note, call.function.name.as_str()) {
             (Some(note), _) => note.clone(),
             (None, "reload") => {
@@ -179,11 +213,27 @@ pub fn resume(session: &mut Session, state: &StateDir, generation: u32) {
             (None, _) => "Interrupted: the agent restarted before this tool finished.".into(),
         };
         results.push(call.result(vec![ToolResultContent::text(text.clone())]));
-        session.log(Entry::Output(text));
-    } else if let Some(note) = note {
-        session.log(Entry::Notice(note.clone()));
-        session.notes.push(note);
-    } else if generation > 0 {
-        session.log(Entry::Notice("Reloaded into the new build.".into()));
+        transcript.log(Entry::Output(text));
+        answered = true;
+    }
+    if answered || generation == 0 {
+        return;
+    }
+    let Some(agent) = world
+        .query::<(Entity, &Origin)>()
+        .iter(world)
+        .find(|(_, origin)| **origin == Origin::Tui)
+        .map(|(entity, _)| entity)
+    else {
+        return;
+    };
+    match note {
+        Some(note) => {
+            session::log(world, agent, Entry::Notice(note.clone()));
+            if let Some(mut prompts) = world.get_mut::<Prompts>(agent) {
+                prompts.notes.push(note);
+            }
+        }
+        None => session::log(world, agent, Entry::Notice("Reloaded into the new build.".into())),
     }
 }
