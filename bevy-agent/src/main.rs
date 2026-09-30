@@ -20,13 +20,15 @@ struct Args {
     cassette: Option<(CassetteMode, String)>,
     cassettes: Option<PathBuf>,
     headless: bool,
+    otlp: Option<String>,
 }
 
 const USAGE: &str = "usage: bevy-agent [--model vendor:model] [--state-dir dir] [--brp-port port]
                   [--continue | --resume id] [--compact-at tokens]
                   [--record name | --replay name] [--cassettes dir] [--headless]
+                  [--otlp http://host:port]
                   [--disable plugin,...]
-plugins: brp, remote, durable";
+plugins: brp, remote, durable, telemetry (with --otlp or OTEL_EXPORTER_OTLP_ENDPOINT)";
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args::default();
@@ -54,6 +56,7 @@ fn parse_args() -> Result<Args, String> {
             "--replay" => args.cassette = Some((CassetteMode::Replay, value()?)),
             "--cassettes" => args.cassettes = Some(value()?.into()),
             "--headless" => args.headless = true,
+            "--otlp" => args.otlp = Some(value()?),
             "--disable" => args
                 .disabled
                 .extend(value()?.split(',').map(|name| name.trim().to_owned())),
@@ -106,6 +109,13 @@ fn main() -> ExitCode {
             dir: root.join(name),
             session: true,
         });
+    }
+    let otlp = args
+        .otlp
+        .clone()
+        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok());
+    if let Some(endpoint) = otlp.filter(|_| enabled("telemetry")) {
+        app.add_plugins(plugins::telemetry::TelemetryPlugin { endpoint });
     }
     if enabled("durable") {
         app.add_plugins(plugins::durable::DurablePlugin {

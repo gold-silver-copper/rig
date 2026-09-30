@@ -6,3 +6,4 @@ pub mod cassette;
 pub mod durable;
 pub mod eval;
 pub mod remote;
+pub mod telemetry;

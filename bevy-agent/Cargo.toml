@@ -18,6 +18,11 @@ rig-memory = { path = "../crates/rig-memory", features = ["file"] }
 rig-reqwest = { path = "../crates/rig-reqwest" }
 rig-cassette = { path = "../crates/rig-cassette", features = ["http"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-opentelemetry = "0.33"
+opentelemetry = "0.32"
+opentelemetry_sdk = "0.32"
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-json", "reqwest-blocking-client"] }
 ratatui = "0.30"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 futures = "0.3"
