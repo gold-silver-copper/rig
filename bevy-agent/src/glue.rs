@@ -23,7 +23,8 @@ use rig_core::DynModel;
 use rig_core::completion::{CompletionRequest, CompletionResponse, ToolDefinition};
 use rig_core::message::{self, Message, ToolResultContent};
 use rig_core::operation::Completion;
-use rig_core::providers::registry::ProviderRef;
+use rig_core::providers::anthropic::ThinkingPrefixMismatch;
+use rig_core::providers::registry::{ProviderConfig, ProviderRef};
 use rig_core::streaming::{Item, StreamEvent};
 use rig_core::tool::DynamicTool;
 use serde::{Deserialize, Serialize};
@@ -120,8 +121,29 @@ pub struct ModelFactory(
 impl Default for ModelFactory {
     fn default() -> Self {
         Self(Box::new(|reference| {
-            reference.completion_model().map_err(|error| report(&error))
+            let variable = reference
+                .id()
+                .map(|id| id.api_key_env())
+                .unwrap_or_default();
+            let key = std::env::var(variable).unwrap_or_default();
+            if key.is_empty() && reference.id().is_none_or(|id| id.requires_credential()) {
+                return Err(format!("{variable} is not set"));
+            }
+            Ok(provider_config(reference, key)
+                .completion_model(reference.model(), rig_reqwest::shared()))
         }))
+    }
+}
+
+/// A reference's configuration as the agent uses it. Anthropic drops
+/// replayed thinking blocks the API would otherwise reject once the tool
+/// list changes, as it does when a reload or a plugin adds a tool.
+pub fn provider_config(reference: &ProviderRef, api_key: String) -> ProviderConfig {
+    match reference.config(api_key) {
+        ProviderConfig::Anthropic(config) => ProviderConfig::Anthropic(
+            config.with_thinking_prefix_mismatch(ThinkingPrefixMismatch::DropBlock),
+        ),
+        config => config,
     }
 }
 

@@ -6,7 +6,6 @@
 
 use std::path::Path;
 
-use async_channel::Receiver;
 use bevy::prelude::*;
 use rig_core::tool::DynamicTool;
 use rig_rmcp::McpTool;
@@ -65,29 +64,59 @@ type Connected = Result<
     String,
 >;
 
-/// Servers connecting, and the ones that did, kept alive.
+/// The connected servers, kept alive, and what to tell the TUI about them.
 #[derive(Resource)]
 struct Mcp {
-    connecting: Receiver<Connected>,
     #[allow(dead_code)]
     running: Vec<RunningService<rmcp::RoleClient, ()>>,
+    notices: Vec<Entry>,
 }
 
 impl Plugin for McpPlugin {
     fn build(&self, app: &mut App) {
-        let (sender, receiver) = async_channel::unbounded();
-        let runtime = &app.world().resource::<RigRuntime>().0;
-        for (name, server) in self.servers.clone() {
-            let sender = sender.clone();
-            runtime.spawn(async move {
-                let _ = sender.send(connect(name, server).await).await;
+        // Servers connect before the first frame, so every request, the
+        // first after a reload included, offers the same tools.
+        let servers = self.servers.clone();
+        let results = app.world().resource::<RigRuntime>().0.block_on(async {
+            let connecting = servers.into_iter().map(|(name, server)| async move {
+                let timeout = std::time::Duration::from_secs(20);
+                tokio::time::timeout(timeout, connect(name.clone(), server))
+                    .await
+                    .unwrap_or_else(|_| Err(format!("{name}: timed out connecting")))
             });
-        }
-        app.insert_resource(Mcp {
-            connecting: receiver,
+            futures::future::join_all(connecting).await
+        });
+        let mut mcp = Mcp {
             running: Vec::new(),
-        })
-        .add_systems(Update, register);
+            notices: Vec::new(),
+        };
+        let mut tools = app.world_mut().resource_mut::<Tools>();
+        for result in results {
+            match result {
+                Ok((name, service, found)) => {
+                    let names: Vec<String> =
+                        found.iter().map(|tool| tool.name().to_owned()).collect();
+                    for tool in found {
+                        tools.0.insert(
+                            tool.name().to_owned(),
+                            Tool {
+                                definition: tool.definition(),
+                                run: Some(tool),
+                            },
+                        );
+                    }
+                    mcp.running.push(service);
+                    mcp.notices.push(Entry::Notice(format!(
+                        "MCP server {name}: {}",
+                        names.join(", ")
+                    )));
+                }
+                Err(error) => mcp
+                    .notices
+                    .push(Entry::Error(format!("MCP server {error}"))),
+            }
+        }
+        app.insert_resource(mcp).add_systems(Update, announce);
     }
 }
 
@@ -123,33 +152,18 @@ fn prefixed(server: &str, tool: McpTool) -> DynamicTool {
     )
 }
 
-fn register(
-    mut mcp: ResMut<Mcp>,
-    mut tools: ResMut<Tools>,
-    mut agents: Query<(&Origin, &mut Transcript)>,
-) {
-    while let Ok(connected) = mcp.connecting.try_recv() {
-        let entry = match connected {
-            Ok((name, service, found)) => {
-                let names: Vec<String> = found.iter().map(|tool| tool.name().to_owned()).collect();
-                for tool in found {
-                    tools.0.insert(
-                        tool.name().to_owned(),
-                        Tool {
-                            definition: tool.definition(),
-                            run: Some(tool),
-                        },
-                    );
-                }
-                mcp.running.push(service);
-                Entry::Notice(format!("MCP server {name}: {}", names.join(", ")))
-            }
-            Err(error) => Entry::Error(format!("MCP server {error}")),
-        };
-        for (origin, mut transcript) in &mut agents {
-            if *origin == Origin::Tui {
-                transcript.log(entry.clone());
-            }
-        }
+/// Tells the TUI session which servers connected.
+fn announce(mut mcp: ResMut<Mcp>, mut agents: Query<(&Origin, &mut Transcript)>) {
+    if mcp.notices.is_empty() {
+        return;
+    }
+    let Some((_, mut transcript)) = agents
+        .iter_mut()
+        .find(|(origin, _)| **origin == Origin::Tui)
+    else {
+        return;
+    };
+    for notice in std::mem::take(&mut mcp.notices) {
+        transcript.log(notice);
     }
 }

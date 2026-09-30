@@ -76,7 +76,7 @@ impl Plugin for CassettePlugin {
                 }
                 CassetteMode::Replay => "[REDACTED]".to_owned(),
             };
-            let config = reference.config(key);
+            let config = crate::glue::provider_config(reference, key);
             let real_base_url = serde_json::to_value(&config)
                 .ok()
                 .and_then(|json| {

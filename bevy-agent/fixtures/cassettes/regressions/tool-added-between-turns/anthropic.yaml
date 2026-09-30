@@ -1,0 +1,45 @@
+when:
+  path: /v1/messages
+  method: POST
+  query_param: []
+  header:
+  - name: accept
+    value: '*/*'
+  - name: content-type
+    value: application/json
+  - name: anthropic-version
+    value: 2023-06-01
+  - name: anthropic-beta
+    value: thinking-binding-controls-2026-08-01
+  body: '{"max_tokens":128000,"messages":[{"content":[{"text":"Carefully reason about it first, then use the add tool to compute 1234+5678.","type":"text"}],"role":"user"}],"model":"claude-opus-5-5","output_config":{"effort":"high"},"thinking":{"block_binding":{"prefix_mismatch_behavior":"drop_block"},"type":"adaptive"},"tools":[{"description":"Add two integers","input_schema":{"properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"],"type":"object"},"name":"add"}]}'
+then:
+  status: 200
+  header:
+  - name: content-type
+    value: application/json
+  - name: request-id
+    value: req_011CfaLrcajNzoPY1pLZiSBr
+  body: '{"container":null,"content":[{"signature":"CAQS1gUKEAgSGAI4AUIIdGhpbmtpbmcSDM5C7V9MgdHh3bcxnxoMwzbqRzUtVWhLFbGuIjCW7X2Qfx20b9mggjvDk0zNXFtA6iPvNGPSVS4YWrXs72T5N578WnTt//XrKmJbwVwq8wQAUu8L5tD+4E76lD6atU/YDD9tIAq4ZFBQ8/UkpRKk/ZjnkEsS1iUhIl6rmPr+fGf980Ym2JqX7nPfg1xZy6uW5iKU46m5rNmjgZhJ7GpC0YmsKXQeWgMvhR76cUTBkBvxAvNOV7GEdcZtmkrQ8fBawVRhJXD48NkjWycd191SBDkfsg19iNVCA2oqeZBfFRYQihDEVWrLO7u9wSF8TbdhU595RS5Zj4WZnMGhPC31uRMX5clvdPdT4eq2L6+4taT9/Bg+yeserr+kRWVTjgUsCc+BjuufxDrMRDxzEKIYpvrb/Fywq4cKRVkKXdHsdr8D8ddcALv8VIzdR9/XPOB+XuKT9/RxHRcLqSUMKCbjWt/12dmQTm5ppl62k97yNIYqangwtb6gRLRtgms5I+5wM6eTMWwpY9iKPQB+rjsxyD8gmHOaNR/8cA6V775UhicvTYTm0M8vIWQSZ1cSCFpWWOrCjjQwcQIAtqbfXKEXfocSqcGP7bhATbDY36sK2/n/3HHje+jwXHfRxAS1L19J+qndn0ihY/x52mgBM+j0EUwlHhyW5elsJPPRIwtImLHjY3ouCPWj4mN1hsMcIs98g7Io5/W+bbOMWo4wPytMnQEvt+BpfrKJqOftD1gotWXK3GDR9KgvLbZVIZMKI1Q59Mr/zGEUWNXFQMUil2dSyUVqmy1/krtTpoJN4PlLxWjvQ8hfbVStffHgz0MmgbBT/kM3kiiiq5LCh7XUN1BqvC0/IWre7WScrdnRg0/ahoy5LylItD4Wjyafh1feR5XFhYxE5wwI5QMNqlzsx1PJpdPaWw/OISnBO32fxtA1GIjW2kQYAQ==","thinking":"","type":"thinking"},{"text":"Working it out by hand first, one column at a time from the right:\n\n- Ones: 4 + 8 = 12. Write 2, carry 1.\n- Tens: 3 + 7 + 1 = 11. Write 1, carry 1.\n- Hundreds: 2 + 6 + 1 = 9. Write 9.\n- Thousands: 1 + 5 = 6. Write 6.\n\nThat gives **6912**. Now I''ll check it with the add tool.","type":"text"},{"caller":{"type":"direct"},"id":"toolu_01U5okrZT3GS2NX7u1EJSzEk","input":{"a":1234,"b":5678},"name":"add","type":"tool_use"}],"diagnostics":null,"id":"msg_011CfaLrdVYfyKasjevj6igu","input_transformations":[],"model":"claude-opus-5-5","role":"assistant","stop_details":null,"stop_reason":"tool_use","stop_sequence":null,"type":"message","usage":{"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"inference_geo":"global","input_tokens":401,"output_tokens":307,"output_tokens_details":{"thinking_tokens":89},"service_tier":"standard"}}'
+---
+when:
+  path: /v1/messages
+  method: POST
+  query_param: []
+  header:
+  - name: accept
+    value: '*/*'
+  - name: content-type
+    value: application/json
+  - name: anthropic-version
+    value: 2023-06-01
+  - name: anthropic-beta
+    value: thinking-binding-controls-2026-08-01
+  body: '{"max_tokens":128000,"messages":[{"content":[{"text":"Carefully reason about it first, then use the add tool to compute 1234+5678.","type":"text"}],"role":"user"},{"content":[{"signature":"CAQS1gUKEAgSGAI4AUIIdGhpbmtpbmcSDM5C7V9MgdHh3bcxnxoMwzbqRzUtVWhLFbGuIjCW7X2Qfx20b9mggjvDk0zNXFtA6iPvNGPSVS4YWrXs72T5N578WnTt//XrKmJbwVwq8wQAUu8L5tD+4E76lD6atU/YDD9tIAq4ZFBQ8/UkpRKk/ZjnkEsS1iUhIl6rmPr+fGf980Ym2JqX7nPfg1xZy6uW5iKU46m5rNmjgZhJ7GpC0YmsKXQeWgMvhR76cUTBkBvxAvNOV7GEdcZtmkrQ8fBawVRhJXD48NkjWycd191SBDkfsg19iNVCA2oqeZBfFRYQihDEVWrLO7u9wSF8TbdhU595RS5Zj4WZnMGhPC31uRMX5clvdPdT4eq2L6+4taT9/Bg+yeserr+kRWVTjgUsCc+BjuufxDrMRDxzEKIYpvrb/Fywq4cKRVkKXdHsdr8D8ddcALv8VIzdR9/XPOB+XuKT9/RxHRcLqSUMKCbjWt/12dmQTm5ppl62k97yNIYqangwtb6gRLRtgms5I+5wM6eTMWwpY9iKPQB+rjsxyD8gmHOaNR/8cA6V775UhicvTYTm0M8vIWQSZ1cSCFpWWOrCjjQwcQIAtqbfXKEXfocSqcGP7bhATbDY36sK2/n/3HHje+jwXHfRxAS1L19J+qndn0ihY/x52mgBM+j0EUwlHhyW5elsJPPRIwtImLHjY3ouCPWj4mN1hsMcIs98g7Io5/W+bbOMWo4wPytMnQEvt+BpfrKJqOftD1gotWXK3GDR9KgvLbZVIZMKI1Q59Mr/zGEUWNXFQMUil2dSyUVqmy1/krtTpoJN4PlLxWjvQ8hfbVStffHgz0MmgbBT/kM3kiiiq5LCh7XUN1BqvC0/IWre7WScrdnRg0/ahoy5LylItD4Wjyafh1feR5XFhYxE5wwI5QMNqlzsx1PJpdPaWw/OISnBO32fxtA1GIjW2kQYAQ==","thinking":"","type":"thinking"},{"text":"Working it out by hand first, one column at a time from the right:\n\n- Ones: 4 + 8 = 12. Write 2, carry 1.\n- Tens: 3 + 7 + 1 = 11. Write 1, carry 1.\n- Hundreds: 2 + 6 + 1 = 9. Write 9.\n- Thousands: 1 + 5 = 6. Write 6.\n\nThat gives **6912**. Now I''ll check it with the add tool.","type":"text"},{"id":"toolu_01U5okrZT3GS2NX7u1EJSzEk","input":{"a":1234,"b":5678},"name":"add","type":"tool_use"}],"role":"assistant"},{"content":[{"content":[{"text":"6912","type":"text"}],"tool_use_id":"toolu_01U5okrZT3GS2NX7u1EJSzEk","type":"tool_result"}],"role":"user"}],"model":"claude-opus-5-5","output_config":{"effort":"high"},"thinking":{"block_binding":{"prefix_mismatch_behavior":"drop_block"},"type":"adaptive"},"tools":[{"description":"Add two integers","input_schema":{"properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"],"type":"object"},"name":"add"},{"description":"Multiply two integers","input_schema":{"properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"],"type":"object"},"name":"mul"}]}'
+then:
+  status: 200
+  header:
+  - name: content-type
+    value: application/json
+  - name: request-id
+    value: req_011CfaLryzLP1TRrJjfRxs4i
+  body: '{"container":null,"content":[{"text":"1234 + 5678 = **6912**. I added it by hand first, carrying 1 twice, and the add tool gave the same answer.","type":"text"}],"diagnostics":null,"id":"msg_011CfaLrzLfy6aCKRBrmzxi3","input_transformations":[{"path":"messages.1.content.0","reason":"prefix_binding_mismatch","type":"thinking_dropped"}],"model":"claude-opus-5-5","role":"assistant","stop_details":null,"stop_reason":"end_turn","stop_sequence":null,"type":"message","usage":{"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"inference_geo":"global","input_tokens":710,"output_tokens":45,"output_tokens_details":{"thinking_tokens":0},"service_tier":"standard"}}'
