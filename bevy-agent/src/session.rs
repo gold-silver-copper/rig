@@ -84,7 +84,7 @@ pub fn save(session: &Session, path: &Path) -> std::io::Result<()> {
 }
 
 /// Writes the session at most once a second while it keeps changing, so a
-/// crash loses little. Reloads save explicitly before exiting.
+/// crash loses little.
 pub fn autosave(
     session: Res<Session>,
     dir: Res<StateDir>,
@@ -98,6 +98,15 @@ pub fn autosave(
     *dirty = false;
     *last = Some(Instant::now());
     if let Err(error) = save(&session, &dir.session()) {
+        eprintln!("saving the session failed: {error}");
+    }
+}
+
+/// Writes the session in the frame the app decides to exit, reload included.
+pub fn save_on_exit(mut exits: MessageReader<AppExit>, session: Res<Session>, dir: Res<StateDir>) {
+    if exits.read().next().is_some()
+        && let Err(error) = save(&session, &dir.session())
+    {
         eprintln!("saving the session failed: {error}");
     }
 }

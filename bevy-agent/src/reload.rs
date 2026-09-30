@@ -72,10 +72,17 @@ fn finish(
         return;
     };
     reload.build = None;
+    if reload.caller.as_ref().is_some_and(Sender::is_closed) {
+        reload.caller = None;
+        session.log(Entry::Notice("Reload cancelled.".into()));
+        return;
+    }
     let failure = match result {
         Ok(binary) => {
-            match std::fs::write(state.0.join("next-binary"), binary.to_string_lossy().as_bytes())
-            {
+            match std::fs::write(
+                state.0.join("next-binary"),
+                binary.to_string_lossy().as_bytes(),
+            ) {
                 Ok(()) => {
                     // The `reload` call stays unanswered: the new process answers it.
                     session.log(Entry::Notice("Build succeeded. Restarting…".into()));
@@ -131,12 +138,17 @@ fn build(state: &Path) -> Result<PathBuf, String> {
 
 /// The error diagnostics in cargo's rendered output, or its tail when it has none.
 fn errors(stderr: &str) -> String {
+    let stderr: String = stderr
+        .lines()
+        .filter(|line| !line.starts_with("   Compiling ") && !line.starts_with("    Blocking "))
+        .map(|line| format!("{line}\n"))
+        .collect();
     let blocks: Vec<&str> = stderr
         .split("\n\n")
         .filter(|block| block.trim_start().starts_with("error"))
         .collect();
     let text = if blocks.is_empty() {
-        stderr.to_owned()
+        stderr.clone()
     } else {
         blocks.join("\n\n")
     };

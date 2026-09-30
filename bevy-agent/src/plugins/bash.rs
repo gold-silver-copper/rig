@@ -43,7 +43,12 @@ fn bash(In(args): In<Value>) -> ToolReply {
         Ok(args) => args,
         Err(reply) => return reply,
     };
-    ToolReply::spawn(move || run(&args.command, Duration::from_secs(args.timeout.unwrap_or(120))))
+    ToolReply::spawn(move || {
+        run(
+            &args.command,
+            Duration::from_secs(args.timeout.unwrap_or(120)),
+        )
+    })
 }
 
 fn run(command: &str, timeout: Duration) -> String {
@@ -91,7 +96,10 @@ fn run(command: &str, timeout: Duration) -> String {
     }
     // Background processes can hold the pipe open; do not wait for them.
     let _ = eof.recv_timeout(Duration::from_millis(500));
-    let output = output.lock().map(|output| output.clone()).unwrap_or_default();
+    let output = output
+        .lock()
+        .map(|output| output.clone())
+        .unwrap_or_default();
     let mut text = truncate(&String::from_utf8_lossy(&output), 50_000);
     match status {
         None => text.push_str(&format!("\n[timed out after {}s]", timeout.as_secs())),

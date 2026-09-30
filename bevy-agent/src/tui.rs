@@ -109,7 +109,11 @@ fn submit(world: &mut World, text: &str) {
             )));
         }
         "/model" => world.resource_scope(|world, mut llm: Mut<Llm>| {
-            agent::switch_model(&mut world.resource_mut::<Session>(), &mut llm, argument.trim());
+            agent::switch_model(
+                &mut world.resource_mut::<Session>(),
+                &mut llm,
+                argument.trim(),
+            );
         }),
         _ => world
             .resource_mut::<Session>()
@@ -132,9 +136,11 @@ fn draw(
         _ if reload.building() => "building".to_owned(),
         Turn::Idle => "idle".to_owned(),
         Turn::Request => "thinking".to_owned(),
-        Turn::Tools { calls, results } => calls
-            .get(results.len())
-            .map_or("tools".to_owned(), |call| format!("running {}", call.function.name)),
+        Turn::Tools { calls, results } => {
+            calls.get(results.len()).map_or("tools".to_owned(), |call| {
+                format!("running {}", call.function.name)
+            })
+        }
     };
     let status = format!(
         " {} · {state} · {} queued · brp :{} · gen {} · Esc cancel · /model /reload /quit",
@@ -166,7 +172,12 @@ fn draw(
         let shown = &input[input.len() - input_height..];
         let cursor_x = shown.last().map_or(0, |line| line.chars().count()) as u16;
         frame.render_widget(
-            Paragraph::new(shown.iter().map(|line| Line::raw(line.clone())).collect::<Vec<_>>()),
+            Paragraph::new(
+                shown
+                    .iter()
+                    .map(|line| Line::raw(line.clone()))
+                    .collect::<Vec<_>>(),
+            ),
             field,
         );
         frame.set_cursor_position((
@@ -181,15 +192,20 @@ fn transcript(session: &Session, width: usize) -> Vec<Line<'static>> {
     let entries = session.transcript.iter().map(|entry| match entry {
         Entry::User(text) => (Style::new().fg(Color::Cyan).bold(), format!("› {text}")),
         Entry::Assistant(text) => (Style::new(), text.clone()),
-        Entry::Call(text) => (Style::new().fg(Color::Yellow), format!("⚙ {}", clip(text, 3))),
+        Entry::Call(text) => (
+            Style::new().fg(Color::Yellow),
+            format!("⚙ {}", clip(text, 3)),
+        ),
         Entry::Output(text) => (Style::new().fg(Color::DarkGray), clip(text, 8)),
         Entry::Notice(text) => (Style::new().fg(Color::Magenta), text.clone()),
         Entry::Error(text) => (Style::new().fg(Color::Red), text.clone()),
     });
-    let queued = session
-        .queue
-        .iter()
-        .map(|text| (Style::new().fg(Color::DarkGray), format!("› (queued) {text}")));
+    let queued = session.queue.iter().map(|text| {
+        (
+            Style::new().fg(Color::DarkGray),
+            format!("› (queued) {text}"),
+        )
+    });
     for (style, text) in entries.chain(queued) {
         for line in wrap(&text, width) {
             lines.push(Line::from(Span::styled(line, style)));
@@ -210,17 +226,24 @@ fn clip(text: &str, max: usize) -> String {
     shown.join("\n")
 }
 
-/// Splits `text` into lines of at most `width` characters.
+/// Splits `text` into lines of at most `width` characters, at spaces where it can.
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
-    for line in text.split('\n') {
-        let chars: Vec<char> = line.replace('\t', "    ").chars().collect();
-        if chars.is_empty() {
-            lines.push(String::new());
+    for source in text.split('\n') {
+        let mut line: Vec<char> = Vec::new();
+        for c in source.replace('\t', "    ").chars() {
+            if line.len() == width {
+                let cut = line
+                    .iter()
+                    .rposition(|&c| c == ' ')
+                    .map_or(width, |space| space + 1);
+                let rest = line.split_off(cut);
+                lines.push(line.iter().collect());
+                line = rest;
+            }
+            line.push(c);
         }
-        for chunk in chars.chunks(width) {
-            lines.push(chunk.iter().collect());
-        }
+        lines.push(line.iter().collect());
     }
     lines
 }

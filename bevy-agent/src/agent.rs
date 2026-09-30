@@ -10,12 +10,12 @@ use async_channel::{Receiver, TryRecvError};
 use bevy::ecs::system::SystemId;
 use bevy::prelude::*;
 use futures::StreamExt;
+use rig_core::DynModel;
 use rig_core::completion::{CompletionRequest, CompletionResponse, ToolDefinition};
 use rig_core::message::{Message, ToolCall, ToolResultContent};
 use rig_core::operation::Completion;
 use rig_core::providers::registry::ProviderRef;
 use rig_core::streaming::{Item, StreamEvent};
-use rig_core::DynModel;
 use serde_json::Value;
 
 use crate::reload::Reload;
@@ -41,7 +41,8 @@ impl Plugin for AgentPlugin {
         .add_systems(
             Update,
             (start_turn, drive_request, drive_tools, session::autosave).chain(),
-        );
+        )
+        .add_systems(Last, session::save_on_exit);
     }
 }
 
@@ -119,7 +120,10 @@ pub struct Tools(BTreeMap<String, (ToolDefinition, Handler)>);
 
 impl Tools {
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.0.values().map(|(definition, _)| definition.clone()).collect()
+        self.0
+            .values()
+            .map(|(definition, _)| definition.clone())
+            .collect()
     }
 
     /// Adds or replaces an external tool. Returns whether anything changed.
@@ -312,7 +316,9 @@ fn answered(session: &mut Session, response: CompletionResponse, streamed_text: 
 
 fn send(llm: &Llm, model: &DynModel<Completion>, session: &Session, tools: &Tools) -> Flight {
     let mut request = CompletionRequest::new(Message::system(preamble()));
-    request.chat_history.extend(session.messages.iter().cloned());
+    request
+        .chat_history
+        .extend(session.messages.iter().cloned());
     request.tools = tools.definitions();
     let model = model.clone();
     let (sender, events) = async_channel::unbounded();
@@ -328,7 +334,9 @@ fn send(llm: &Llm, model: &DynModel<Completion>, session: &Session, tools: &Tool
         }
         .await;
         let _ = sender
-            .send(LlmEvent::Done(Box::new(result.map_err(|error| report(&error)))))
+            .send(LlmEvent::Done(Box::new(
+                result.map_err(|error| report(&error)),
+            )))
             .await;
     });
     Flight {

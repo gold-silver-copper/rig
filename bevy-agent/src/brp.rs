@@ -6,6 +6,9 @@
 //!   `{"call_id", "tool", "arguments"}` events. Sending it again, for example
 //!   after a reload closed the stream, re-registers the same tools.
 //! - `agent.tool_result` with `{"call_id", "output"}` answers a call.
+//! - `agent.prompt` with `{"text"}` queues a prompt, as typing it would.
+//! - `agent.transcript` with `{"since"}` returns the transcript entries from
+//!   that index on, and whether the agent is busy.
 //!
 //! The port is chosen once and kept across reloads.
 
@@ -43,7 +46,9 @@ impl Plugin for BrpPlugin {
             .add_plugins((
                 RemotePlugin::default()
                     .with_watching_method_main("agent.serve+watch", serve)
-                    .with_method_main("agent.tool_result", tool_result),
+                    .with_method_main("agent.tool_result", tool_result)
+                    .with_method_main("agent.prompt", prompt)
+                    .with_method_main("agent.transcript", transcript),
                 RemoteHttpPlugin::default().with_port(self.port),
             ))
             .add_systems(Update, expire);
@@ -114,9 +119,13 @@ fn serve(
 ) -> BrpResult<Option<Value>> {
     let ServeParams { tools: served } = parse(params)?;
     for definition in &served {
-        external.seen.insert(definition.name.clone(), Instant::now());
+        external
+            .seen
+            .insert(definition.name.clone(), Instant::now());
         if tools.register_external(definition) {
-            session.external_tools.retain(|known| known.name != definition.name);
+            session
+                .external_tools
+                .retain(|known| known.name != definition.name);
             session.external_tools.push(definition.clone());
         }
     }
@@ -153,6 +162,37 @@ fn tool_result(In(params): In<Option<Value>>, mut external: ResMut<External>) ->
     let call = external.calls.swap_remove(index);
     let _ = call.reply.try_send(output);
     Ok(Value::Null)
+}
+
+#[derive(Deserialize)]
+struct PromptParams {
+    text: String,
+}
+
+fn prompt(In(params): In<Option<Value>>, mut session: ResMut<Session>) -> BrpResult {
+    let PromptParams { text } = parse(params)?;
+    session.queue.push_back(text);
+    Ok(json!({"queued": session.queue.len()}))
+}
+
+#[derive(Deserialize, Default)]
+struct TranscriptParams {
+    #[serde(default)]
+    since: usize,
+}
+
+fn transcript(In(params): In<Option<Value>>, session: Res<Session>) -> BrpResult {
+    let TranscriptParams { since } = params
+        .map(|params| parse(Some(params)))
+        .transpose()?
+        .unwrap_or_default();
+    let entries = session.transcript.get(since..).unwrap_or_default();
+    Ok(json!({
+        "entries": entries,
+        "next": session.transcript.len(),
+        "busy": session.busy() || !session.queue.is_empty(),
+        "model": session.model,
+    }))
 }
 
 /// Fails calls whose plugin does not connect in time, and forgets cancelled ones.
